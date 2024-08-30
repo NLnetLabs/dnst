@@ -9,12 +9,6 @@ use octseq::OctetsBuilder;
 use ring::digest;
 use std::str::FromStr;
 
-// ldns-nsec3-hash [OPTIONS] <domain name>
-//   prints the NSEC3 hash of the given domain name
-// -a [algorithm] hashing algorithm
-// -t [number] number of hash iterations
-// -s [string] salt
-
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
