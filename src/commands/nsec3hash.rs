@@ -1,4 +1,5 @@
 use crate::error::Error;
+use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
 use domain::base::ToName;
@@ -17,17 +18,20 @@ use std::str::FromStr;
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
-    #[arg(short = 'a', long, value_name = "NUMBER",
+    #[arg(
+        long,
+        short = 'a',
+        value_name = "NUMBER",
         default_value_t = Nsec3HashAlg::SHA1,
-        value_parser = clap::builder::ValueParser::new(Nsec3Hash::parse_nsec_alg)
-        )]
+        value_parser = ValueParser::new(Nsec3Hash::parse_nsec_alg)
+    )]
     algorithm: Nsec3HashAlg,
 
     /// The number of hash iterations
     #[arg(
+        long,
         short = 'i',
         visible_short_alias = 't',
-        long,
         value_name = "NUMBER",
         default_value_t = 1
     )]
@@ -38,7 +42,7 @@ pub struct Nsec3Hash {
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN_NAME", value_parser = clap::builder::ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
     name: Name<Vec<u8>>,
 }
 
