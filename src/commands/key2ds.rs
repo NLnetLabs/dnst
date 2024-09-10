@@ -128,6 +128,10 @@ impl Key2ds {
                     .map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
                 writeln!(out_file, "{rr}")
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+
+                // This is different from ldns, but I think writing out the
+                // filename we wrote to is useful:
+                println!("Wrote DS record to: {filename}");
             }
         }
 
