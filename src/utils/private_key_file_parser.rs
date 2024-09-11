@@ -171,7 +171,17 @@ PrivateKey: {key}\n",
 Algorithm: {alg_id} ({alg_name})
 Key: {key}\n",
             alg_id = hmac.algorithm_id,
-            alg_name = SecAlg::from_int(hmac.algorithm_id),
+            alg_name = match hmac.algorithm_id {
+            157 => "HMAC_MD5",
+            158 => "HMAC_SHA1",
+            159 => "HMAC_SHA256",
+            161 => "HMAC_SHA1",
+            162 => "HMAC_SHA224",
+            163 => "HMAC_SHA256",
+            164 => "HMAC_SHA384",
+            165 => "HMAC_SHA512",
+            _ => return Err(Error::from("unknown hmac algorithm"))
+            },
             key = base64::encode_string(&hmac.key),
         )),
         KeyData::Dsa(dsa) => Ok(format!(
