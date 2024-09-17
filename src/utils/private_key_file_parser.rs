@@ -3,25 +3,23 @@ use domain::base::iana::SecAlg;
 use domain::utils::base64;
 use std::slice::Iter;
 
-macro_rules! parse_next_line {
-    ($lines:ident, $match_text:expr) => {
-        if let Some(line) = $lines.next() {
-            if !line.starts_with($match_text) {
-                return Err(Error::from(concat!(
-                    "expected line starting with ",
-                    $match_text
-                )));
-            }
-
-            if let Some((_, m)) = line.split_once(' ') {
-                m
-            } else {
-                return Err(Error::from("malformed line"));
-            }
-        } else {
-            return Err(Error::from("expected more private key data"));
+fn parse_next_line<'a>(lines: &mut Iter<&'a str>, match_text: &str) -> Result<&'a str, Error> {
+    if let Some(line) = lines.next() {
+        if !line.starts_with(match_text) {
+            return Err(Error::from(format!(
+                "expected line starting with {}",
+                match_text
+            )));
         }
-    };
+
+        if let Some((_, m)) = line.split_once(' ') {
+            Ok(m)
+        } else {
+            return Err(Error::from("malformed line"));
+        }
+    } else {
+        return Err(Error::from("expected more private key data"));
+    }
 }
 
 #[derive(Default, Debug)]
@@ -39,14 +37,14 @@ pub struct RsaKeyData {
 
 impl RsaKeyData {
     fn parse_lines(algorithm: u8, lines: &mut Iter<&str>) -> Result<RsaKeyData, Error> {
-        let modulus = parse_next_line!(lines, "Modulus: ");
-        let public_exponent = parse_next_line!(lines, "PublicExponent: ");
-        let private_exponent = parse_next_line!(lines, "PrivateExponent: ");
-        let prime1 = parse_next_line!(lines, "Prime1: ");
-        let prime2 = parse_next_line!(lines, "Prime2: ");
-        let exponent1 = parse_next_line!(lines, "Exponent1: ");
-        let exponent2 = parse_next_line!(lines, "Exponent2: ");
-        let coefficient = parse_next_line!(lines, "Coefficient: ");
+        let modulus = parse_next_line(lines, "Modulus: ")?;
+        let public_exponent = parse_next_line(lines, "PublicExponent: ")?;
+        let private_exponent = parse_next_line(lines, "PrivateExponent: ")?;
+        let prime1 = parse_next_line(lines, "Prime1: ")?;
+        let prime2 = parse_next_line(lines, "Prime2: ")?;
+        let exponent1 = parse_next_line(lines, "Exponent1: ")?;
+        let exponent2 = parse_next_line(lines, "Exponent2: ")?;
+        let coefficient = parse_next_line(lines, "Coefficient: ")?;
 
         Ok(RsaKeyData {
             algorithm_id: algorithm,
@@ -71,7 +69,7 @@ pub struct EcKeyData {
 
 impl EcKeyData {
     fn parse_lines(algorithm: u8, lines: &mut Iter<&str>) -> Result<EcKeyData, Error> {
-        let private_key = parse_next_line!(lines, "PrivateKey: ");
+        let private_key = parse_next_line(lines, "PrivateKey: ")?;
 
         Ok(EcKeyData {
             algorithm_id: algorithm,
@@ -88,7 +86,7 @@ pub struct HmacKeyData {
 
 impl HmacKeyData {
     fn parse_lines(algorithm: u8, lines: &mut Iter<&str>) -> Result<HmacKeyData, Error> {
-        let key = parse_next_line!(lines, "Key: ");
+        let key = parse_next_line(lines, "Key: ")?;
 
         Ok(HmacKeyData {
             algorithm_id: algorithm,
@@ -109,11 +107,11 @@ pub struct DsaKeyData {
 
 impl DsaKeyData {
     fn parse_lines(algorithm: u8, lines: &mut Iter<&str>) -> Result<DsaKeyData, Error> {
-        let prime = parse_next_line!(lines, "Prime(p): ");
-        let subprime = parse_next_line!(lines, "Subprime(q): ");
-        let base = parse_next_line!(lines, "Base(g): ");
-        let private_value = parse_next_line!(lines, "Private_value(x): ");
-        let public_value = parse_next_line!(lines, "Public_value(y): ");
+        let prime = parse_next_line(lines, "Prime(p): ")?;
+        let subprime = parse_next_line(lines, "Subprime(q): ")?;
+        let base = parse_next_line(lines, "Base(g): ")?;
+        let private_value = parse_next_line(lines, "Private_value(x): ")?;
+        let public_value = parse_next_line(lines, "Public_value(y): ")?;
 
         Ok(DsaKeyData {
             algorithm_id: algorithm,
