@@ -135,16 +135,16 @@ pub enum KeyData {
 pub fn gen_private_key_file_text(key: KeyData) -> Result<String, Error> {
     match key {
         KeyData::Rsa(rsa) => Ok(format!(
-            "Private-key-format: v1.2
-Algorithm: {alg_id} ({alg_name})
-Modulus: {modulus}
-PublicExponent: {pub_exp}
-PrivateExponent: {priv_exp}
-Prime1: {prime1}
-Prime2: {prime2}
-Exponent1: {exp1}
-Exponent2: {exp2}
-Coefficient: {coeff}\n",
+            "Private-key-format: v1.2\n\
+            Algorithm: {alg_id} ({alg_name})\n\
+            Modulus: {modulus}\n\
+            PublicExponent: {pub_exp}\n\
+            PrivateExponent: {priv_exp}\n\
+            Prime1: {prime1}\n\
+            Prime2: {prime2}\n\
+            Exponent1: {exp1}\n\
+            Exponent2: {exp2}\n\
+            Coefficient: {coeff}\n",
             alg_id = rsa.algorithm_id,
             alg_name = SecAlg::from_int(rsa.algorithm_id),
             modulus = base64::encode_string(&rsa.modulus),
@@ -157,39 +157,39 @@ Coefficient: {coeff}\n",
             coeff = base64::encode_string(&rsa.coefficient),
         )),
         KeyData::Ec(ec) => Ok(format!(
-            "Private-key-format: v1.2
-Algorithm: {alg_id} ({alg_name})
-PrivateKey: {key}\n",
+            "Private-key-format: v1.2\n\
+            Algorithm: {alg_id} ({alg_name})\n\
+            PrivateKey: {key}\n",
             alg_id = ec.algorithm_id,
             alg_name = SecAlg::from_int(ec.algorithm_id),
             key = base64::encode_string(&ec.private_key),
         )),
         KeyData::Hmac(hmac) => Ok(format!(
-            "Private-key-format: v1.2
-Algorithm: {alg_id} ({alg_name})
-Key: {key}\n",
+            "Private-key-format: v1.2\n\
+            Algorithm: {alg_id} ({alg_name})\n\
+            Key: {key}\n",
             alg_id = hmac.algorithm_id,
             alg_name = match hmac.algorithm_id {
-            157 => "HMAC_MD5",
-            158 => "HMAC_SHA1",
-            159 => "HMAC_SHA256",
-            161 => "HMAC_SHA1",
-            162 => "HMAC_SHA224",
-            163 => "HMAC_SHA256",
-            164 => "HMAC_SHA384",
-            165 => "HMAC_SHA512",
-            _ => return Err(Error::from("unknown hmac algorithm"))
+                157 => "HMAC_MD5",
+                158 => "HMAC_SHA1",
+                159 => "HMAC_SHA256",
+                161 => "HMAC_SHA1",
+                162 => "HMAC_SHA224",
+                163 => "HMAC_SHA256",
+                164 => "HMAC_SHA384",
+                165 => "HMAC_SHA512",
+                _ => return Err(Error::from("unknown hmac algorithm")),
             },
             key = base64::encode_string(&hmac.key),
         )),
         KeyData::Dsa(dsa) => Ok(format!(
-            "Private-key-format: v1.2
-Algorithm: {alg_id} ({alg_name})
-Prime(p): {p}
-Subprime(q): {q}
-Base(g): {g}
-Private_value(x): {x}
-Public_value(y): {y}\n",
+            "Private-key-format: v1.2\n\
+            Algorithm: {alg_id} ({alg_name})\n\
+            Prime(p): {p}\n\
+            Subprime(q): {q}\n\
+            Base(g): {g}\n\
+            Private_value(x): {x}\n\
+            Public_value(y): {y}\n",
             alg_id = dsa.algorithm_id,
             alg_name = SecAlg::from_int(dsa.algorithm_id),
             p = base64::encode_string(&dsa.prime),
