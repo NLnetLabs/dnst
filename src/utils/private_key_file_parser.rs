@@ -133,6 +133,7 @@ pub enum KeyData {
 }
 
 impl KeyData {
+    /// Generate the Private-key-format text representation of KeyData
     pub fn gen_private_key_file_text(&self) -> Result<String, Error> {
         match &self {
             KeyData::Rsa(rsa) => Ok(format!(
@@ -202,6 +203,7 @@ impl KeyData {
         }
     }
 
+    /// Parses lines of a private key file in bind's Private-key-format v1.x
     pub fn parse_lines(mut lines: Iter<&str>) -> Result<KeyData, Error> {
         // File format in ABNF (no data validity encoded here)
 
