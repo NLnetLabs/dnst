@@ -4,8 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytes = { version = "1.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
-domain = "0.10.1"
+domain = { git = "https://github.com/NLnetLabs/domain", branch = "nsec3-generation-with-pr406-plus-extensions", features = [
+    "openssl",
+    "ring",
+    "sign",
+    "zonefile",
+    "unstable-validator",
+    "unstable-zonetree",
+] }
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
