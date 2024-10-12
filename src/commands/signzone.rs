@@ -14,6 +14,7 @@ use domain::base::{Name, Record, ToName, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
+use domain::sign::key::SigningKey;
 use domain::sign::records::{FamilyName, SortedRecords};
 use domain::zonefile::inplace;
 use domain::zonetree::types::StoredRecordData;
@@ -65,7 +66,7 @@ pub struct SignZone {
     /// keys must be specified by their base name (usually
     /// K<name>+<alg>+<id>), i.e. WITHOUT the .private extension.
     #[arg(value_name = "key")]
-    key_path: PathBuf,
+    key_paths: Vec<PathBuf>,
 }
 
 impl SignZone {
@@ -75,8 +76,12 @@ impl SignZone {
         //---
 
         // Import the specified key.
-        let data = std::fs::read_to_string(self.key_path).unwrap();
-        let generic_key = domain::sign::generic::SecretKey::<Vec<u8>>::from_dns(&data).unwrap(); // What does "from_dns()" mean here?
+        let mut keys = vec![];
+        for key_path in self.key_paths {
+            let data = std::fs::read_to_string(key_path).unwrap();
+            let generic_key = domain::sign::generic::SecretKey::<Vec<u8>>::from_dns(&data).unwrap(); // What does "from_dns()" mean here?
+            keys.push(generic_key);
+        }
 
         // Neither openssl::SecretKey nor generic::SecretKey impl SigningKey
         // and I can't impl it myself because both the trait and the types are in domain.
@@ -90,51 +95,99 @@ impl SignZone {
 
         let rng = SystemRandom::new();
 
-        let key_pair = match generic_key.algorithm() {
-            SecAlg::ED25519 => {
-                let ring_key = domain::sign::ring::SecretKey::import(generic_key, &rng).unwrap(); // Why do I have to do the generic key step myself?
-                let key_pair = domain::sign::ring::KeyPair::<Vec<u8>>::new(ring_key).unwrap();
-                domain::sign::generic::KeyPair::Ring(key_pair)
-            }
+        let mut key_pairs = vec![];
+        for key in keys {
+            let key_pair = match key.algorithm() {
+                SecAlg::ED25519 => {
+                    let ring_key = domain::sign::ring::SecretKey::import(key, &rng).unwrap(); // Why do I have to do the generic key step myself?
+                    let key_pair = domain::sign::ring::KeyPair::<Vec<u8>>::new(ring_key).unwrap();
+                    domain::sign::generic::KeyPair::Ring(key_pair)
+                }
 
-            SecAlg::ECDSAP256SHA256 => {
-                let openssl_key = domain::sign::openssl::SecretKey::import(generic_key).unwrap(); // Why do I have to do the generic key step myself?
-                let key_pair = domain::sign::openssl::KeyPair::<Vec<u8>>::new(openssl_key).unwrap();
-                domain::sign::generic::KeyPair::Openssl(key_pair)
-            }
+                /*SecAlg::ED25519|*/
+                SecAlg::RSASHA256 | SecAlg::ECDSAP256SHA256 => {
+                    let openssl_key = domain::sign::openssl::SecretKey::import(key).unwrap(); // Why do I have to do the generic key step myself?
+                    let key_pair =
+                        domain::sign::openssl::KeyPair::<Vec<u8>>::new(openssl_key).unwrap();
+                    domain::sign::generic::KeyPair::Openssl(key_pair)
+                }
 
-            _ => unimplemented!(),
-        };
+                // let rng = SystemRandom::new();
+
+                // let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+                // let keypair =
+                //     EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+                //         .unwrap();
+
+                // let pubkey = keypair.public_key().as_ref()[1..].to_vec();
+
+                // let dnskey: Dnskey<Vec<u8>> =
+                //     Dnskey::new(256, 3, SecAlg::ECDSAP256SHA256, pubkey.clone()).unwrap();
+                // let ringkey = RingKey::Ecdsa(keypair);
+                // let key = domain::sign::ring::Key::new(dnskey, ringkey, &rng);
+                _ => unimplemented!(),
+            };
+            key_pairs.push(key_pair);
+        }
 
         //---
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
+        let record = apex.dnskey(ttl, &key_pairs[0], 257).unwrap();
+        records.insert(Record::from_record(record)).unwrap();
+        if key_pairs.len() > 1 {
+            eprintln!(
+                "Key tag for first key (KSK): {}",
+                key_pairs[0].key_tag(257).unwrap()
+            );
+            eprintln!(
+                "Key tag for first key (ZSK): {}",
+                key_pairs[1].key_tag(256).unwrap()
+            );
+            let record = apex.dnskey(ttl, &key_pairs[1], 256).unwrap();
+            records.insert(Record::from_record(record)).unwrap();
+        } else {
+            eprintln!(
+                "Key tag for given key (CSK): {}",
+                key_pairs[0].key_tag(257).unwrap()
+            );
+        }
+
         if self.use_nsec3 {
+            let nsec3param_data =
+                Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+            let nsec3param_rec =
+                Record::new(apex.owner().to_name(), Class::IN, ttl, nsec3param_data);
+            records.insert(Record::from_record(nsec3param_rec)).unwrap();
             let nsecs = records.nsec3s::<_, BytesMut>(
                 &apex,
                 ttl,
                 self.algorithm,
                 0,
                 self.iterations,
-                self.salt.clone(),
+                self.salt,
             );
             records.extend(nsecs.into_iter().map(Record::from_record));
-            let nsec3param_data = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt);
-            let nsec3param_rec =
-                Record::new(apex.owner().to_name(), Class::IN, ttl, nsec3param_data);
-            records.insert(Record::from_record(nsec3param_rec)).unwrap();
         } else {
             let nsecs = records.nsecs::<Bytes>(&apex, ttl);
             records.extend(nsecs.into_iter().map(Record::from_record));
         }
 
-        let record = apex.dnskey(ttl, &key_pair).unwrap();
-        records.insert(Record::from_record(record)).unwrap();
         let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
         let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
         let rrsigs = records
-            .sign(&apex, expiration, inception, &key_pair)
+            .sign(
+                &apex,
+                expiration,
+                inception,
+                &key_pairs[0],
+                if key_pairs.len() > 1 {
+                    Some(&key_pairs[1])
+                } else {
+                    None
+                },
+            )
             .unwrap();
         records.extend(rrsigs.into_iter().map(Record::from_record));
         records.write(&mut std::io::stdout().lock()).unwrap();

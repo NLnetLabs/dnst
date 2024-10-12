@@ -250,7 +250,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.1"
-source = "git+https://github.com/NLnetLabs/domain?branch=nsec3-generation-with-pr406-plus-extensions#b911fdfa5501c410ce432ab791f10745bb714b6a"
+source = "git+https://github.com/NLnetLabs/domain?branch=nsec3-generation-with-pr406-plus-extensions#f078b152eac9dce0d2eb5766afbcf408784deafb"
 dependencies = [
  "bytes",
  "futures-util",
