@@ -1,16 +1,21 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use clap::builder::ValueParser;
+use clap::{builder::ValueParser, ArgAction};
 use domain::{
     base::{
         iana::{Class, Opcode},
-        MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl,
+        Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl,
     },
     dep::octseq::Array,
+    net::client::{
+        dgram,
+        protocol::UdpConnect,
+        request::{RequestMessage, SendRequest},
+    },
     rdata::{tsig::Time48, Soa},
+    resolv::stub::StubResolver,
     tsig::{Algorithm, ClientTransaction, Key, KeyName},
     utils::{base16, base64},
-    resolv::stub::StubResolver,
 };
 
 use crate::error::Error;
@@ -75,26 +80,37 @@ impl FromStr for TSigInfo {
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Notify {
+    /// The zone
     #[arg(short = 'z', required = true)]
     zone: Name<Vec<u8>>,
 
-    #[arg(short = 'I')]
+    /// Source address to query from
+    #[arg(short = 'I', required = false)]
     source_address: (),
 
+    /// SOA version number to include
     #[arg(short = 's')]
     soa_version: Option<u32>,
 
+    /// A base64 tsig key and optional algorithm to include
     #[arg(short = 'y', long = "tsig", value_parser = ValueParser::new(TSigInfo::from_str))]
     tsig: Option<TSigInfo>,
 
-    #[arg(short = 'p', long = "port")]
+    /// Port to use to send the packet
+    #[arg(short = 'p', long = "port", default_value = "53")]
     port: u16,
 
+    /// Print debug information
     #[arg(short = 'd', long = "debug")]
     debug: bool,
 
-    #[arg(short = 'r', long = "retries")]
+    /// Max number of retries
+    #[arg(short = 'r', long = "retries", default_value = "15")]
     retries: usize,
+
+    // Hidden extra argument for `-?` to trigger help, which ldns supports.
+    #[arg(short = '?', action = ArgAction::Help, hide = true)]
+    compatible_help: (),
 
     #[arg()]
     servers: Vec<String>,
@@ -153,14 +169,14 @@ impl Notify {
 
         if self.debug {
             println!("# Sending packet:\n");
-            todo!()
+            // todo!()
         }
 
         if self.debug {
             println!("Hexdump of notify packet:\n");
             println!("{}", base16::encode_display(&msg));
         }
-        
+
         let resolver = StubResolver::new();
 
         for server in &self.servers {
@@ -172,9 +188,9 @@ impl Notify {
                 eprintln!("Invalid domain name \"{server}\", skipping.");
                 continue;
             };
-        
-            let Ok(hosts) = resolver.lookup_host(name).await else {
-                eprintln!("blabla");
+
+            let Ok(hosts) = resolver.lookup_host(&name).await else {
+                eprintln!("Could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
@@ -187,6 +203,19 @@ impl Notify {
     }
 
     async fn notify_host(&self, socket: SocketAddr, msg: &[u8], server: &str) -> Result<(), Error> {
-        todo!()
+        let mut config = dgram::Config::new();
+        config.set_max_retries(self.retries as u8);
+        let connection = dgram::Connection::with_config(UdpConnect::new(socket), config);
+
+        let msg = msg.to_vec();
+        let req = RequestMessage::new(Message::from_octets(msg).unwrap()).unwrap();
+        let mut req = SendRequest::send_request(&connection, req);
+
+        let resp = req.get_response().await.unwrap();
+
+        println!("# reply from {server}:");
+        println!("{resp:?}");
+
+        Ok(())
     }
 }
