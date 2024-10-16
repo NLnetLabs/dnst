@@ -2,6 +2,7 @@
 
 pub mod help;
 pub mod nsec3hash;
+pub mod notify;
 
 use super::error::Error;
 
@@ -11,6 +12,10 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Sends a NOTIFY message to DNS servers
+    #[command(name = "notify")]
+    Notify(self::notify::Notify),
+
     /// Show the manual pages
     Help(self::help::Help),
 }
@@ -19,6 +24,7 @@ impl Command {
     pub fn execute(self) -> Result<(), Error> {
         match self {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(),
+            Self::Notify(notify) => notify.execute(),
             Self::Help(help) => help.execute(),
         }
     }
