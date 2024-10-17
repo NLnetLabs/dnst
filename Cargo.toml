@@ -6,15 +6,17 @@ edition = "2021"
 [dependencies]
 bytes = { version = "1.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "nsec3-generation-with-pr406-plus-extensions", features = [
-    "openssl",
+domain = { git = "https://github.com/NLnetLabs/domain", branch = "multiple-key-signing", features = [
     "ring",
-    "sign",
-    "zonefile",
+    "unstable-sign",
     "unstable-validator",
     "unstable-zonetree",
+    "zonefile",
 ] }
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
 ring = { version = "0.17" }
+
+# for the signzone command
+openssl = { version = "0.10.57" } # required for RSASHA1 and 1024 bit key support (as ring doesn't support these)

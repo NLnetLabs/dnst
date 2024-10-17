@@ -1,21 +1,19 @@
 use core::ops::{Add, Sub};
 
+use std::cmp::min;
 use std::path::PathBuf;
 
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
-use ring::rand::SystemRandom;
 use std::fs::File;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::iana::{Class, SecAlg};
 use domain::base::name::FlattenInto;
-use domain::base::{Name, Record, ToName, Ttl};
+use domain::base::{Name, Record, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
-use domain::sign::key::SigningKey;
-use domain::sign::records::{FamilyName, SortedRecords};
+use domain::sign::records::{FamilyName, Nsec3Records, SortedRecords};
 use domain::zonefile::inplace;
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
@@ -78,97 +76,70 @@ impl SignZone {
         // Import the specified key.
         let mut keys = vec![];
         for key_path in self.key_paths {
-            let data = std::fs::read_to_string(key_path).unwrap();
-            let generic_key = domain::sign::generic::SecretKey::<Vec<u8>>::from_dns(&data).unwrap(); // What does "from_dns()" mean here?
-            keys.push(generic_key);
-        }
+            let old_ext = key_path.extension().unwrap().to_str().unwrap();
+            let new_ext = format!("{}.private", old_ext);
+            let private_key_path = key_path.with_extension(new_ext).display().to_string();
+            let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
+                Error::from(format!(
+                    "Unable to load private key from file '{}': {}",
+                    private_key_path, err
+                ))
+            })?;
 
-        // Neither openssl::SecretKey nor generic::SecretKey impl SigningKey
-        // and I can't impl it myself because both the trait and the types are in domain.
+            let old_ext = key_path.extension().unwrap().to_str().unwrap();
+            let new_ext = format!("{}.key", old_ext);
+            let public_key_path = key_path.with_extension(new_ext).display().to_string();
+            let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
+                Error::from(format!(
+                    "Unable to load public key from file '{}': {}",
+                    private_key_path, err
+                ))
+            })?;
 
-        // Note: domain key management code doesn't follow formatting guidelines.
+            let generic_key = domain::sign::generic::SecretKey::parse_from_bind(&private_data)
+                .map_err(|err| {
+                    Error::from(format!(
+                        "Unable to parse BIND formatted private key file '{}': {}",
+                        private_key_path, err
+                    ))
+                })?;
 
-        // No is algorithm support fn on the openssl or ring support in domain...
+            let public_key: domain::validate::Key<Bytes> =
+                domain::validate::Key::parse_dnskey_text(&public_data).map_err(|err| {
+                    Error::from(format!(
+                        "Unable to parse BIND formatted public key file '{}': {}",
+                        private_key_path, err
+                    ))
+                })?;
 
-        // Unclear from docs how to generate or import keys.
-        // let openssl_key = domain::sign::openssl::generate(SecAlg::ECDSAP256SHA256).unwrap();
+            let signing_key = domain::sign::openssl::SecretKey::from_generic(
+                &generic_key,
+                &public_key.raw_public_key(),
+            )
+            .map_err(|err| {
+                Error::from(format!(
+                    "Unable to import private key from file '{}': {}",
+                    private_key_path, err
+                ))
+            })?;
 
-        let rng = SystemRandom::new();
-
-        let mut key_pairs = vec![];
-        for key in keys {
-            let key_pair = match key.algorithm() {
-                SecAlg::ED25519 => {
-                    let ring_key = domain::sign::ring::SecretKey::import(key, &rng).unwrap(); // Why do I have to do the generic key step myself?
-                    let key_pair = domain::sign::ring::KeyPair::<Vec<u8>>::new(ring_key).unwrap();
-                    domain::sign::generic::KeyPair::Ring(key_pair)
-                }
-
-                /*SecAlg::ED25519|*/
-                SecAlg::RSASHA256 | SecAlg::ECDSAP256SHA256 => {
-                    let openssl_key = domain::sign::openssl::SecretKey::import(key).unwrap(); // Why do I have to do the generic key step myself?
-                    let key_pair =
-                        domain::sign::openssl::KeyPair::<Vec<u8>>::new(openssl_key).unwrap();
-                    domain::sign::generic::KeyPair::Openssl(key_pair)
-                }
-
-                // let rng = SystemRandom::new();
-
-                // let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
-                // let keypair =
-                //     EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
-                //         .unwrap();
-
-                // let pubkey = keypair.public_key().as_ref()[1..].to_vec();
-
-                // let dnskey: Dnskey<Vec<u8>> =
-                //     Dnskey::new(256, 3, SecAlg::ECDSAP256SHA256, pubkey.clone()).unwrap();
-                // let ringkey = RingKey::Ecdsa(keypair);
-                // let key = domain::sign::ring::Key::new(dnskey, ringkey, &rng);
-                _ => unimplemented!(),
-            };
-            key_pairs.push(key_pair);
+            keys.push((signing_key, public_key));
         }
 
         //---
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
-        let record = apex.dnskey(ttl, &key_pairs[0], 257).unwrap();
-        records.insert(Record::from_record(record)).unwrap();
-        if key_pairs.len() > 1 {
-            eprintln!(
-                "Key tag for first key (KSK): {}",
-                key_pairs[0].key_tag(257).unwrap()
-            );
-            eprintln!(
-                "Key tag for first key (ZSK): {}",
-                key_pairs[1].key_tag(256).unwrap()
-            );
-            let record = apex.dnskey(ttl, &key_pairs[1], 256).unwrap();
-            records.insert(Record::from_record(record)).unwrap();
-        } else {
-            eprintln!(
-                "Key tag for given key (CSK): {}",
-                key_pairs[0].key_tag(257).unwrap()
-            );
-        }
-
         if self.use_nsec3 {
-            let nsec3param_data =
-                Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-            let nsec3param_rec =
-                Record::new(apex.owner().to_name(), Class::IN, ttl, nsec3param_data);
+            let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+            let Nsec3Records {
+                nsec3_recs,
+                nsec3param_rec,
+            } = records
+                .nsec3s::<_, BytesMut>(&apex, ttl, params, self.nsec3_opt_out)
+                .unwrap();
+            records.extend(nsec3_recs.into_iter().map(Record::from_record));
             records.insert(Record::from_record(nsec3param_rec)).unwrap();
-            let nsecs = records.nsec3s::<_, BytesMut>(
-                &apex,
-                ttl,
-                self.algorithm,
-                0,
-                self.iterations,
-                self.salt,
-            );
-            records.extend(nsecs.into_iter().map(Record::from_record));
         } else {
             let nsecs = records.nsecs::<Bytes>(&apex, ttl);
             records.extend(nsecs.into_iter().map(Record::from_record));
@@ -176,20 +147,10 @@ impl SignZone {
 
         let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
         let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
-        let rrsigs = records
-            .sign(
-                &apex,
-                expiration,
-                inception,
-                &key_pairs[0],
-                if key_pairs.len() > 1 {
-                    Some(&key_pairs[1])
-                } else {
-                    None
-                },
-            )
+        let extra_records = records
+            .sign(&apex, expiration, inception, keys.as_slice())
             .unwrap();
-        records.extend(rrsigs.into_iter().map(Record::from_record));
+        records.extend(extra_records.into_iter().map(Record::from_record));
         records.write(&mut std::io::stdout().lock()).unwrap();
 
         Ok(())
@@ -223,7 +184,13 @@ impl SignZone {
             }
         };
         let ttl = match *soa.first().data() {
-            ZoneRecordData::Soa(ref soa) => soa.minimum(),
+            ZoneRecordData::Soa(ref soa_data) => {
+                // RFC 9077 updated RFC 4034 (NSEC) and RFC 5155 (NSSE3) to
+                // say that the "TTL of the NSEC(3) RR that is returned MUST be
+                // the lesser of the MINIMUM field of the SOA record and the
+                // TTL of the SOA itself".
+                min(soa_data.minimum(), soa.ttl())
+            }
             _ => unreachable!(),
         };
         Ok((soa.family_name().cloned(), ttl))
