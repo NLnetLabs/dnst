@@ -4,6 +4,9 @@ pub mod key2ds;
 pub mod keygen;
 pub mod notify;
 pub mod nsec3hash;
+pub mod update;
+
+use update::Update;
 
 use clap::crate_version;
 use std::ffi::{OsStr, OsString};
@@ -16,6 +19,7 @@ use super::error::Error;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Generate a new key pair for a given domain name
     ///
@@ -64,6 +68,10 @@ pub enum Command {
     #[command(name = "key2ds")]
     Key2ds(key2ds::Key2ds),
 
+    /// Send an UPDATE packet
+    #[command(name = "update")]
+    Update(self::update::Update),
+
     /// Show the manual pages
     Help(self::help::Help),
 
@@ -82,12 +90,20 @@ impl Command {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Notify(notify) => notify.execute(env),
+            Self::Update(update) => update.execute(),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())
             }
         }
+    }
+
+    pub fn parse_ldns_args(name: &str, args: &[String]) -> Result<Option<Self>, Error> {
+        Ok(Some(match name {
+            "ldns-update" => Self::Update(Update::parse_ldns_args(args)?),
+            _ => return Ok(None),
+        }))
     }
 }
 
