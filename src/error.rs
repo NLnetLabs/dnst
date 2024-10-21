@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::num::ParseIntError;
-use std::string::ParseError;
+use domain::base::wire::ParseError;
 use std::{error, fmt, io};
 
 #[derive(Clone, Debug)]
