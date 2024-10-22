@@ -3,6 +3,7 @@ use std::{
     str::FromStr,
 };
 
+use bytes::Bytes;
 use domain::{
     base::{
         iana::{Class, Opcode, Rcode},
@@ -11,17 +12,19 @@ use domain::{
     net::client::{
         dgram_stream,
         protocol::{TcpConnect, UdpConnect},
-        request::{RequestMessage, SendRequest},
+        request::{self, RequestMessage, RequestMessageMulti, SendRequest, SendRequestMulti},
+        stream, tsig,
     },
     rdata::{Aaaa, AllRecordData, Ns, Soa, A},
     resolv::{
         stub::conf::{ResolvConf, ServerConf, Transport},
         StubResolver,
     },
-    tsig::{Algorithm, KeyName},
+    tsig::{Algorithm, Key, KeyName},
     utils::base64,
 };
 use octseq::Array;
+use tokio::net::TcpStream;
 
 use crate::error::Error;
 
@@ -198,10 +201,6 @@ impl Update {
 
     /// Run the command as an async function
     pub async fn run(self) -> Result<(), Error> {
-        if self.tsig.is_some() {
-            return Err("tsig is currently not supported yet".into());
-        }
-
         println!(
             ";; trying UPDATE with FQDN \"{}\" and IP \"{}\"",
             self.domain,
@@ -220,6 +219,7 @@ impl Update {
 
         let nsnames = self.determine_nsnames(&soa_zone, &soa_mname).await?;
         let msg = self.create_update_message(&soa_zone);
+
         self.send_update(msg, nsnames).await
     }
 
@@ -391,22 +391,25 @@ impl Update {
     /// Send the update packet to the names in nsnames in order until one responds
     async fn send_update(&self, msg: Vec<u8>, nsnames: Vec<Name<Vec<u8>>>) -> Result<(), Error> {
         let msg = Message::from_octets(msg).unwrap();
-        let msg = RequestMessage::new(msg).unwrap();
         let resolver = StubResolver::new();
         for name in nsnames {
             let found_ips = resolver.lookup_host(&name).await?;
             for socket in found_ips.port_iter(53) {
-                let udp_connect = UdpConnect::new(socket);
-                let tcp_connect = TcpConnect::new(socket);
-                let (connection, transport) =
-                    dgram_stream::Connection::new(udp_connect, tcp_connect);
+                let response = match &self.tsig {
+                    Some(tsig) => {
+                        let key =
+                            Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
+                                .unwrap();
+                        let msg = RequestMessageMulti::new(msg.clone()).unwrap();
+                        self.send_update_with_tsig(msg, key, socket).await
+                    }
+                    None => {
+                        let msg = RequestMessage::new(msg.clone()).unwrap();
+                        self.send_update_without_tsig(msg, socket).await
+                    }
+                };
 
-                tokio::spawn(async move {
-                    transport.run().await;
-                });
-
-                let mut req = connection.send_request(msg.clone());
-                let resp = match req.get_response().await {
+                let resp = match response {
                     Ok(resp) => resp,
                     Err(err) => {
                         eprintln!("{name} @ {socket}: {err}");
@@ -422,9 +425,44 @@ impl Update {
         }
 
         // Our list of nsnames has been exhausted, we can only report that
-        // we couldn't find anything. 
+        // we couldn't find anything.
         println!(";; No responses");
 
         Ok(())
+    }
+
+    async fn send_update_with_tsig(
+        &self,
+        msg: RequestMessageMulti<Vec<u8>>,
+        key: Key,
+        socket: SocketAddr,
+    ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
+        let tcp_conn = TcpStream::connect(socket).await.unwrap();
+        let (connection, transport) =
+            stream::Connection::<RequestMessage<Vec<u8>>, _>::new(tcp_conn);
+        let connection = tsig::Connection::new(key, connection);
+
+        tokio::spawn(async move {
+            transport.run().await;
+        });
+
+        let mut req = connection.send_request(msg);
+        Ok(req.get_response().await?.unwrap())
+    }
+
+    async fn send_update_without_tsig(
+        &self,
+        msg: request::RequestMessage<Vec<u8>>,
+        socket: SocketAddr,
+    ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
+        let udp_connect = UdpConnect::new(socket);
+        let tcp_connect = TcpConnect::new(socket);
+        let (connection, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
+        tokio::spawn(async move {
+            transport.run().await;
+        });
+
+        let mut req = connection.send_request(msg.clone());
+        req.get_response().await
     }
 }
