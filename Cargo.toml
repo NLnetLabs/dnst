@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytes = "1.8.0"
 clap = { version = "4", features = ["derive"] }
-domain = "0.10.1"
+domain = { version = "0.10.3", git="https://github.com/NLnetLabs/domain", features = ["tsig", "zonefile", "bytes", "validate", "resolv", "net", "unstable-client-transport"] }
+ring = { version = "0.17" }
+tokio = "1.40.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
-ring = { version = "0.17" }
