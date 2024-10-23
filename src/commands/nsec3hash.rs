@@ -1,13 +1,14 @@
 use crate::error::Error;
+
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
 use domain::base::ToName;
 use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
-// use domain::validator::nsec::nsec3_hash;
 use octseq::OctetsBuilder;
 use ring::digest;
-use std::str::FromStr;
+
+use crate::parse::parse_name;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -36,15 +37,11 @@ pub struct Nsec3Hash {
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, Error> {
-        Name::from_str(&arg.to_lowercase()).map_err(|e| Error::from(e.to_string()))
-    }
-
     pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
         if let Ok(num) = arg.parse() {
             let alg = Nsec3HashAlg::from_int(num);

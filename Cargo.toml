@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-domain = "0.10.1"
+domain = { git = "http://github.com/NLnetLabs/domain", branch = "dnssec-key", features = ["unstable-sign"] }
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
