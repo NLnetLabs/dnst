@@ -2,6 +2,7 @@
 
 pub mod help;
 pub mod nsec3hash;
+pub mod key2ds;
 
 use super::error::Error;
 
@@ -11,6 +12,13 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Generate a DS RR from the DNSKEYS in keyfile
+    ///
+    /// The following file will be created: `K<name>+<alg>+<id>.ds`
+    /// The base name `(K<name>+<alg>+<id>` will be printed to stdout
+    #[command(name = "key2ds")]
+    Key2ds(key2ds::Key2ds),
+
     /// Show the manual pages
     Help(self::help::Help),
 }
@@ -19,6 +27,7 @@ impl Command {
     pub fn execute(self) -> Result<(), Error> {
         match self {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(),
+            Self::Key2ds(key2ds) => key2ds.execute(),
             Self::Help(help) => help.execute(),
         }
     }
