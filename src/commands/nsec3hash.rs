@@ -1,13 +1,12 @@
-use crate::error::Error;
+use std::str::FromStr;
+
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
-use domain::base::ToName;
-use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
-// use domain::validator::nsec::nsec3_hash;
-use octseq::OctetsBuilder;
-use ring::digest;
-use std::str::FromStr;
+use domain::rdata::nsec3::Nsec3Salt;
+use domain::sign::ring::nsec3_hash;
+
+use crate::error::Error;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -64,53 +63,12 @@ impl Nsec3Hash {
 
 impl Nsec3Hash {
     pub fn execute(self) -> Result<(), Error> {
-        let hash = nsec3_hash(&self.name, self.algorithm, self.iterations, &self.salt)
-            .to_string()
-            .to_lowercase();
+        let hash =
+            nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
+                .expect("Error while generating NSEC3 hash")
+                .to_string()
+                .to_lowercase();
         println!("{}.", hash);
         Ok(())
     }
-}
-
-// XXX: This is a verbatim copy of the nsec3_hash function from domain::validator::nsec.
-// TODO: when exposed/available, replace with implementation from domain::validator::nsec
-fn nsec3_hash<N, HashOcts>(
-    owner: N,
-    algorithm: Nsec3HashAlg,
-    iterations: u16,
-    salt: &Nsec3Salt<HashOcts>,
-) -> OwnerHash<Vec<u8>>
-where
-    N: ToName,
-    HashOcts: AsRef<[u8]>,
-{
-    let mut buf = Vec::new();
-
-    owner.compose_canonical(&mut buf).expect("infallible");
-    buf.append_slice(salt.as_slice()).expect("infallible");
-
-    let digest_type = if algorithm == Nsec3HashAlg::SHA1 {
-        &digest::SHA1_FOR_LEGACY_USE_ONLY
-    } else {
-        // totest, unsupported NSEC3 hash algorithm
-        // Unsupported.
-        panic!("should not be called with an unsupported algorithm");
-    };
-
-    let mut ctx = digest::Context::new(digest_type);
-    ctx.update(&buf);
-    let mut h = ctx.finish();
-
-    for _ in 0..iterations {
-        buf.truncate(0);
-        buf.append_slice(h.as_ref()).expect("infallible");
-        buf.append_slice(salt.as_slice()).expect("infallible");
-
-        let mut ctx = digest::Context::new(digest_type);
-        ctx.update(&buf);
-        h = ctx.finish();
-    }
-
-    // For normal hash algorithms this should not fail.
-    OwnerHash::from_octets(h.as_ref().to_vec()).expect("should not fail")
 }
