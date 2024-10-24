@@ -1,8 +1,8 @@
 //! The command of _dnst_.
 
 pub mod help;
-pub mod nsec3hash;
 pub mod notify;
+pub mod nsec3hash;
 
 use super::error::Error;
 
@@ -12,7 +12,11 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
-    /// Sends a NOTIFY message to DNS servers
+    /// Send a NOTIFY packet to DNS servers
+    ///
+    /// This tells them that an updated zone is available at the master servers. It can perform TSIG
+    /// signatures and it can add a SOA serial number of the updated zone. If a server already has
+    /// that serial number it will disregard the message.
     #[command(name = "notify")]
     Notify(self::notify::Notify),
 

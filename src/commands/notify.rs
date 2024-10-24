@@ -1,5 +1,8 @@
-use std::{net::SocketAddr, str::FromStr};
+use core::fmt;
+use std::{net::SocketAddr, str::FromStr, time::{Duration, Instant}};
 
+use bytes::Bytes;
+use chrono::{DateTime, Local, TimeDelta};
 use clap::{builder::ValueParser, ArgAction};
 use domain::{
     base::{
@@ -11,10 +14,11 @@ use domain::{
         dgram,
         protocol::UdpConnect,
         request::{RequestMessage, SendRequest},
+        tsig,
     },
-    rdata::{tsig::Time48, Soa},
+    rdata::Soa,
     resolv::stub::StubResolver,
-    tsig::{Algorithm, ClientTransaction, Key, KeyName},
+    tsig::{Algorithm, Key, KeyName},
     utils::{base16, base64},
 };
 
@@ -25,6 +29,28 @@ struct TSigInfo {
     name: KeyName,
     key: Vec<u8>,
     algorithm: Algorithm,
+}
+
+// Clippy complains about the unread fields but they are used for display
+#[allow(dead_code)]
+struct Response<Octs> {
+    msg: Message<Octs>,
+    when: DateTime<Local>,
+    server: Option<SocketAddr>,
+    time: TimeDelta,
+}
+
+impl<Octs: AsRef<[u8]>> fmt::Display for Response<Octs> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.msg.display_dig_style())?;
+        writeln!(f, ";; Query time: {} msec", self.time.num_milliseconds())?;
+        if let Some(server) = self.server {
+            writeln!(f, ";; Server: {}#{}", server.ip(), server.port())?;
+        }
+        writeln!(f, ";; WHEN: {}", self.when.format("%a %b %d %H:%M:%S %Z %Y"))?;
+        writeln!(f, ";; MSG SIZE  rcvd: {}", self.msg.as_slice().len())?;
+        Ok(())
+    }
 }
 
 impl FromStr for TSigInfo {
@@ -112,6 +138,7 @@ pub struct Notify {
     #[arg(short = '?', action = ArgAction::Help, hide = true)]
     compatible_help: (),
 
+    /// DNS servers to send packet to
     #[arg()]
     servers: Vec<String>,
 }
@@ -133,7 +160,7 @@ impl Notify {
         let mut msg = msg.question();
         let question = Question::new(&self.zone, Rtype::SOA, Class::IN);
         msg.push(question)
-            .map_err(|e| format!("Could not create question section: {e}"))?;
+            .map_err(|e| format!("could not create question section: {e}"))?;
 
         let mut msg = msg.answer();
         if let Some(soa_version) = self.soa_version {
@@ -152,70 +179,109 @@ impl Notify {
                 ),
             );
             msg.push(soa)
-                .map_err(|e| format!("Could not add SOA record: {e}"))?;
+                .map_err(|e| format!("could not add SOA record: {e}"))?;
         }
 
-        let mut msg = msg.additional();
+        let msg = msg.additional();
 
-        if let Some(tsig) = &self.tsig {
-            let key = Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
-                .map_err(|e| format!("TSIG key is invalid: {e}"))?;
+        let tsig = self
+            .tsig
+            .as_ref()
+            .map(|tsig| {
+                Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
+                    .map_err(|e| format!("TSIG key is invalid: {e}"))
+            })
+            .transpose()?;
 
-            // ldns does not seem to validate anything coming in
-            let _transaction = ClientTransaction::request(key, &mut msg, Time48::now());
-        }
+        let msg = msg.into_message();
 
-        let msg = msg.finish();
+        println!("# Sending packet:");
+        println!("{}", msg.display_dig_style());
 
         if self.debug {
-            println!("# Sending packet:\n");
-            // todo!()
-        }
-
-        if self.debug {
-            println!("Hexdump of notify packet:\n");
+            println!("Hexdump of notify packet:");
             println!("{}", base16::encode_display(&msg));
         }
 
         let resolver = StubResolver::new();
 
         for server in &self.servers {
-            if self.debug {
-                println!("# sending to {}", server);
-            }
+            println!("# sending to {}", server);
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                eprintln!("Invalid domain name \"{server}\", skipping.");
+                eprintln!("warning: invalid domain name \"{server}\", skipping.");
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                eprintln!("Could not resolve host \"{name}\", skipping.");
+                eprintln!("warning: could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
+            if hosts.is_empty() {
+                eprintln!("skipping bad address: {name}: Name or service not known");
+                continue;
+            }
+
             for socket in hosts.port_iter(self.port) {
-                self.notify_host(socket, &msg, server).await?;
+                let resp = match &tsig {
+                    Some(tsig) => {
+                        self.notify_host_with_tsig(socket, msg.clone(), tsig.clone())
+                            .await
+                    }
+                    None => self.notify_host_without_tsig(socket, msg.clone()).await,
+                };
+
+                match resp {
+                    Ok(resp) => {
+                        println!("# reply from {server} at {socket}:");
+                        println!("{resp}");
+                    },
+                    Err(e) => {
+                        eprintln!("{e}");
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    async fn notify_host(&self, socket: SocketAddr, msg: &[u8], server: &str) -> Result<(), Error> {
+    async fn notify_host_with_tsig(
+        &self,
+        socket: SocketAddr,
+        msg: Message<Vec<u8>>,
+        key: Key,
+    ) -> Result<Response<Bytes>, Error> {
+        let mut config = dgram::Config::new();
+        config.set_max_retries(self.retries as u8);
+        let connection = dgram::Connection::with_config(UdpConnect::new(socket), config);
+        let connection = tsig::Connection::new(key, connection);
+
+        let req = RequestMessage::new(msg).unwrap();
+        let mut req = connection.send_request(req);
+    
+        let when = Local::now();
+        let msg = req.get_response().await.map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
+        let time2 = Local::now();
+        Ok(Response { msg, when, server: Some(socket), time: time2 - when })
+    }
+
+    async fn notify_host_without_tsig(
+        &self,
+        socket: SocketAddr,
+        msg: Message<Vec<u8>>,
+    ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries as u8);
         let connection = dgram::Connection::with_config(UdpConnect::new(socket), config);
 
-        let msg = msg.to_vec();
-        let req = RequestMessage::new(Message::from_octets(msg).unwrap()).unwrap();
+        let req = RequestMessage::new(msg).unwrap();
         let mut req = SendRequest::send_request(&connection, req);
-
-        let resp = req.get_response().await.unwrap();
-
-        println!("# reply from {server}:");
-        println!("{resp:?}");
-
-        Ok(())
+        
+        let when = Local::now();
+        let msg = req.get_response().await.map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
+        let time2 = Local::now();
+        Ok(Response { msg, when, server: Some(socket), time: time2 - when })
     }
 }
