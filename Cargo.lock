@@ -147,12 +147,13 @@ dependencies = [
  "domain",
  "octseq",
  "ring",
+ "test_bin",
 ]
 
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain/?branch=initial-nsec3-generation#d84e2c015078f8ee04d0786de9c6dfb1d330584e"
+source = "git+https://github.com/NLnetLabs/domain/?branch=initial-nsec3-generation#02c625b45fdb84db94c28827ab0db5be76471a6e"
 dependencies = [
  "bytes",
  "hashbrown",
@@ -341,6 +342,12 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "test_bin"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e7a7de15468c6e65dd7db81cf3822c1ec94c71b2a3c1a976ea8e4696c91115c"
 
 [[package]]
 name = "time"

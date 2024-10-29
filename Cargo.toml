@@ -11,3 +11,6 @@ domain = { git = "https://github.com/NLnetLabs/domain/", branch = "initial-nsec3
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
 ring = { version = "0.17" }
+
+[dev-dependencies]
+test_bin = "0.4.0"
