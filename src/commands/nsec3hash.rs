@@ -31,7 +31,7 @@ pub struct Nsec3Hash {
     iterations: u16,
 
     /// The salt in hex representation
-    #[arg(short = 's', long, value_name = "HEX_STRING", default_value_t = Nsec3Salt::empty())]
+    #[arg(short = 's', long, value_name = "HEX_STRING", default_value_t = Nsec3Salt::empty(), value_parser = ValueParser::new(Nsec3Hash::parse_salt))]
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
@@ -42,6 +42,14 @@ pub struct Nsec3Hash {
 impl Nsec3Hash {
     pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, Error> {
         Name::from_str(&arg.to_lowercase()).map_err(|e| Error::from(e.to_string()))
+    }
+
+    pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
+        if arg.len() >= 512 {
+            Err(Error::from("Salt too long"))
+        } else {
+            Nsec3Salt::<Vec<u8>>::from_str(arg).map_err(|err| Error::from(err.to_string()))
+        }
     }
 
     pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
