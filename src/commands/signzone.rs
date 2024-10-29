@@ -96,8 +96,8 @@ impl SignZone {
                 ))
             })?;
 
-            let generic_key = domain::sign::generic::SecretKey::parse_from_bind(&private_data)
-                .map_err(|err| {
+            let generic_key =
+                domain::sign::KeyBytes::parse_from_bind(&private_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted private key file '{}': {}",
                         private_key_path, err
@@ -105,16 +105,16 @@ impl SignZone {
                 })?;
 
             let public_key: domain::validate::Key<Bytes> =
-                domain::validate::Key::parse_dnskey_text(&public_data).map_err(|err| {
+                domain::validate::Key::parse_from_bind(&public_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted public key file '{}': {}",
                         private_key_path, err
                     ))
                 })?;
 
-            let signing_key = domain::sign::openssl::SecretKey::from_generic(
+            let key_pair = domain::sign::openssl::KeyPair::from_bytes(
                 &generic_key,
-                &public_key.raw_public_key(),
+                public_key.raw_public_key(),
             )
             .map_err(|err| {
                 Error::from(format!(
@@ -123,7 +123,13 @@ impl SignZone {
                 ))
             })?;
 
-            keys.push((signing_key, public_key));
+            let signing_key = domain::sign::SigningKey::new(
+                public_key.owner().to_owned(),
+                public_key.flags(),
+                key_pair,
+            );
+
+            keys.push(signing_key);
         }
 
         //---

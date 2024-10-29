@@ -7,6 +7,7 @@ edition = "2021"
 bytes = { version = "1.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain", branch = "multiple-key-signing", features = [
+    "openssl",
     "ring",
     "unstable-sign",
     "unstable-validator",
