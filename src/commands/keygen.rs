@@ -2,8 +2,9 @@ use std::fs::File;
 use std::io::Write;
 
 use clap::{builder::ValueParser, Args, ValueEnum};
-use domain::base::iana::Class;
+use domain::base::iana::{Class, DigestAlg, SecAlg};
 use domain::base::name::Name;
+use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::sign::{common, GenerateParams};
 use domain::validate::Key;
 
@@ -63,17 +64,30 @@ impl Keygen {
             AlgorithmArg::Ed448 => GenerateParams::Ed448,
         };
 
+        // The digest algorithm is selected based on the key algorithm.
+        let digest_alg = match params.algorithm() {
+            SecAlg::RSASHA256 => DigestAlg::SHA256,
+            SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
+            SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
+            SecAlg::ED25519 => DigestAlg::SHA256,
+            SecAlg::ED448 => DigestAlg::SHA256,
+            _ => unreachable!(),
+        };
+
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
         let (secret_key, public_key) = common::generate(params)
             .map_err(|err| format!("an implementation error occurred: {err}"))?;
         let flags = if self.make_ksk { 257 } else { 256 };
-        let public_key = Key::new(self.name, flags, public_key);
+        let public_key = Key::new(self.name.clone(), flags, public_key);
+        let digest = self
+            .make_ksk
+            .then(|| public_key.digest(digest_alg).unwrap());
 
         // Open the appropriate files to write the key.
         let base = format!(
             "K{}+{:03}+{:05}",
-            public_key.owner().fmt_with_dot(),
+            self.name.fmt_with_dot(),
             public_key.algorithm().to_int(),
             public_key.key_tag()
         );
@@ -81,6 +95,11 @@ impl Keygen {
             .map_err(|err| format!("private key file '{base}.private' already existed: {err}"))?;
         let mut public_key_file = File::create_new(format!("{base}.key"))
             .map_err(|err| format!("public key file '{base}.key' already existed: {err}"))?;
+        let mut digest_file = self
+            .make_ksk
+            .then(|| File::create_new(format!("{base}.ds")))
+            .transpose()
+            .map_err(|err| format!("digest file '{base}.ds' already existed: {err}"))?;
 
         // Prepare the contents to write.
         // TODO: Add 'display_as_bind()' to these types.
@@ -94,6 +113,14 @@ impl Keygen {
             public_key.format_as_bind(Class::IN, &mut buf).unwrap();
             buf
         };
+        let digest = digest.map(|digest| {
+            format!(
+                "{} {} DS {}\n",
+                self.name.fmt_with_dot(),
+                Class::IN,
+                digest.display_zonefile(false)
+            )
+        });
 
         // Write the key files.
         secret_key_file
@@ -104,6 +131,11 @@ impl Keygen {
         public_key_file
             .write_all(public_key.as_bytes())
             .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+        if let Some(digest_file) = digest_file.as_mut() {
+            digest_file
+                .write_all(digest.unwrap().as_bytes())
+                .map_err(|err| format!("error while writing digest file '{base}.ds': {err}"))?;
+        }
 
         secret_key_file.sync_all().map_err(|err| {
             format!("error while writing private key file '{base}.private': {err}")
@@ -111,6 +143,11 @@ impl Keygen {
         public_key_file
             .sync_all()
             .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+        if let Some(digest_file) = digest_file.as_mut() {
+            digest_file
+                .sync_all()
+                .map_err(|err| format!("error while writing digest file '{base}.ds': {err}"))?;
+        }
 
         // Let the user know what the base name of the files is.
         println!("{}", base);
