@@ -82,9 +82,6 @@ impl Keygen {
         let mut public_key_file = File::create_new(format!("{base}.key"))
             .map_err(|err| format!("public key file '{base}.key' already existed: {err}"))?;
 
-        // Let the user know what the name of the files will be.
-        println!("{}", base);
-
         // Prepare the contents to write.
         // TODO: Add 'display_as_bind()' to these types.
         let secret_key = {
@@ -101,10 +98,22 @@ impl Keygen {
         // Write the key files.
         secret_key_file
             .write_all(secret_key.as_bytes())
-            .map_err(|err| format!("error while writing private key file: {err}"))?;
+            .map_err(|err| {
+                format!("error while writing private key file '{base}.private': {err}")
+            })?;
         public_key_file
             .write_all(public_key.as_bytes())
-            .map_err(|err| format!("error while writing public key file: {err}"))?;
+            .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+
+        secret_key_file.sync_all().map_err(|err| {
+            format!("error while writing private key file '{base}.private': {err}")
+        })?;
+        public_key_file
+            .sync_all()
+            .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+
+        // Let the user know what the base name of the files is.
+        println!("{}", base);
 
         Ok(())
     }
