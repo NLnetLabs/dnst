@@ -96,15 +96,15 @@ impl SignZone {
                 ))
             })?;
 
-            let generic_key =
-                domain::sign::KeyBytes::parse_from_bind(&private_data).map_err(|err| {
+            let secret_key =
+                domain::sign::SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted private key file '{}': {}",
                         private_key_path, err
                     ))
                 })?;
 
-            let public_key: domain::validate::Key<Bytes> =
+            let public_key_info: domain::validate::Key<Bytes> =
                 domain::validate::Key::parse_from_bind(&public_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted public key file '{}': {}",
@@ -112,9 +112,11 @@ impl SignZone {
                     ))
                 })?;
 
+            // Use OpenSSL as the Ring backend doesn't support key sizes and
+            // algorithms that we require.
             let key_pair = domain::sign::openssl::KeyPair::from_bytes(
-                &generic_key,
-                public_key.raw_public_key(),
+                &secret_key,
+                public_key_info.raw_public_key(),
             )
             .map_err(|err| {
                 Error::from(format!(
@@ -124,8 +126,8 @@ impl SignZone {
             })?;
 
             let signing_key = domain::sign::SigningKey::new(
-                public_key.owner().to_owned(),
-                public_key.flags(),
+                public_key_info.owner().to_owned(),
+                public_key_info.flags(),
                 key_pair,
             );
 
