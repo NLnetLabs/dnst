@@ -5,10 +5,18 @@ fn nsec3_hash() {
     assert_ldns_eq_dnst("ldns-nsec3-hash", "nsec3-hash", &["example.com"]);
     assert_ldns_eq_dnst("ldns-nsec3-hash", "nsec3-hash", &["-a", "1", "example.com"]);
     assert_ldns_eq_dnst("ldns-nsec3-hash", "nsec3-hash", &["-s", "", "example.com"]);
-    assert_ldns_eq_dnst("ldns-nsec3-hash", "nsec3-hash", &["-s", "DEADBEEF", "example.com"]);
+    assert_ldns_eq_dnst(
+        "ldns-nsec3-hash",
+        "nsec3-hash",
+        &["-s", "DEADBEEF", "example.com"],
+    );
 
     for iterations in 0..10 {
-        assert_ldns_eq_dnst("ldns-nsec3-hash", "nsec3-hash", &["-t", &iterations.to_string(), "example.com"]);
+        assert_ldns_eq_dnst(
+            "ldns-nsec3-hash",
+            "nsec3-hash",
+            &["-t", &iterations.to_string(), "example.com"],
+        );
     }
 }
 
