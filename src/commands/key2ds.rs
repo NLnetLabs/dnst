@@ -25,15 +25,15 @@ pub struct Key2ds {
     #[arg(short = 'n')]
     write_to_stdout: bool,
 
-    /// use SHA1 for the DS hash
+    /// use SHA-1 for the DS hash
     #[arg(short = '1', overrides_with_all = ["one", "two", "four", "algorithm"])]
     one: bool,
 
-    /// use SHA256 for the DS hash
+    /// use SHA-256 for the DS hash
     #[arg(short = '2', overrides_with_all = ["one", "two", "four", "algorithm"])]
     two: bool,
 
-    /// use SHA384 for the DS hash
+    /// use SHA-384 for the DS hash
     #[arg(short = '4', overrides_with_all = ["one", "two", "four", "algorithm"])]
     four: bool,
 

@@ -15,7 +15,7 @@ pub enum Command {
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
     /// The following file will be created for each key:
-    /// `K<name>+<alg>+<id>.ds`.The base name `K<name>+<alg>+<id>`
+    /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
     /// will be printed to stdout.
     #[command(name = "key2ds")]
     Key2ds(key2ds::Key2ds),
