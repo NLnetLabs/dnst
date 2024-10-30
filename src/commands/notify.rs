@@ -87,7 +87,7 @@ impl FromStr for TSigInfo {
         // order was used.
         //
         // We can correct this by checking whether the name contains a valid
-        // algorithm while the name doesn't.
+        // algorithm while the algorithm doesn't.
         if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
             (name, key, algorithm) = (key, algorithm, name);
         }
