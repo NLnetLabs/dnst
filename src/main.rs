@@ -3,7 +3,8 @@ use clap::{command, Args, FromArgMatches};
 fn main() {
     let cli = dnst::Args::augment_args(command!());
 
-    // Try with multicall first.
+    // Try with multicall first, to emulate LDNS commands based on the binary
+    // name we were invoked with.
     let res = cli
         .clone()
         .multicall(true)
