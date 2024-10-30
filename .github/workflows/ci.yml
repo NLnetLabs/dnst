@@ -1,5 +1,7 @@
 name: ci
 on: [push, pull_request]
+env:
+  RUSTFLAGS: "-D warnings"
 jobs:
   test:
     name: test
@@ -8,8 +10,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
         rust: [1.78.0, stable, beta, nightly]
-    env:
-        RUSTFLAGS: "-D warnings"
     steps:
     - name: Checkout repository
       uses: actions/checkout@v1
@@ -28,8 +28,6 @@ jobs:
   minimal-versions:
     name: Check minimal versions
     runs-on: ubuntu-latest
-    env:
-        RUSTFLAGS: "-D warnings"
     steps:
     - name: Checkout repository
       uses: actions/checkout@v1
