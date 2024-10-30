@@ -287,7 +287,7 @@ impl Notify {
         let msg = req
             .get_response()
             .await
-            .map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
+            .map_err(|e| format!("warning: reply was not received or erroneous from {socket}: {e}"))?;
         let time2 = Local::now();
         Ok(Response {
             msg,
