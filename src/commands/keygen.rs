@@ -31,10 +31,12 @@ pub struct Keygen {
 
     /// Create symlinks '.key' and '.private' to the generated keys
     #[arg(short = 's')]
+    #[cfg(target_family = "unix")]
     create_symlinks: bool,
 
     /// Overwrite existing symlinks (for use with '-s')
     #[arg(short = 'f')]
+    #[cfg(target_family = "unix")]
     force_symlinks: bool,
 
     /// The domain name to generate a key for
@@ -100,9 +102,36 @@ impl Keygen {
             .then(|| File::create_new(format!("{base}.ds")))
             .transpose()
             .map_err(|err| format!("digest file '{base}.ds' already existed: {err}"))?;
+        #[cfg(target_family = "unix")]
+        if self.create_symlinks {
+            if let Ok(metadata) = std::fs::symlink_metadata(".private") {
+                if self.force_symlinks {
+                    if metadata.is_symlink() {
+                        std::fs::remove_file(".private")
+                            .map_err(|err| format!("could not remove symlink '.private': {err}"))?;
+                    } else {
+                        return Err("'.private' already exists but is not a symlink".into());
+                    }
+                } else {
+                    return Err("'.private' already exists".into());
+                }
+            }
+
+            if let Ok(metadata) = std::fs::symlink_metadata(".key") {
+                if self.force_symlinks {
+                    if metadata.is_symlink() {
+                        std::fs::remove_file(".key")
+                            .map_err(|err| format!("could not remove symlink '.key': {err}"))?;
+                    } else {
+                        return Err("'.key' already exists but is not a symlink".into());
+                    }
+                } else {
+                    return Err("'.key' already exists".into());
+                }
+            }
+        }
 
         // Prepare the contents to write.
-        // TODO: Add 'display_as_bind()' to these types.
         let secret_key = secret_key.display_as_bind().to_string();
         let public_key = public_key.display_as_bind().to_string();
         let digest = digest.map(|digest| {
@@ -138,6 +167,16 @@ impl Keygen {
             digest_file
                 .sync_all()
                 .map_err(|err| format!("error while writing digest file '{base}.ds': {err}"))?;
+        }
+
+        #[cfg(target_family = "unix")]
+        if self.create_symlinks {
+            use std::os::unix::fs;
+
+            fs::symlink(format!("{base}.key"), ".key")
+                .map_err(|err| format!("could not create symlink '.key': {err}"))?;
+            fs::symlink(format!("{base}.private"), ".private")
+                .map_err(|err| format!("could not create symlink '.private': {err}"))?;
         }
 
         // Let the user know what the base name of the files is.
