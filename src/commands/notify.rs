@@ -1,9 +1,9 @@
 use core::fmt;
-use std::{net::SocketAddr, str::FromStr, time::{Duration, Instant}};
+use std::{net::SocketAddr, str::FromStr};
 
 use bytes::Bytes;
 use chrono::{DateTime, Local, TimeDelta};
-use clap::{builder::ValueParser, ArgAction};
+use clap::builder::ValueParser;
 use domain::{
     base::{
         iana::{Class, Opcode},
@@ -47,7 +47,11 @@ impl<Octs: AsRef<[u8]>> fmt::Display for Response<Octs> {
         if let Some(server) = self.server {
             writeln!(f, ";; Server: {}#{}", server.ip(), server.port())?;
         }
-        writeln!(f, ";; WHEN: {}", self.when.format("%a %b %d %H:%M:%S %Z %Y"))?;
+        writeln!(
+            f,
+            ";; WHEN: {}",
+            self.when.format("%a %b %d %H:%M:%S %Z %Y")
+        )?;
         writeln!(f, ";; MSG SIZE  rcvd: {}", self.msg.as_slice().len())?;
         Ok(())
     }
@@ -64,7 +68,7 @@ impl FromStr for TSigInfo {
 
         let mut key;
         let mut algorithm;
-        if let Some((k, a)) = s.split_once(':') {
+        if let Some((k, a)) = rest.split_once(':') {
             key = k;
             algorithm = a;
         } else {
@@ -75,11 +79,11 @@ impl FromStr for TSigInfo {
         }
 
         // With dig TSIG keys are also specified with -y,
-        // but out format is: -y <name:key[:algo]>
-        //      and dig's is: -y [hmac:]name:key
+        // but our format is: <name:key[:algo]>
+        //      and dig's is: [hmac:]name:key
         //
         // When we detect an unknown tsig algorithm in algo,
-        // but a known algorithm in name, we cane assume dig
+        // but a known algorithm in name, we can assume dig
         // order was used.
         //
         // We can correct this by checking whether the name contains a valid
@@ -119,7 +123,12 @@ pub struct Notify {
     soa_version: Option<u32>,
 
     /// A base64 tsig key and optional algorithm to include
-    #[arg(short = 'y', long = "tsig", value_parser = ValueParser::new(TSigInfo::from_str))]
+    #[arg(
+        short = 'y',
+        long = "tsig",
+        value_parser = ValueParser::new(TSigInfo::from_str),
+        value_name = "name:key[:algo]",
+    )]
     tsig: Option<TSigInfo>,
 
     /// Port to use to send the packet
@@ -134,12 +143,8 @@ pub struct Notify {
     #[arg(short = 'r', long = "retries", default_value = "15")]
     retries: usize,
 
-    // Hidden extra argument for `-?` to trigger help, which ldns supports.
-    #[arg(short = '?', action = ArgAction::Help, hide = true)]
-    compatible_help: (),
-
     /// DNS servers to send packet to
-    #[arg()]
+    #[arg(required = true)]
     servers: Vec<String>,
 }
 
@@ -208,6 +213,16 @@ impl Notify {
         for server in &self.servers {
             println!("# sending to {}", server);
 
+            // The specified server might be an IP address. In ldns, this case is
+            // handled by `getaddrinfo`, but we have to do it ourselves.
+            // We parse it as an IP address and then send it to the one socket we
+            // can.
+            if let Ok(addr) = server.parse() {
+                let socket = SocketAddr::new(addr, self.port);
+                self.notify_host(socket, msg.clone(), server, &tsig).await;
+                continue;
+            }
+
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
                 eprintln!("warning: invalid domain name \"{server}\", skipping.");
                 continue;
@@ -224,27 +239,34 @@ impl Notify {
             }
 
             for socket in hosts.port_iter(self.port) {
-                let resp = match &tsig {
-                    Some(tsig) => {
-                        self.notify_host_with_tsig(socket, msg.clone(), tsig.clone())
-                            .await
-                    }
-                    None => self.notify_host_without_tsig(socket, msg.clone()).await,
-                };
-
-                match resp {
-                    Ok(resp) => {
-                        println!("# reply from {server} at {socket}:");
-                        println!("{resp}");
-                    },
-                    Err(e) => {
-                        eprintln!("{e}");
-                    }
-                }
+                self.notify_host(socket, msg.clone(), server, &tsig).await;
             }
         }
 
         Ok(())
+    }
+
+    async fn notify_host(
+        &self,
+        socket: SocketAddr,
+        msg: Message<Vec<u8>>,
+        server: &str,
+        tsig: &Option<Key>,
+    ) {
+        let resp = match &tsig {
+            Some(tsig) => self.notify_host_with_tsig(socket, msg, tsig.clone()).await,
+            None => self.notify_host_without_tsig(socket, msg).await,
+        };
+
+        match resp {
+            Ok(resp) => {
+                println!("# reply from {server} at {socket}:");
+                println!("{resp}");
+            }
+            Err(e) => {
+                eprintln!("{e}");
+            }
+        }
     }
 
     async fn notify_host_with_tsig(
@@ -260,11 +282,19 @@ impl Notify {
 
         let req = RequestMessage::new(msg).unwrap();
         let mut req = connection.send_request(req);
-    
+
         let when = Local::now();
-        let msg = req.get_response().await.map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
+        let msg = req
+            .get_response()
+            .await
+            .map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
         let time2 = Local::now();
-        Ok(Response { msg, when, server: Some(socket), time: time2 - when })
+        Ok(Response {
+            msg,
+            when,
+            server: Some(socket),
+            time: time2 - when,
+        })
     }
 
     async fn notify_host_without_tsig(
@@ -278,10 +308,17 @@ impl Notify {
 
         let req = RequestMessage::new(msg).unwrap();
         let mut req = SendRequest::send_request(&connection, req);
-        
+
         let when = Local::now();
-        let msg = req.get_response().await.map_err(|e| format!("warning: could not send message to {socket}: {e}"))?;
+        let msg = req.get_response().await.map_err(|e| {
+            format!("warning: reply was not received or erroneous from {socket}: {e}")
+        })?;
         let time2 = Local::now();
-        Ok(Response { msg, when, server: Some(socket), time: time2 - when })
+        Ok(Response {
+            msg,
+            when,
+            server: Some(socket),
+            time: time2 - when,
+        })
     }
 }
