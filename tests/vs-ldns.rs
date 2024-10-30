@@ -22,10 +22,7 @@ fn nsec3_hash() {
 }
 
 fn assert_ldns_eq_dnst(ldns_command: &str, dnst_subcommand: &str, args: &[&str]) {
-    let ldns_output = Command::new(ldns_command)
-        .args(args)
-        .output()
-        .unwrap();
+    let ldns_output = Command::new(ldns_command).args(args).output().unwrap();
 
     let dnst_output = test_bin::get_test_bin("dnst")
         .arg(dnst_subcommand)

@@ -4,7 +4,7 @@ use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::sign::ring::nsec3_hash;
+use domain::validate::nsec3_hash;
 
 use crate::error::Error;
 
