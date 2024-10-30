@@ -114,10 +114,12 @@ pub struct Notify {
     #[arg(short = 'z', required = true)]
     zone: Name<Vec<u8>>,
 
-    /// Source address to query from
-    #[arg(short = 'I', required = false)]
-    source_address: (),
-
+    // The -I option is supported by ldns but is not available in domain yet.
+    // It requires creating a connection from a UdpSocket (or similar).
+    // /// Source address to query from
+    // #[arg(short = 'I', required = false)]
+    // source_address: (),
+    //
     /// SOA version number to include
     #[arg(short = 's')]
     soa_version: Option<u32>,
@@ -284,10 +286,9 @@ impl Notify {
         let mut req = connection.send_request(req);
 
         let when = Local::now();
-        let msg = req
-            .get_response()
-            .await
-            .map_err(|e| format!("warning: reply was not received or erroneous from {socket}: {e}"))?;
+        let msg = req.get_response().await.map_err(|e| {
+            format!("warning: reply was not received or erroneous from {socket}: {e}")
+        })?;
         let time2 = Local::now();
         Ok(Response {
             msg,
