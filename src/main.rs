@@ -1,10 +1,6 @@
 use clap::{command, Args, FromArgMatches};
 
 fn main() {
-    // Ensure that we exit with either 0 or 1, to match ldns-xxx command
-    // behaviour. We can't just call Args::parse() because Clap will exit with
-    // code 2 on argument parsing error, so instead call try_parse() and
-    // handle it ourselves.
     let cli = dnst::Args::augment_args(command!());
 
     // Try with multicall first.
