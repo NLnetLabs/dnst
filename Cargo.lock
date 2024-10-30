@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=multiple-key-signing#438af2202947e1e835f10df803fea716af4b494e"
+source = "git+https://github.com/NLnetLabs/domain?branch=multiple-key-signing#f6c8c7e6479bc1f2eacd272e97a08466efbfaac9"
 dependencies = [
  "bytes",
  "futures-util",

@@ -13,7 +13,7 @@ use domain::base::{Name, Record, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
-use domain::sign::records::{FamilyName, Nsec3Records, SortedRecords};
+use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
 use domain::zonefile::inplace;
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
@@ -48,11 +48,30 @@ pub struct SignZone {
     iterations: u16,
 
     /// NSEC3 salt
-    #[arg(short = 's', value_name = "string", default_value_t = Nsec3Salt::empty(), requires = "nsec3")]
+    #[arg(
+        short = 's',
+        value_name = "string",
+        default_value_t = Nsec3Salt::empty(),
+        requires = "nsec3"
+    )]
     salt: Nsec3Salt<Bytes>,
 
     /// NSEC3 set the opt-out flag on all nsec3 rrs
-    #[arg(short = 'p', default_value_t = false, requires = "nsec3")]
+    #[arg(
+        short = 'p',
+        default_value_t = false,
+        requires = "nsec3",
+        conflicts_with = "nsec3_opt_out"
+    )]
+    nsec3_opt_out_flags_only: bool,
+
+    /// NSEC3 set the opt-out flag on all nsec3 rrs and skip unsigned delegations
+    #[arg(
+        short = 'A',
+        default_value_t = false,
+        requires = "nsec3",
+        conflicts_with = "nsec3_opt_out_flags_only"
+    )]
     nsec3_opt_out: bool,
 
     /// zonefile
@@ -138,13 +157,21 @@ impl SignZone {
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
+        let opt_out = if self.nsec3_opt_out {
+            Nsec3OptOut::OptOut
+        } else if self.nsec3_opt_out_flags_only {
+            Nsec3OptOut::OptOutFlagsOnly
+        } else {
+            Nsec3OptOut::NoOptOut
+        };
+
         if self.use_nsec3 {
             let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
             let Nsec3Records {
                 nsec3_recs,
                 nsec3param_rec,
             } = records
-                .nsec3s::<_, BytesMut>(&apex, ttl, params, self.nsec3_opt_out)
+                .nsec3s::<_, BytesMut>(&apex, ttl, params, opt_out)
                 .unwrap();
             records.extend(nsec3_recs.into_iter().map(Record::from_record));
             records.insert(Record::from_record(nsec3param_rec)).unwrap();
