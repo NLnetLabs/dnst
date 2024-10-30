@@ -57,7 +57,7 @@ jobs:
         # install them. Some tests work with DNSSEC keys for which the OpenSSL
         # library must be compiled against which requires C build programs and
         # pkg-config. Install everything we need.
-        apt update
-        apt install -y build-essential ldnsutils libssl-dev pkg-config
+        sudo apt-get update
+        sudo apt-get install -y build-essential ldnsutils libssl-dev pkg-config
     - name: Run tests that are normally ignored
       run: cargo test --all-features --all-targets -- --ignored
