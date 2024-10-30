@@ -16,7 +16,7 @@ pub struct Nsec3Hash {
         short = 'a',
         value_name = "NUMBER_OR_MNEMONIC",
         default_value_t = Nsec3HashAlg::SHA1,
-        value_parser = ValueParser::new(Nsec3Hash::parse_nsec_alg)
+        value_parser = ValueParser::new(Nsec3Hash::parse_alg)
     )]
     algorithm: Nsec3HashAlg,
 
@@ -31,7 +31,13 @@ pub struct Nsec3Hash {
     iterations: u16,
 
     /// The salt in hex representation
-    #[arg(short = 's', long, value_name = "HEX_STRING", default_value_t = Nsec3Salt::empty(), value_parser = ValueParser::new(Nsec3Hash::parse_salt))]
+    #[arg(
+        long,
+        short = 's',
+        value_name = "HEX_STRING",
+        default_value_t = Nsec3Salt::empty(),
+        value_parser = ValueParser::new(Nsec3Hash::parse_salt)
+    )]
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
@@ -52,11 +58,9 @@ impl Nsec3Hash {
         }
     }
 
-    pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
+    pub fn parse_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
         if let Ok(num) = arg.parse() {
             let alg = Nsec3HashAlg::from_int(num);
-            // check for valid algorithm here, to be consistent with error messages
-            // if domain::validator::nsec::supported_nsec3_hash(alg) {
             if alg.to_mnemonic().is_some() {
                 Ok(alg)
             } else {
