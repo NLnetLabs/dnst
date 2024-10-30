@@ -3,6 +3,13 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["openssl", "ring"]
+
+# Cryptographic backends
+openssl = ["domain/openssl"]
+ring    = ["domain/ring"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 domain = { git = "http://github.com/NLnetLabs/domain", branch = "dnssec-key", features = ["unstable-sign"] }

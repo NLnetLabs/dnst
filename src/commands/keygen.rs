@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Write;
 
 use clap::{builder::ValueParser, Args, ValueEnum};
-use domain::base::iana::{Class, DigestAlg, SecAlg};
+use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::sign::{common, GenerateParams};
@@ -103,21 +103,12 @@ impl Keygen {
 
         // Prepare the contents to write.
         // TODO: Add 'display_as_bind()' to these types.
-        let secret_key = {
-            let mut buf = String::new();
-            secret_key.format_as_bind(&mut buf).unwrap();
-            buf
-        };
-        let public_key = {
-            let mut buf = String::new();
-            public_key.format_as_bind(Class::IN, &mut buf).unwrap();
-            buf
-        };
+        let secret_key = secret_key.display_as_bind().to_string();
+        let public_key = public_key.display_as_bind().to_string();
         let digest = digest.map(|digest| {
             format!(
-                "{} {} DS {}\n",
+                "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                Class::IN,
                 digest.display_zonefile(false)
             )
         });
