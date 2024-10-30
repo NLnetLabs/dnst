@@ -14,7 +14,7 @@ pub enum Command {
 
     /// Send a NOTIFY packet to DNS servers
     ///
-    /// This tells them that an updated zone is available at the master servers. It can perform TSIG
+    /// This tells them that an updated zone is available at the primaries. It can perform TSIG
     /// signatures and it can add a SOA serial number of the updated zone. If a server already has
     /// that serial number it will disregard the message.
     #[command(name = "notify")]
