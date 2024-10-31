@@ -1,28 +1,24 @@
-use std::{
-    net::{IpAddr, SocketAddr, SocketAddrV4},
-    str::FromStr,
-};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::str::FromStr;
 
 use bytes::Bytes;
-use domain::{
-    base::{
-        iana::{Class, Opcode, Rcode},
-        Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
-    },
-    net::client::{
-        dgram_stream,
-        protocol::{TcpConnect, UdpConnect},
-        request::{self, RequestMessage, RequestMessageMulti, SendRequest, SendRequestMulti},
-        stream, tsig,
-    },
-    rdata::{Aaaa, AllRecordData, Ns, Soa, A},
-    resolv::{
-        stub::conf::{ResolvConf, ServerConf, Transport},
-        StubResolver,
-    },
-    tsig::{Algorithm, Key, KeyName},
-    utils::base64,
+use domain::base::iana::{Class, Opcode, Rcode};
+use domain::base::{
+    Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl,
+    UnknownRecordData,
 };
+use domain::net::client::protocol::{TcpConnect, UdpConnect};
+use domain::net::client::request::{
+    self, RequestMessage, RequestMessageMulti, SendRequest, SendRequestMulti,
+};
+use domain::net::client::{dgram_stream, stream, tsig};
+use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
+use domain::resolv::{
+    stub::conf::{ResolvConf, ServerConf, Transport},
+    StubResolver,
+};
+use domain::tsig::{Algorithm, Key, KeyName};
+use domain::utils::base64;
 use octseq::Array;
 use tokio::net::TcpStream;
 
@@ -77,17 +73,21 @@ impl FromStr for TSigInfo {
         //
         // We can correct this by checking whether the name contains a valid
         // algorithm while the name doesn't.
-        if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
+        if Algorithm::from_str(algorithm).is_err()
+            && Algorithm::from_str(name).is_ok()
+        {
             (name, key, algorithm) = (key, algorithm, name);
         }
 
-        let algorithm = Algorithm::from_str(algorithm)
-            .map_err(|_| format!("Unsupported TSIG algorithm: {algorithm}"))?;
+        let algorithm = Algorithm::from_str(algorithm).map_err(|_| {
+            format!("Unsupported TSIG algorithm: {algorithm}")
+        })?;
 
-        let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
+        let key = base64::decode(key)
+            .map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
 
-        let name =
-            Name::<Array<255>>::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
+        let name = Name::<Array<255>>::from_str(name)
+            .map_err(|e| format!("TSIG name is invalid: {e}"))?;
 
         Ok(TSigInfo {
             name,
@@ -156,24 +156,25 @@ impl Update {
             }
         };
 
-        let domain = Name::from_str(domain)
-            .map_err(|_| format!("Invalid domain name: {domain}\n\n{LDNS_HELP}"))?;
+        let domain = Name::from_str(domain).map_err(|_| {
+            format!("Invalid domain name: {domain}\n\n{LDNS_HELP}")
+        })?;
 
         let ip = if *ip != "none" {
-            Some(
-                ip.parse()
-                    .map_err(|_| format!("Invalid IP address: {ip}\n\n{LDNS_HELP}"))?,
-            )
+            Some(ip.parse().map_err(|_| {
+                format!("Invalid IP address: {ip}\n\n{LDNS_HELP}")
+            })?)
         } else {
             None
         };
 
-        let zone = match zone {
-            Some(z) => {
-                Some(Name::from_str(z).map_err(|_| format!("Invalid zone: {z}\n\n{LDNS_HELP}"))?)
-            }
-            None => None,
-        };
+        let zone =
+            match zone {
+                Some(z) => Some(Name::from_str(z).map_err(|_| {
+                    format!("Invalid zone: {z}\n\n{LDNS_HELP}")
+                })?),
+                None => None,
+            };
 
         Ok(Self {
             domain,
@@ -224,7 +225,10 @@ impl Update {
     }
 
     /// Find the MNAME by sending a SOA query for the zone
-    async fn find_mname(&self, zone: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
+    async fn find_mname(
+        &self,
+        zone: &Name<Vec<u8>>,
+    ) -> Result<Name<Vec<u8>>, Error> {
         let resolver = StubResolver::new();
 
         let response = resolver
@@ -328,7 +332,8 @@ impl Update {
 
         // The mname should be tried first according to RFC2136 4.3
         // so we put that nsname first in the list.
-        if let Some(mname_idx) = nsnames.iter().position(|name| name == mname) {
+        if let Some(mname_idx) = nsnames.iter().position(|name| name == mname)
+        {
             nsnames.swap(0, mname_idx);
         }
 
@@ -389,7 +394,11 @@ impl Update {
     }
 
     /// Send the update packet to the names in nsnames in order until one responds
-    async fn send_update(&self, msg: Vec<u8>, nsnames: Vec<Name<Vec<u8>>>) -> Result<(), Error> {
+    async fn send_update(
+        &self,
+        msg: Vec<u8>,
+        nsnames: Vec<Name<Vec<u8>>>,
+    ) -> Result<(), Error> {
         let msg = Message::from_octets(msg).unwrap();
         let resolver = StubResolver::new();
         for name in nsnames {
@@ -397,10 +406,16 @@ impl Update {
             for socket in found_ips.port_iter(53) {
                 let response = match &self.tsig {
                     Some(tsig) => {
-                        let key =
-                            Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
-                                .unwrap();
-                        let msg = RequestMessageMulti::new(msg.clone()).unwrap();
+                        let key = Key::new(
+                            tsig.algorithm,
+                            &tsig.key,
+                            tsig.name.clone(),
+                            None,
+                            None,
+                        )
+                        .unwrap();
+                        let msg =
+                            RequestMessageMulti::new(msg.clone()).unwrap();
                         self.send_update_with_tsig(msg, key, socket).await
                     }
                     None => {
@@ -457,7 +472,8 @@ impl Update {
     ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
         let udp_connect = UdpConnect::new(socket);
         let tcp_connect = TcpConnect::new(socket);
-        let (connection, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
+        let (connection, transport) =
+            dgram_stream::Connection::new(udp_connect, tcp_connect);
         tokio::spawn(async move {
             transport.run().await;
         });
