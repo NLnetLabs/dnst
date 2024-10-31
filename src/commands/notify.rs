@@ -4,23 +4,18 @@ use std::{net::SocketAddr, str::FromStr};
 use bytes::Bytes;
 use chrono::{DateTime, Local, TimeDelta};
 use clap::builder::ValueParser;
-use domain::{
-    base::{
-        iana::{Class, Opcode},
-        Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl,
-    },
-    dep::octseq::Array,
-    net::client::{
-        dgram,
-        protocol::UdpConnect,
-        request::{RequestMessage, SendRequest},
-        tsig,
-    },
-    rdata::Soa,
-    resolv::stub::StubResolver,
-    tsig::{Algorithm, Key, KeyName},
-    utils::{base16, base64},
+use domain::base::iana::{Class, Opcode};
+use domain::base::{
+    Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl,
 };
+use domain::dep::octseq::Array;
+use domain::net::client::protocol::UdpConnect;
+use domain::net::client::request::{RequestMessage, SendRequest};
+use domain::net::client::{dgram, tsig};
+use domain::rdata::Soa;
+use domain::resolv::stub::StubResolver;
+use domain::tsig::{Algorithm, Key, KeyName};
+use domain::utils::{base16, base64};
 
 use crate::error::Error;
 
@@ -88,17 +83,21 @@ impl FromStr for TSigInfo {
         //
         // We can correct this by checking whether the name contains a valid
         // algorithm while the algorithm doesn't.
-        if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
+        if Algorithm::from_str(algorithm).is_err()
+            && Algorithm::from_str(name).is_ok()
+        {
             (name, key, algorithm) = (key, algorithm, name);
         }
 
-        let algorithm = Algorithm::from_str(algorithm)
-            .map_err(|_| format!("Unsupported TSIG algorithm: {algorithm}"))?;
+        let algorithm = Algorithm::from_str(algorithm).map_err(|_| {
+            format!("Unsupported TSIG algorithm: {algorithm}")
+        })?;
 
-        let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
+        let key = base64::decode(key)
+            .map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
 
-        let name =
-            Name::<Array<255>>::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
+        let name = Name::<Array<255>>::from_str(name)
+            .map_err(|e| format!("TSIG name is invalid: {e}"))?;
 
         Ok(TSigInfo {
             name,
@@ -195,8 +194,14 @@ impl Notify {
             .tsig
             .as_ref()
             .map(|tsig| {
-                Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
-                    .map_err(|e| format!("TSIG key is invalid: {e}"))
+                Key::new(
+                    tsig.algorithm,
+                    &tsig.key,
+                    tsig.name.clone(),
+                    None,
+                    None,
+                )
+                .map_err(|e| format!("TSIG key is invalid: {e}"))
             })
             .transpose()?;
 
@@ -226,17 +231,23 @@ impl Notify {
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                eprintln!("warning: invalid domain name \"{server}\", skipping.");
+                eprintln!(
+                    "warning: invalid domain name \"{server}\", skipping."
+                );
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                eprintln!("warning: could not resolve host \"{name}\", skipping.");
+                eprintln!(
+                    "warning: could not resolve host \"{name}\", skipping."
+                );
                 continue;
             };
 
             if hosts.is_empty() {
-                eprintln!("skipping bad address: {name}: Name or service not known");
+                eprintln!(
+                    "skipping bad address: {name}: Name or service not known"
+                );
                 continue;
             }
 
@@ -256,7 +267,9 @@ impl Notify {
         tsig: &Option<Key>,
     ) {
         let resp = match &tsig {
-            Some(tsig) => self.notify_host_with_tsig(socket, msg, tsig.clone()).await,
+            Some(tsig) => {
+                self.notify_host_with_tsig(socket, msg, tsig.clone()).await
+            }
             None => self.notify_host_without_tsig(socket, msg).await,
         };
 
@@ -279,7 +292,8 @@ impl Notify {
     ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries as u8);
-        let connection = dgram::Connection::with_config(UdpConnect::new(socket), config);
+        let connection =
+            dgram::Connection::with_config(UdpConnect::new(socket), config);
         let connection = tsig::Connection::new(key, connection);
 
         let req = RequestMessage::new(msg).unwrap();
@@ -305,7 +319,8 @@ impl Notify {
     ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries as u8);
-        let connection = dgram::Connection::with_config(UdpConnect::new(socket), config);
+        let connection =
+            dgram::Connection::with_config(UdpConnect::new(socket), config);
 
         let req = RequestMessage::new(msg).unwrap();
         let mut req = SendRequest::send_request(&connection, req);
