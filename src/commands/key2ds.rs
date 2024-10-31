@@ -1,16 +1,13 @@
 use std::{fs::File, io::Write, path::PathBuf};
 
-use clap::{builder::ValueParser, Parser};
-use domain::{
-    base::{
-        iana::{DigestAlg, SecAlg},
-        zonefile_fmt::ZonefileFmt,
-        Record,
-    },
-    rdata::Ds,
-    validate::DnskeyExt,
-    zonefile::inplace::{Entry, ScannedRecordData},
-};
+use clap::builder::ValueParser;
+use clap::Parser;
+use domain::base::iana::{DigestAlg, SecAlg};
+use domain::base::zonefile_fmt::ZonefileFmt;
+use domain::base::Record;
+use domain::rdata::Ds;
+use domain::validate::DnskeyExt;
+use domain::zonefile::inplace::{Entry, ScannedRecordData};
 
 use crate::error::Error;
 
@@ -60,7 +57,8 @@ pub fn parse_digest_alg(arg: &str) -> Result<DigestAlg, Error> {
             Err(Error::from("unknown algorithm number"))
         }
     } else {
-        DigestAlg::from_mnemonic(arg.as_bytes()).ok_or(Error::from("unknown algorithm mnemonic"))
+        DigestAlg::from_mnemonic(arg.as_bytes())
+            .ok_or(Error::from("unknown algorithm mnemonic"))
     }
 }
 
@@ -72,11 +70,12 @@ impl Key2ds {
                 self.keyfile.display()
             )
         })?;
-        let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file).unwrap();
+        let zonefile =
+            domain::zonefile::inplace::Zonefile::load(&mut file).unwrap();
         for entry in zonefile {
             let entry = entry.map_err(|e| {
                 format!(
-                    "Error while reading public key file \"{}\": {e}",
+                    "Error while reading public key from file \"{}\": {e}",
                     self.keyfile.display()
                 )
             })?;
@@ -124,11 +123,15 @@ impl Key2ds {
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
-                let filename = format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
-                let mut out_file = File::create(&filename)
-                    .map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
+                let filename =
+                    format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
+                let mut out_file = File::create(&filename).map_err(|e| {
+                    format!("Could not create file \"{filename}\": {e}")
+                })?;
                 writeln!(out_file, "{}", rr.display_zonefile(false))
-                    .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                    .map_err(|e| {
+                        format!("Could not write to file \"{filename}\": {e}")
+                    })?;
 
                 // This is different from ldns, but I think writing out the
                 // filename we wrote to is useful:
