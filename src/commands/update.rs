@@ -8,9 +8,7 @@ use domain::base::{
     UnknownRecordData,
 };
 use domain::net::client::protocol::{TcpConnect, UdpConnect};
-use domain::net::client::request::{
-    self, RequestMessage, RequestMessageMulti, SendRequest, SendRequestMulti,
-};
+use domain::net::client::request::{self, RequestMessage, RequestMessageMulti, SendRequest};
 use domain::net::client::{dgram_stream, stream, tsig};
 use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
 use domain::resolv::{
@@ -414,8 +412,7 @@ impl Update {
                             None,
                         )
                         .unwrap();
-                        let msg =
-                            RequestMessageMulti::new(msg.clone()).unwrap();
+                        let msg = RequestMessage::new(msg.clone()).unwrap();
                         self.send_update_with_tsig(msg, key, socket).await
                     }
                     None => {
@@ -448,13 +445,13 @@ impl Update {
 
     async fn send_update_with_tsig(
         &self,
-        msg: RequestMessageMulti<Vec<u8>>,
+        msg: RequestMessage<Vec<u8>>,
         key: Key,
         socket: SocketAddr,
     ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
         let tcp_conn = TcpStream::connect(socket).await.unwrap();
         let (connection, transport) =
-            stream::Connection::<RequestMessage<Vec<u8>>, _>::new(tcp_conn);
+            stream::Connection::<_, RequestMessageMulti<Vec<u8>>>::new(tcp_conn);
         let connection = tsig::Connection::new(key, connection);
 
         tokio::spawn(async move {
@@ -462,7 +459,7 @@ impl Update {
         });
 
         let mut req = connection.send_request(msg);
-        Ok(req.get_response().await?.unwrap())
+        Ok(req.get_response().await?)
     }
 
     async fn send_update_without_tsig(
