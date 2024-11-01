@@ -167,14 +167,11 @@ impl SignZone {
 
         if self.use_nsec3 {
             let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-            let Nsec3Records {
-                nsec3_recs,
-                nsec3param_rec,
-            } = records
+            let Nsec3Records { nsec3s, nsec3param } = records
                 .nsec3s::<_, BytesMut>(&apex, ttl, params, opt_out)
                 .unwrap();
-            records.extend(nsec3_recs.into_iter().map(Record::from_record));
-            records.insert(Record::from_record(nsec3param_rec)).unwrap();
+            records.extend(nsec3s.into_iter().map(Record::from_record));
+            records.insert(Record::from_record(nsec3param)).unwrap();
         } else {
             let nsecs = records.nsecs::<Bytes>(&apex, ttl);
             records.extend(nsecs.into_iter().map(Record::from_record));
