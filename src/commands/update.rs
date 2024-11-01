@@ -459,7 +459,7 @@ impl Update {
         });
 
         let mut req = connection.send_request(msg);
-        Ok(req.get_response().await?)
+        req.get_response().await
     }
 
     async fn send_update_without_tsig(
