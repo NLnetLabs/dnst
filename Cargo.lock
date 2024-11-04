@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=multiple-key-signing#f6c8c7e6479bc1f2eacd272e97a08466efbfaac9"
+source = "git+https://github.com/NLnetLabs/domain?branch=multiple-key-signing#b2158ab49d4a44fa795f1ba468b74c129102378e"
 dependencies = [
  "bytes",
  "futures-util",
@@ -269,6 +269,7 @@ dependencies = [
  "rand",
  "ring",
  "rustversion",
+ "secrecy",
  "serde",
  "time",
  "tokio",
@@ -729,6 +730,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1136,3 +1146,9 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"

@@ -9,7 +9,7 @@ use std::fs::File;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
-use domain::base::{Name, Record, Ttl};
+use domain::base::{Name, Record, Rtype, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
@@ -73,6 +73,14 @@ pub struct SignZone {
         conflicts_with = "nsec3_opt_out_flags_only"
     )]
     nsec3_opt_out: bool,
+
+    /// Hash only, don't sign
+    #[arg(short = 'H', default_value_t = false)]
+    hash_only: bool,
+
+    /// Output diagnostic comments
+    #[arg(short = 'c', default_value_t = false)]
+    diagnostic_comments: bool,
 
     /// zonefile
     #[arg(value_name = "zonefile")]
@@ -155,7 +163,7 @@ impl SignZone {
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
-        let opt_out = if self.nsec3_opt_out {
+        let opt_out = if self.hash_only {
             Nsec3OptOut::OptOut
         } else if self.nsec3_opt_out_flags_only {
             Nsec3OptOut::OptOutFlagsOnly
@@ -163,25 +171,50 @@ impl SignZone {
             Nsec3OptOut::NoOptOut
         };
 
-        if self.use_nsec3 {
+        let hashes = if self.use_nsec3 {
             let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-            let Nsec3Records { nsec3s, nsec3param } = records
-                .nsec3s::<_, BytesMut>(&apex, ttl, params, opt_out)
+            let Nsec3Records {
+                recs,
+                param,
+                hashes,
+            } = records
+                .nsec3s::<_, BytesMut>(&apex, ttl, params, opt_out, self.diagnostic_comments)
                 .unwrap();
-            records.extend(nsec3s.into_iter().map(Record::from_record));
-            records.insert(Record::from_record(nsec3param)).unwrap();
+            records.extend(recs.into_iter().map(Record::from_record));
+            records.insert(Record::from_record(param)).unwrap();
+            hashes
         } else {
             let nsecs = records.nsecs::<Bytes>(&apex, ttl);
             records.extend(nsecs.into_iter().map(Record::from_record));
+            None
+        };
+
+        if !self.hash_only {
+            let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
+            let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
+            let extra_records = records
+                .sign(&apex, expiration, inception, keys.as_slice())
+                .unwrap();
+            records.extend(extra_records.into_iter().map(Record::from_record));
         }
 
-        let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
-        let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
-        let extra_records = records
-            .sign(&apex, expiration, inception, keys.as_slice())
-            .unwrap();
-        records.extend(extra_records.into_iter().map(Record::from_record));
-        records.write(&mut std::io::stdout().lock()).unwrap();
+        if let Some(hashes) = hashes {
+            records
+                .write_with_comments(&mut std::io::stdout().lock(), |r| {
+                    if r.rtype() == Rtype::NSEC3 {
+                        if let Some(hash) = hashes.get(r.owner()) {
+                            Some(format!(" {hash}"))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+        } else {
+            records.write(&mut std::io::stdout().lock()).unwrap();
+        }
 
         Ok(())
     }
