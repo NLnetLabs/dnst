@@ -8,7 +8,9 @@ use domain::base::{
     UnknownRecordData,
 };
 use domain::net::client::protocol::{TcpConnect, UdpConnect};
-use domain::net::client::request::{self, RequestMessage, RequestMessageMulti, SendRequest};
+use domain::net::client::request::{
+    self, RequestMessage, RequestMessageMulti, SendRequest,
+};
 use domain::net::client::{dgram_stream, stream, tsig};
 use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
 use domain::resolv::{
@@ -22,6 +24,13 @@ use tokio::net::TcpStream;
 
 use crate::error::Error;
 
+// Clap gives `Option<T>` special handling by making the argument optional.
+// This is not what we want because we require an explicit "none" value. So,
+// we create an alias, so that clap doesn't recognize that we are using an
+// option and pray that Ed Page doesn't make clap smart enough to figure
+// this out.
+type OptionIpAddr = Option<IpAddr>;
+
 #[derive(Clone, Debug, clap::Args)]
 pub struct Update {
     /// Domain name to update
@@ -29,8 +38,8 @@ pub struct Update {
     domain: Name<Vec<u8>>,
     /// IP address to associate with the given domain name.
     /// Use `none` to delete the records for the domain name.
-    #[arg(required = true, value_parser = optional_ip)]
-    ip: Option<IpAddr>,
+    #[arg(value_parser = optional_ip)]
+    ip: OptionIpAddr,
     /// Zone to update
     #[arg(long = "zone")]
     zone: Option<Name<Vec<u8>>>,
@@ -450,8 +459,10 @@ impl Update {
         socket: SocketAddr,
     ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
         let tcp_conn = TcpStream::connect(socket).await.unwrap();
-        let (connection, transport) =
-            stream::Connection::<_, RequestMessageMulti<Vec<u8>>>::new(tcp_conn);
+        let (connection, transport) = stream::Connection::<
+            _,
+            RequestMessageMulti<Vec<u8>>,
+        >::new(tcp_conn);
         let connection = tsig::Connection::new(key, connection);
 
         tokio::spawn(async move {
