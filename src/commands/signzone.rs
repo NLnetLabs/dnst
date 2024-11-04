@@ -131,9 +131,7 @@ impl SignZone {
                     ))
                 })?;
 
-            // Use OpenSSL as the Ring backend doesn't support key sizes and
-            // algorithms that we require.
-            let key_pair = domain::sign::openssl::KeyPair::from_bytes(
+            let key_pair = domain::sign::common::KeyPair::from_bytes(
                 &secret_key,
                 public_key_info.raw_public_key(),
             )
