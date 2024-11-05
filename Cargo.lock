@@ -250,7 +250,6 @@ dependencies = [
  "clap",
  "domain",
  "octseq",
- "openssl",
  "ring",
 ]
 
