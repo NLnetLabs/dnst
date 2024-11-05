@@ -237,7 +237,7 @@ impl SignZone {
     }
 }
 
-/// Given a BIND style key pair path prefix.
+/// Given a BIND style key pair path prefix load the keys from disk.
 ///
 /// Expects a path that is the common prefix in BIND style of a pair of '.key'
 /// (public) and '.private' key files, i.e. given
