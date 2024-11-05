@@ -111,79 +111,9 @@ pub struct SignZone {
 
 impl SignZone {
     pub fn execute(self) -> Result<(), Error> {
-        let mut records = self.load_zone()?;
-
-        //---
-
-        // Import the specified key.
-        let mut keys = vec![];
-        for key_path in self.key_paths {
-            // Given a key path like: /path/to/K<zone name>.+<algorithm>+<key tag>
-            // The presence of the '.' causes Path to consider the algorithm and
-            // key tag to be the extension of the path, yet we want to load files
-            // with names of the form:
-            //   - /path/to/K<zone name>.+<algorithm>+<key tag>.key
-            //   - /path/to/K<zone name>.+<algorithm>+<key tag>.private
-
-            let key_path_str = key_path.to_string_lossy();
-            let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
-            let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
-
-            let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
-                format!(
-                    "Unable to load private key from file '{}': {}",
-                    private_key_path.display(),
-                    err
-                )
-            })?;
-
-            let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
-                format!(
-                    "Unable to load public key from file '{}': {}",
-                    public_key_path.display(),
-                    err
-                )
-            })?;
-
-            let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
-                format!(
-                    "Unable to parse BIND formatted private key file '{}': {}",
-                    private_key_path.display(),
-                    err
-                )
-            })?;
-
-            let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
-                format!(
-                    "Unable to parse BIND formatted public key file '{}': {}",
-                    public_key_path.display(),
-                    err
-                )
-            })?;
-
-            let key_pair = KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key())
-                .map_err(|err| {
-                    format!(
-                        "Unable to import private key from file '{}': {}",
-                        private_key_path.display(),
-                        err
-                    )
-                })?;
-
-            let signing_key = SigningKey::new(
-                public_key_info.owner().clone(),
-                public_key_info.flags(),
-                key_pair,
-            );
-
-            keys.push(signing_key);
-        }
-
-        //---
-
-        let (apex, ttl) = Self::find_apex(&records).unwrap();
-
-        let opt_out = if self.hash_only {
+        // Post-process arguments.
+        // TODO: Can Clap do this for us?
+        let opt_out = if self.nsec3_opt_out {
             Nsec3OptOut::OptOut
         } else if self.nsec3_opt_out_flags_only {
             Nsec3OptOut::OptOutFlagsOnly
@@ -191,6 +121,25 @@ impl SignZone {
             Nsec3OptOut::NoOptOut
         };
 
+        let signing_mode = if self.hash_only {
+            SigningMode::HashOnly
+        } else {
+            SigningMode::HashAndSign
+        };
+
+        // Import the specified keys.
+        let mut keys = vec![];
+        for key_path in &self.key_paths {
+            keys.push(load_key_pair(key_path)?);
+        }
+
+        // Read the zone file.
+        let mut records = self.load_zone()?;
+
+        // Find the apex.
+        let (apex, ttl) = Self::find_apex(&records).unwrap();
+
+        // Hash the zone with NSEC or NSEC3.
         let hashes = if self.use_nsec3 {
             let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
             let Nsec3Records {
@@ -209,7 +158,8 @@ impl SignZone {
             None
         };
 
-        if !self.hash_only {
+        // Sign the zone unless disabled.
+        if signing_mode == SigningMode::HashAndSign {
             let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
             let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
             let extra_records = records
@@ -218,6 +168,7 @@ impl SignZone {
             records.extend(extra_records.into_iter().map(Record::from_record));
         }
 
+        // Output the resulting zone, with comments if enabled.
         if let Some(hashes) = hashes {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r| {
@@ -290,4 +241,86 @@ impl SignZone {
         };
         Ok((soa.family_name().cloned(), ttl))
     }
+}
+
+/// Given a BIND style key pair path prefix.
+///
+/// Expects a path that is the common prefix in BIND style of a pair of '.key'
+/// (public) and '.private' key files, i.e. given
+/// /path/to/K<zone_name>.+<algorithm>+<key tag> load and parse the following
+/// files:
+///
+///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.key
+///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.private
+///
+/// However, this function is not strict about the format of the prefix, it
+/// will attempt to load files with suffixes '.key' and '.private' irrespective
+/// of the format of the rest of the path.
+fn load_key_pair(key_path: &PathBuf) -> Result<SigningKey<Bytes, KeyPair>, Error> {
+    let key_path_str = key_path.to_string_lossy();
+    let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
+    let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
+
+    let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
+        format!(
+            "Unable to load private key from file '{}': {}",
+            private_key_path.display(),
+            err
+        )
+    })?;
+
+    let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
+        format!(
+            "Unable to load public key from file '{}': {}",
+            public_key_path.display(),
+            err
+        )
+    })?;
+
+    let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
+        format!(
+            "Unable to parse BIND formatted private key file '{}': {}",
+            private_key_path.display(),
+            err
+        )
+    })?;
+
+    let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
+        format!(
+            "Unable to parse BIND formatted public key file '{}': {}",
+            public_key_path.display(),
+            err
+        )
+    })?;
+
+    let key_pair =
+        KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key()).map_err(|err| {
+            format!(
+                "Unable to import private key from file '{}': {}",
+                private_key_path.display(),
+                err
+            )
+        })?;
+
+    let signing_key = SigningKey::new(
+        public_key_info.owner().clone(),
+        public_key_info.flags(),
+        key_pair,
+    );
+
+    Ok(signing_key)
+}
+
+//------------ SigningMode ---------------------------------------------------
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+enum SigningMode {
+    /// Both hash (NSEC/NSEC3) and sign zone records.
+    #[default]
+    HashAndSign,
+
+    /// Only hash (NSEC/NSEC3) zone records, don't sign them.
+    HashOnly,
+    // /// Only sign zone records, assume they are already hashed.
+    // SignOnly,
 }
