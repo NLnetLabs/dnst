@@ -194,12 +194,7 @@ impl SignZone {
         }
         let mut records = SortedRecords::new();
         for entry in reader {
-            let Ok(entry) = entry else {
-                return Err(Error::from(format!(
-                    "Invalid zone file: {}",
-                    entry.unwrap_err()
-                )));
-            };
+            let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
             match entry {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
