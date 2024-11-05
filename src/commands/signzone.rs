@@ -86,15 +86,15 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
-    /// use layout in signed zone and print comments on DNSSEC records
+    /// Use layout in signed zone and print comments on DNSSEC records
     #[arg(short = 'b', default_value_t = false)]
     diagnostic_comments: bool,
 
-    /// zonefile
+    /// The zonefile to sign
     #[arg(value_name = "zonefile")]
     zonefile_path: PathBuf,
 
-    /// key
+    /// The keys to sign the zone with
     ///
     /// keys must be specified by their base name (usually
     /// K<name>+<alg>+<id>), i.e. WITHOUT the .private extension.
