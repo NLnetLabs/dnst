@@ -14,7 +14,7 @@ use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
 use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
-use domain::zonefile::inplace;
+use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 
@@ -232,12 +232,25 @@ impl SignZone {
         let reader = inplace::Zonefile::load(&mut zone_file).unwrap();
         let mut records = SortedRecords::new();
         for entry in reader {
-            let entry = entry.unwrap();
-            let inplace::Entry::Record(record) = entry else {
-                unimplemented!();
+            let Ok(entry) = entry else {
+                return Err(Error::from(format!(
+                    "Invalid zone file: {}",
+                    entry.unwrap_err()
+                )));
             };
-            let record: StoredRecord = record.flatten_into();
-            records.insert(record).unwrap();
+            match entry {
+                Entry::Record(record) => {
+                    let record: StoredRecord = record.flatten_into();
+                    records
+                        .insert(record)
+                        .expect("Invalid zone file: Duplicate record detected: {record:?}");
+                }
+                Entry::Include { .. } => {
+                    return Err(Error::from(
+                        "Invald zone file: $INCLUDE directive is not supported",
+                    ));
+                }
+            }
         }
         Ok(records)
     }
