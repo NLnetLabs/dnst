@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytes = { version = "1.0", default-features = false }
+bytes = { version = "1.1", default-features = false }
 clap = { version = "4", features = ["derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain", branch = "multiple-key-signing", features = [
+#domain = { path = "../domain2/", features = [
     "openssl",
     "ring",
     "unstable-sign",
