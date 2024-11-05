@@ -23,8 +23,7 @@ pub struct Nsec3Hash {
     /// The number of hash iterations
     #[arg(
         long,
-        short = 'i',
-        visible_short_alias = 't',
+        short = 't',
         value_name = "NUMBER",
         default_value_t = 1
     )]
