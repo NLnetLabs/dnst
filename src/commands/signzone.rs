@@ -13,7 +13,10 @@ use domain::base::{Name, Record, Rtype, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
+use domain::sign::common::KeyPair;
 use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
+use domain::sign::{SecretKeyBytes, SigningKey};
+use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
@@ -142,37 +145,32 @@ impl SignZone {
                 )
             })?;
 
-            let secret_key =
-                domain::sign::SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
-                    format!(
-                        "Unable to parse BIND formatted private key file '{}': {}",
-                        private_key_path.display(),
-                        err
-                    )
-                })?;
-
-            let public_key_info: domain::validate::Key<Bytes> =
-                domain::validate::Key::parse_from_bind(&public_data).map_err(|err| {
-                    format!(
-                        "Unable to parse BIND formatted public key file '{}': {}",
-                        public_key_path.display(),
-                        err
-                    )
-                })?;
-
-            let key_pair = domain::sign::common::KeyPair::from_bytes(
-                &secret_key,
-                public_key_info.raw_public_key(),
-            )
-            .map_err(|err| {
+            let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
                 format!(
-                    "Unable to import private key from file '{}': {}",
+                    "Unable to parse BIND formatted private key file '{}': {}",
                     private_key_path.display(),
                     err
                 )
             })?;
 
-            let signing_key = domain::sign::SigningKey::new(
+            let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
+                format!(
+                    "Unable to parse BIND formatted public key file '{}': {}",
+                    public_key_path.display(),
+                    err
+                )
+            })?;
+
+            let key_pair = KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key())
+                .map_err(|err| {
+                    format!(
+                        "Unable to import private key from file '{}': {}",
+                        private_key_path.display(),
+                        err
+                    )
+                })?;
+
+            let signing_key = SigningKey::new(
                 public_key_info.owner().to_owned(),
                 public_key_info.flags(),
                 key_pair,
