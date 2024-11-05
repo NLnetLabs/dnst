@@ -219,16 +219,14 @@ impl SignZone {
 
     fn find_apex(
         records: &SortedRecords<StoredName, StoredRecordData>,
-    ) -> Result<(FamilyName<Name<Bytes>>, Ttl), std::io::Error> {
+    ) -> Result<(FamilyName<Name<Bytes>>, Ttl), Error> {
         let soa = match records.find_soa() {
             Some(soa) => soa,
             None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "cannot find SOA record",
-                ))
+                return Err(Error::from("Invalid zone file: Cannot find SOA record"));
             }
         };
+
         let ttl = match *soa.first().data() {
             ZoneRecordData::Soa(ref soa_data) => {
                 // RFC 9077 updated RFC 4034 (NSEC) and RFC 5155 (NSSE3) to
@@ -239,6 +237,7 @@ impl SignZone {
             }
             _ => unreachable!(),
         };
+
         Ok((soa.family_name().cloned(), ttl))
     }
 }
