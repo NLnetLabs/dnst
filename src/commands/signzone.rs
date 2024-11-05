@@ -33,7 +33,7 @@ pub struct SignZone {
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 'a',
         value_name = "algorithm",
-        default_value_t = Nsec3HashAlg::SHA1,
+        default_value = "SHA-1",
         value_parser = ValueParser::new(Nsec3Hash::parse_nsec_alg),
         requires = "nsec3"
     )]
