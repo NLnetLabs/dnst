@@ -214,11 +214,7 @@ impl SignZone {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r| {
                     if r.rtype() == Rtype::NSEC3 {
-                        if let Some(hash) = hashes.get(r.owner()) {
-                            Some(format!(" {hash}"))
-                        } else {
-                            None
-                        }
+                        hashes.get(r.owner()).map(|hash| format!(" {hash}"))
                     } else {
                         None
                     }
