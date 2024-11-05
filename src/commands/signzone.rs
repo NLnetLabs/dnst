@@ -315,6 +315,7 @@ enum SigningMode {
 
     /// Only hash (NSEC/NSEC3) zone records, don't sign them.
     HashOnly,
+
     // /// Only sign zone records, assume they are already hashed.
     // SignOnly,
 }
