@@ -15,7 +15,7 @@ pub struct Nsec3Hash {
         long,
         short = 'a',
         value_name = "NUMBER_OR_MNEMONIC",
-        default_value_t = Nsec3HashAlg::SHA1,
+        default_value = "SHA-1",
         value_parser = ValueParser::new(Nsec3Hash::parse_alg)
     )]
     algorithm: Nsec3HashAlg,
