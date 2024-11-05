@@ -168,7 +168,7 @@ impl SignZone {
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
-        let opt_out = if self.hash_only {
+        let opt_out = if self.nsec3_opt_out {
             Nsec3OptOut::OptOut
         } else if self.nsec3_opt_out_flags_only {
             Nsec3OptOut::OptOutFlagsOnly
