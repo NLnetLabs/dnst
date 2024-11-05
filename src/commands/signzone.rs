@@ -1,11 +1,11 @@
 use core::ops::{Add, Sub};
 
 use std::cmp::min;
+use std::fs::File;
 use std::path::PathBuf;
 
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
-use std::fs::File;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
@@ -24,12 +24,13 @@ use super::nsec3hash::Nsec3Hash;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct SignZone {
-    /// use NSEC3 instead of NSEC.
+    /// Use NSEC3 instead of NSEC
     #[arg(short = 'n', default_value_t = false, group = "nsec3")]
     use_nsec3: bool,
 
-    /// NSEC3 hashing algorithm
+    /// Hashing algorithm
     #[arg(
+        help_heading = Some("NSEC3 (when using '-n')"),
         short = 'a',
         value_name = "algorithm",
         default_value_t = Nsec3HashAlg::SHA1,
@@ -38,17 +39,19 @@ pub struct SignZone {
     )]
     algorithm: Nsec3HashAlg,
 
-    /// NSEC3 number of hash iterations
+    /// Number of hash iterations
     #[arg(
+        help_heading = Some("NSEC3 (when using '-n')"),
         short = 't',
         value_name = "number",
-        default_value_t = 1,
+        default_value_t = 0, // TODO: make the default for ldns-signzone 1 for backward compatibility?
         requires = "nsec3"
     )]
     iterations: u16,
 
-    /// NSEC3 salt
+    /// Salt
     #[arg(
+        help_heading = Some("NSEC3 (when using '-n')"),
         short = 's',
         value_name = "string",
         default_value_t = Nsec3Salt::empty(),
@@ -56,8 +59,9 @@ pub struct SignZone {
     )]
     salt: Nsec3Salt<Bytes>,
 
-    /// NSEC3 set the opt-out flag on all nsec3 rrs
+    /// Set the opt-out flag on all NSEC3 RRs
     #[arg(
+        help_heading = Some("NSEC3 (when using '-n')"),
         short = 'p',
         default_value_t = false,
         requires = "nsec3",
@@ -65,9 +69,10 @@ pub struct SignZone {
     )]
     nsec3_opt_out_flags_only: bool,
 
-    /// NSEC3 set the opt-out flag on all nsec3 rrs and skip unsigned delegations
+    /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
     #[arg(
-        short = 'A',
+        help_heading = Some("NSEC3 (when using '-n')"),
+        short = 'A', // Matches BIND dnssec-signzone
         default_value_t = false,
         requires = "nsec3",
         conflicts_with = "nsec3_opt_out_flags_only"
@@ -78,8 +83,8 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
-    /// Output diagnostic comments
-    #[arg(short = 'c', default_value_t = false)]
+    /// use layout in signed zone and print comments on DNSSEC records
+    #[arg(short = 'b', default_value_t = false)]
     diagnostic_comments: bool,
 
     /// zonefile
