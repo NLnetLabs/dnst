@@ -90,6 +90,10 @@ pub struct SignZone {
     #[arg(short = 'b', default_value_t = false)]
     diagnostic_comments: bool,
 
+    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
+    #[arg(short = 'o')]
+    origin: Option<Name<Bytes>>,
+
     /// The zonefile to sign
     #[arg(value_name = "zonefile")]
     zonefile_path: PathBuf,
@@ -229,7 +233,10 @@ impl SignZone {
 
     fn load_zone(&self) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         let mut zone_file = File::open(self.zonefile_path.as_path())?;
-        let reader = inplace::Zonefile::load(&mut zone_file).unwrap();
+        let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
+        if let Some(origin) = &self.origin {
+            reader.set_origin(origin.to_owned());
+        }
         let mut records = SortedRecords::new();
         for entry in reader {
             let Ok(entry) = entry else {
