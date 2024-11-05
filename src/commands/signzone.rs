@@ -171,7 +171,7 @@ impl SignZone {
                 })?;
 
             let signing_key = SigningKey::new(
-                public_key_info.owner().to_owned(),
+                public_key_info.owner().clone(),
                 public_key_info.flags(),
                 key_pair,
             );
