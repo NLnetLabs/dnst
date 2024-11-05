@@ -2,7 +2,7 @@ use core::ops::{Add, Sub};
 
 use std::cmp::min;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
@@ -256,7 +256,7 @@ impl SignZone {
 /// However, this function is not strict about the format of the prefix, it
 /// will attempt to load files with suffixes '.key' and '.private' irrespective
 /// of the format of the rest of the path.
-fn load_key_pair(key_path: &PathBuf) -> Result<SigningKey<Bytes, KeyPair>, Error> {
+fn load_key_pair(key_path: &Path) -> Result<SigningKey<Bytes, KeyPair>, Error> {
     let key_path_str = key_path.to_string_lossy();
     let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
     let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
