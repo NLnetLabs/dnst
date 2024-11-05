@@ -127,37 +127,37 @@ impl SignZone {
             let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
 
             let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
-                Error::from(format!(
+                format!(
                     "Unable to load private key from file '{}': {}",
                     private_key_path.display(),
                     err
-                ))
+                )
             })?;
 
             let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
-                Error::from(format!(
+                format!(
                     "Unable to load public key from file '{}': {}",
                     public_key_path.display(),
                     err
-                ))
+                )
             })?;
 
             let secret_key =
                 domain::sign::SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
-                    Error::from(format!(
+                    format!(
                         "Unable to parse BIND formatted private key file '{}': {}",
                         private_key_path.display(),
                         err
-                    ))
+                    )
                 })?;
 
             let public_key_info: domain::validate::Key<Bytes> =
                 domain::validate::Key::parse_from_bind(&public_data).map_err(|err| {
-                    Error::from(format!(
+                    format!(
                         "Unable to parse BIND formatted public key file '{}': {}",
                         public_key_path.display(),
                         err
-                    ))
+                    )
                 })?;
 
             let key_pair = domain::sign::common::KeyPair::from_bytes(
@@ -165,11 +165,11 @@ impl SignZone {
                 public_key_info.raw_public_key(),
             )
             .map_err(|err| {
-                Error::from(format!(
+                format!(
                     "Unable to import private key from file '{}': {}",
                     private_key_path.display(),
                     err
-                ))
+                )
             })?;
 
             let signing_key = domain::sign::SigningKey::new(
