@@ -40,11 +40,14 @@ pub struct SignZone {
     algorithm: Nsec3HashAlg,
 
     /// Number of hash iterations
+    // TODO: make the default for dnst-signzone be 0 (to match best practice)
+    // while leaving the default for ldns-signzone be 1 (to match ldns), or
+    // maybe even change the default for both to 0.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 't',
         value_name = "number",
-        default_value_t = 0, // TODO: make the default for ldns-signzone 1 for backward compatibility?
+        default_value_t = 1,
         requires = "nsec3"
     )]
     iterations: u16,
@@ -168,7 +171,7 @@ impl SignZone {
 
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
-        let opt_out = if self.nsec3_opt_out {
+        let opt_out = if self.hash_only {
             Nsec3OptOut::OptOut
         } else if self.nsec3_opt_out_flags_only {
             Nsec3OptOut::OptOutFlagsOnly
