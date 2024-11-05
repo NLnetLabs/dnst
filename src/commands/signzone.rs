@@ -190,7 +190,7 @@ impl SignZone {
         let mut zone_file = File::open(self.zonefile_path.as_path())?;
         let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
         if let Some(origin) = &self.origin {
-            reader.set_origin(origin.to_owned());
+            reader.set_origin(origin.clone());
         }
         let mut records = SortedRecords::new();
         for entry in reader {
