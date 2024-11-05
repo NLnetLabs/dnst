@@ -115,23 +115,30 @@ impl SignZone {
         // Import the specified key.
         let mut keys = vec![];
         for key_path in self.key_paths {
-            let old_ext = key_path.extension().unwrap().to_str().unwrap();
-            let new_ext = format!("{}.private", old_ext);
-            let private_key_path = key_path.with_extension(new_ext).display().to_string();
+            // Given a key path like: /path/to/K<zone name>.+<algorithm>+<key tag>
+            // The presence of the '.' causes Path to consider the algorithm and
+            // key tag to be the extension of the path, yet we want to load files
+            // with names of the form:
+            //   - /path/to/K<zone name>.+<algorithm>+<key tag>.key
+            //   - /path/to/K<zone name>.+<algorithm>+<key tag>.private
+
+            let key_path_str = key_path.to_string_lossy();
+            let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
+            let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
+
             let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
                 Error::from(format!(
                     "Unable to load private key from file '{}': {}",
-                    private_key_path, err
+                    private_key_path.display(),
+                    err
                 ))
             })?;
 
-            let old_ext = key_path.extension().unwrap().to_str().unwrap();
-            let new_ext = format!("{}.key", old_ext);
-            let public_key_path = key_path.with_extension(new_ext).display().to_string();
             let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
                 Error::from(format!(
                     "Unable to load public key from file '{}': {}",
-                    private_key_path, err
+                    public_key_path.display(),
+                    err
                 ))
             })?;
 
@@ -139,7 +146,8 @@ impl SignZone {
                 domain::sign::SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted private key file '{}': {}",
-                        private_key_path, err
+                        private_key_path.display(),
+                        err
                     ))
                 })?;
 
@@ -147,7 +155,8 @@ impl SignZone {
                 domain::validate::Key::parse_from_bind(&public_data).map_err(|err| {
                     Error::from(format!(
                         "Unable to parse BIND formatted public key file '{}': {}",
-                        private_key_path, err
+                        public_key_path.display(),
+                        err
                     ))
                 })?;
 
@@ -158,7 +167,8 @@ impl SignZone {
             .map_err(|err| {
                 Error::from(format!(
                     "Unable to import private key from file '{}': {}",
-                    private_key_path, err
+                    private_key_path.display(),
+                    err
                 ))
             })?;
 
