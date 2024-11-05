@@ -209,7 +209,7 @@ impl SignZone {
                 }
                 Entry::Include { .. } => {
                     return Err(Error::from(
-                        "Invald zone file: $INCLUDE directive is not supported",
+                        "Invalid zone file: $INCLUDE directive is not supported",
                     ));
                 }
             }
