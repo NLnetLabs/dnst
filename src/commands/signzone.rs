@@ -187,7 +187,7 @@ impl SignZone {
     }
 
     fn load_zone(&self) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
-        let mut zone_file = File::open(self.zonefile_path.as_path())?;
+        let mut zone_file = File::open(&self.zonefile_path)?;
         let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
