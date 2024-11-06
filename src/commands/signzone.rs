@@ -2,6 +2,7 @@ use core::ops::{Add, Sub};
 
 use std::cmp::min;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use bytes::{Bytes, BytesMut};
@@ -9,7 +10,7 @@ use clap::builder::ValueParser;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
-use domain::base::{Name, Record, Rtype, Ttl};
+use domain::base::{Name, NameBuilder, Record, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Nsec3param, ZoneRecordData};
@@ -171,11 +172,34 @@ impl SignZone {
         // Output the resulting zone, with comments if enabled.
         if let Some(hashes) = hashes {
             records
-                .write_with_comments(&mut std::io::stdout().lock(), |r| {
-                    if r.rtype() == Rtype::NSEC3 {
-                        hashes.get(r.owner()).map(|hash| format!(" {hash}"))
+                .write_with_comments(&mut std::io::stdout().lock(), |r, writer| {
+                    if let ZoneRecordData::Nsec3(nsec3) = r.data() {
+                        writer.write(b" ; { ")?;
+
+                        if nsec3.opt_out() {
+                            writer.write(b"flags: optout, ")?;
+                        }
+
+                        let next_owner_hash_hex = format!("{}", nsec3.next_owner());
+                        let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, &apex);
+
+                        let from = hashes
+                            .get(r.owner())
+                            .map(|n| format!("{}", n.fmt_with_dot()))
+                            .unwrap_or_default();
+
+                        let to = if let Ok(next_owner_name) = next_owner_name {
+                            hashes
+                                .get(&next_owner_name)
+                                .map(|n| format!("{}", n.fmt_with_dot()))
+                                .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}"))
+                        } else {
+                            format!("<invalid name: {next_owner_hash_hex}")
+                        };
+
+                        write!(writer, "from: {from}, to: {to} }}")
                     } else {
-                        None
+                        Ok(())
                     }
                 })
                 .unwrap();
@@ -235,6 +259,18 @@ impl SignZone {
 
         Ok((soa.family_name().cloned(), ttl))
     }
+}
+
+fn next_owner_hash_to_name(
+    next_owner_hash_hex: &String,
+    apex: &FamilyName<Name<Bytes>>,
+) -> Result<Name<Bytes>, ()> {
+    let mut builder = NameBuilder::new_bytes();
+    builder
+        .append_chars(next_owner_hash_hex.chars())
+        .map_err(|_| ())?;
+    let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
+    Ok(next_owner_name)
 }
 
 /// Given a BIND style key pair path prefix load the keys from disk.
