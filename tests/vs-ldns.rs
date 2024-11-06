@@ -41,7 +41,7 @@ fn assert_ldns_eq_dnst(ldns_command: &str, dnst_subcommand: &str, args: &[&str])
     assert_eq!(
         std::str::from_utf8(&dnst_output.stderr),
         Ok(""),
-        "Unexpected stderr content for command: {dnst_subcommand} {}",
+        "Unexpected stderr content for command: dnst {dnst_subcommand} {}",
         args.join(" ")
     );
     assert!(
@@ -52,14 +52,14 @@ fn assert_ldns_eq_dnst(ldns_command: &str, dnst_subcommand: &str, args: &[&str])
     );
     assert!(
         !dnst_output.stdout.is_empty(),
-        "Unexpected stdout content for command: {dnst_subcommand} {}: {:?}",
+        "Unexpected stdout content for command: dnst {dnst_subcommand} {}: {:?}",
         args.join(" "),
         std::str::from_utf8(&dnst_output.stdout)
     );
     assert_eq!(
         ldns_output.status.code(),
         dnst_output.status.code(),
-        "Exit code mismatch for command: {ldns_command}/{dnst_subcommand} {}",
+        "Exit code mismatch for command: {ldns_command}/dnst {dnst_subcommand} {}",
         args.join(" ")
     );
 
@@ -68,7 +68,7 @@ fn assert_ldns_eq_dnst(ldns_command: &str, dnst_subcommand: &str, args: &[&str])
     assert_eq!(
         std::str::from_utf8(&ldns_output.stdout),
         std::str::from_utf8(&dnst_output.stdout),
-        "Stdout content mismatch for command: {ldns_command}/{dnst_subcommand} {}",
+        "Stdout content mismatch for command: {ldns_command}/dnst {dnst_subcommand} {}",
         args.join(" ")
     );
 }
@@ -85,7 +85,7 @@ fn assert_exit_code_ldns_eq_dnst(ldns_command: &str, dnst_subcommand: &str, args
     assert_eq!(
         ldns_output.status.code(),
         dnst_output.status.code(),
-        "Exit code mismatch for command: {ldns_command}/{dnst_subcommand} {}",
+        "Exit code mismatch for command: {ldns_command}/dnst {dnst_subcommand} {}",
         args.join(" ")
     );
 }
