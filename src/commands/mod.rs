@@ -1,7 +1,8 @@
 //! The command of _dnst_.
-
 pub mod help;
 pub mod nsec3hash;
+
+use std::io::Write;
 
 use super::error::Error;
 
@@ -16,9 +17,9 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
         match self {
-            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(),
+            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(writer),
             Self::Help(help) => help.execute(),
         }
     }
