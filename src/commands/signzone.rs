@@ -172,9 +172,9 @@ impl SignZone {
         // Output the resulting zone, with comments if enabled.
         if let Some(hashes) = hashes {
             records
-                .write_with_comments(&mut std::io::stdout().lock(), |r, writer| {
-                    if let ZoneRecordData::Nsec3(nsec3) = r.data() {
-                        writer.write(b" ;{ flags: ")?;
+                .write_with_comments(&mut std::io::stdout().lock(), |r, writer| match r.data() {
+                    ZoneRecordData::Nsec3(nsec3) => {
+                        writer.write(b" ;{{ flags: ")?;
 
                         if nsec3.opt_out() {
                             writer.write(b"optout")?;
@@ -199,10 +199,21 @@ impl SignZone {
                             format!("<invalid name: {next_owner_hash_hex}")
                         };
 
-                        write!(writer, ", from: {from}, to: {to}}}")
-                    } else {
+                        writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
                         Ok(())
                     }
+
+                    ZoneRecordData::Dnskey(dnskey) => {
+                        writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
+                        if dnskey.is_secure_entry_point() {
+                            writer.write(b" (ksk)")?;
+                        } else if dnskey.is_zone_key() {
+                            writer.write(b" (zsk)")?;
+                        }
+                        writer.write_fmt(format_args!(", size = {}b}}", "TODO"))
+                    }
+
+                    _ => Ok(()),
                 })
                 .unwrap();
         } else {
