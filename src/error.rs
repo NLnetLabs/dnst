@@ -1,5 +1,7 @@
 use std::{error, fmt, io};
 
+//------------ Error ---------------------------------------------------------
+
 /// A program error.
 ///
 /// Such errors are highly likely to halt the program.
@@ -20,6 +22,8 @@ struct Information {
     context: Vec<Box<str>>,
 }
 
+//--- Interaction
+
 impl Error {
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
@@ -35,6 +39,8 @@ impl Error {
         self
     }
 }
+
+//--- Conversions for '?'
 
 impl From<&str> for Error {
     fn from(error: &str) -> Self {
@@ -53,6 +59,8 @@ impl From<io::Error> for Error {
         Self::new(&error.to_string())
     }
 }
+
+//--- Display, Debug
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -74,4 +82,30 @@ impl fmt::Debug for Error {
     }
 }
 
+//--- Error
+
 impl error::Error for Error {}
+
+//------------ Result --------------------------------------------------------
+
+/// A program result.
+pub type Result<T> = core::result::Result<T, Error>;
+
+/// An extension trait for [`Result`]s using [`Error`].
+pub trait Context: Sized {
+    /// Add context for an error.
+    fn context(self, context: &str) -> Self;
+
+    /// Add context for an error, lazily.
+    fn with_context(self, context: impl FnOnce() -> String) -> Self;
+}
+
+impl<T> Context for Result<T> {
+    fn context(self, context: &str) -> Self {
+        self.map_err(|err| err.context(context))
+    }
+
+    fn with_context(self, context: impl FnOnce() -> String) -> Self {
+        self.map_err(|err| err.context(&(context)()))
+    }
+}
