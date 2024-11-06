@@ -99,9 +99,10 @@ mod tests {
     #[test]
     fn accept_good_inputs() {
         // We don't test all permutations as that would take too long (~20 seconds)
+        #[allow(clippy::single_element_loop)]
         for algorithm in ["SHA-1"] {
             let algorithm = Nsec3HashAlg::from_mnemonic(algorithm.as_bytes())
-                .expect(&format!("Algorithm '{algorithm}' was expected to be okay"));
+                .unwrap_or_else(|| panic!("Algorithm '{algorithm}' was expected to be okay"));
             let nsec3_hash = Nsec3Hash {
                 algorithm,
                 iterations: 0,
@@ -122,8 +123,8 @@ mod tests {
         }
 
         for salt in ["", "-", "aa", "aabb", "aa".repeat(255).as_str()] {
-            let salt =
-                Nsec3Salt::from_str(salt).expect(&format!("Salt '{salt}' was expected to be okay"));
+            let salt = Nsec3Salt::from_str(salt)
+                .unwrap_or_else(|err| panic!("Salt '{salt}' was expected to be okay: {err}"));
             let nsec3_hash = Nsec3Hash {
                 algorithm: Nsec3HashAlg::SHA1,
                 iterations: 0,
@@ -136,8 +137,8 @@ mod tests {
         for name in [
             ".", "a", "a.", "ab", "ab.", "a.ab", "a.ab.", "ab.ab", "ab.ab.", "a.ab.ab", "a.ab.ab.",
         ] {
-            let name =
-                Name::from_str(name).expect(&format!("Name '{name}' was expected to be okay"));
+            let name = Name::from_str(name)
+                .unwrap_or_else(|err| panic!("Name '{name}' was expected to be okay: {err}"));
             let nsec3_hash = Nsec3Hash {
                 algorithm: Nsec3HashAlg::SHA1,
                 iterations: 0,
