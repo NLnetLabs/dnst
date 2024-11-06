@@ -275,7 +275,7 @@ impl SignZone {
 }
 
 fn next_owner_hash_to_name(
-    next_owner_hash_hex: &String,
+    next_owner_hash_hex: &str,
     apex: &FamilyName<Name<Bytes>>,
 ) -> Result<Name<Bytes>, ()> {
     let mut builder = NameBuilder::new_bytes();
