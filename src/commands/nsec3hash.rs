@@ -14,28 +14,29 @@ pub struct Nsec3Hash {
     #[arg(
         long,
         short = 'a',
-        value_name = "NUMBER_OR_MNEMONIC",
+        value_name = "algorithm",
         default_value = "SHA-1",
-        value_parser = ValueParser::new(Nsec3Hash::parse_alg)
+        value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg)
     )]
     algorithm: Nsec3HashAlg,
 
     /// The number of hash iterations
-    #[arg(long, short = 't', value_name = "NUMBER", default_value_t = 1)]
+    // TODO: Default to 0 when run as dnst instead of as ldns-nsec3-hash
+    #[arg(long, short = 't', value_name = "number", default_value_t = 1)]
     iterations: u16,
 
     /// The salt in hex representation
     #[arg(
         long,
         short = 's',
-        value_name = "HEX_STRING",
+        value_name = "string",
         default_value_t = Nsec3Salt::empty(),
         value_parser = ValueParser::new(Nsec3Hash::parse_salt)
     )]
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "domain name", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
     name: Name<Vec<u8>>,
 }
 
@@ -52,7 +53,7 @@ impl Nsec3Hash {
         }
     }
 
-    pub fn parse_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
+    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
         if let Ok(num) = arg.parse() {
             let alg = Nsec3HashAlg::from_int(num);
             if alg.to_mnemonic().is_some() {
