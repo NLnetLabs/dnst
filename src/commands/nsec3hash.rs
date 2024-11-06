@@ -1,7 +1,7 @@
 use crate::error::Error;
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::name::Name;
+use domain::base::name::{self, Name};
 use domain::base::ToName;
 use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
 // use domain::validator::nsec::nsec3_hash;
@@ -41,11 +41,11 @@ pub struct Nsec3Hash {
 }
 
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, Error> {
-        Name::from_str(&arg.to_lowercase()).map_err(|e| Error::from(e.to_string()))
+    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, name::FromStrError> {
+        Name::from_str(&arg.to_lowercase())
     }
 
-    pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
+    pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
         if let Ok(num) = arg.parse() {
             let alg = Nsec3HashAlg::from_int(num);
             // check for valid algorithm here, to be consistent with error messages
@@ -53,11 +53,10 @@ impl Nsec3Hash {
             if alg.to_mnemonic().is_some() {
                 Ok(alg)
             } else {
-                Err(Error::from("unknown algorithm number"))
+                Err("unknown algorithm number")
             }
         } else {
-            Nsec3HashAlg::from_mnemonic(arg.as_bytes())
-                .ok_or(Error::from("unknown algorithm mnemonic"))
+            Nsec3HashAlg::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
         }
     }
 }

@@ -38,6 +38,27 @@ impl Error {
         self.0.context.push(context.into());
         self
     }
+
+    /// Pretty-print this error.
+    pub fn pretty_print(self) {
+        use std::io::IsTerminal;
+
+        // NOTE: This is a multicall binary, so argv[0] is necessary for
+        // program operation.  We would fail very early if it didn't exist.
+        let prog = std::env::args().next().unwrap();
+        let term = std::io::stderr().is_terminal();
+
+        let error_marker = if term {
+            "\x1B[31mERROR:\x1B[0m"
+        } else {
+            "ERROR:"
+        };
+
+        eprint!("[{prog}] {error_marker} {}", self.0.primary);
+        for context in &self.0.context {
+            eprint!("\n... while {context}");
+        }
+    }
 }
 
 //--- Conversions for '?'
@@ -64,12 +85,7 @@ impl From<io::Error> for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("\x1E[31mERROR:\x1E[0m ")?;
-        f.write_str(&self.0.primary)?;
-        self.0.context.iter().try_for_each(|c| {
-            f.write_str("\n... while ")?;
-            f.write_str(c)
-        })
+        f.write_str(&self.0.primary)
     }
 }
 
