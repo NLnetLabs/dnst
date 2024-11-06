@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+arbitrary = { version = "1", optional = true, features = ["derive"] }
 clap      = { version = "4", features = ["derive"] }
 #domain   = "0.10.3"
 domain    = { git = "https://github.com/NLnetLabs/domain/", branch = "initial-nsec3-generation", features = ["ring", "unstable-validator"] }
 
 [dev-dependencies]
 test_bin = "0.4.0"
+
+[features]
+arbitrary = [ "dep:arbitrary", "domain/arbitrary" ]

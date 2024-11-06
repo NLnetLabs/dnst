@@ -9,6 +9,7 @@ use domain::validate::nsec3_hash;
 use crate::error::Error;
 
 #[derive(Clone, Debug, clap::Args)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
