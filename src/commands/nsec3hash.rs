@@ -73,7 +73,7 @@ impl Nsec3Hash {
     pub fn execute(self) -> Result<(), Error> {
         let hash =
             nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
-                .expect("Error creating NSEC3 hash")
+                .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
                 .to_string()
                 .to_lowercase();
         println!("{}.", hash);
