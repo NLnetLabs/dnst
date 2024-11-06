@@ -174,10 +174,12 @@ impl SignZone {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r, writer| {
                     if let ZoneRecordData::Nsec3(nsec3) = r.data() {
-                        writer.write(b" ;{ ")?;
+                        writer.write(b" ;{ flags: ")?;
 
                         if nsec3.opt_out() {
-                            writer.write(b"flags: optout, ")?;
+                            writer.write(b"optout")?;
+                        } else {
+                            writer.write(b"-")?;
                         }
 
                         let next_owner_hash_hex = format!("{}", nsec3.next_owner());
@@ -197,7 +199,7 @@ impl SignZone {
                             format!("<invalid name: {next_owner_hash_hex}")
                         };
 
-                        write!(writer, "from: {from}, to: {to}}}")
+                        write!(writer, ", from: {from}, to: {to}}}")
                     } else {
                         Ok(())
                     }
