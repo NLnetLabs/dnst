@@ -194,9 +194,9 @@ impl SignZone {
                             hashes
                                 .get(&next_owner_name)
                                 .map(|n| format!("{}", n.fmt_with_dot()))
-                                .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}"))
+                                .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
                         } else {
-                            format!("<invalid name: {next_owner_hash_hex}")
+                            format!("<invalid name: {next_owner_hash_hex}>")
                         };
 
                         writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
