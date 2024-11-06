@@ -4,13 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-#domain = "0.10.3"
-domain = { git = "https://github.com/NLnetLabs/domain/", branch = "initial-nsec3-generation", features = ["ring", "unstable-validator"] }
-
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.1", features = ["std"] }
-ring = { version = "0.17" }
+clap      = { version = "4", features = ["derive"] }
+#domain   = "0.10.3"
+domain    = { git = "https://github.com/NLnetLabs/domain/", branch = "initial-nsec3-generation", features = ["ring", "unstable-validator"] }
 
 [dev-dependencies]
 test_bin = "0.4.0"
