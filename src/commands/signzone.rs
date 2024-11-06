@@ -174,12 +174,12 @@ impl SignZone {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r, writer| match r.data() {
                     ZoneRecordData::Nsec3(nsec3) => {
-                        writer.write(b" ;{{ flags: ")?;
+                        writer.write_all(b" ;{{ flags: ")?;
 
                         if nsec3.opt_out() {
-                            writer.write(b"optout")?;
+                            writer.write_all(b"optout")?;
                         } else {
-                            writer.write(b"-")?;
+                            writer.write_all(b"-")?;
                         }
 
                         let next_owner_hash_hex = format!("{}", nsec3.next_owner());
@@ -206,9 +206,9 @@ impl SignZone {
                     ZoneRecordData::Dnskey(dnskey) => {
                         writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
                         if dnskey.is_secure_entry_point() {
-                            writer.write(b" (ksk)")?;
+                            writer.write_all(b" (ksk)")?;
                         } else if dnskey.is_zone_key() {
-                            writer.write(b" (zsk)")?;
+                            writer.write_all(b" (zsk)")?;
                         }
                         writer.write_fmt(format_args!(", size = {}b}}", "TODO"))
                     }
