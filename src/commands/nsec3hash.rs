@@ -21,12 +21,7 @@ pub struct Nsec3Hash {
     algorithm: Nsec3HashAlg,
 
     /// The number of hash iterations
-    #[arg(
-        long,
-        short = 't',
-        value_name = "NUMBER",
-        default_value_t = 1
-    )]
+    #[arg(long, short = 't', value_name = "NUMBER", default_value_t = 1)]
     iterations: u16,
 
     /// The salt in hex representation
