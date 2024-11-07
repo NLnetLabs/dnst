@@ -31,7 +31,6 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Original ldns-signzone options in ldns-signzone -h order:
     // -----------------------------------------------------------------------
-
     /// Use layout in signed zone and print comments on DNSSEC records
     #[arg(short = 'b', default_value_t = false)]
     diagnostic_comments: bool,
@@ -138,7 +137,6 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Extra options not supported by the original ldns-signzone:
     // -----------------------------------------------------------------------
-
     /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
@@ -156,7 +154,6 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
-
     /// The zonefile to sign
     #[arg(value_name = "zonefile")]
     zonefile_path: PathBuf,
