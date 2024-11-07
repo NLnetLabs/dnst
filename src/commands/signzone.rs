@@ -62,9 +62,10 @@ pub struct SignZone {
     )]
     diagnostic_comments: u8,
 
-    // Used keys are not added to the zone
-    //#[arg(short = 'd', default_value_t = false)]
-    // TODO
+    /// Used keys are not added to the zone
+    #[arg(short = 'd', default_value_t = false)]
+    do_not_add_keys_to_zone: bool,
+
     /// Expiration date [default: 4 weeks from now]
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
@@ -282,6 +283,7 @@ impl SignZone {
                     ttl,
                     params,
                     opt_out,
+                    !self.do_not_add_keys_to_zone,
                     diagnostic_comments,
                 )
                 .unwrap();
@@ -289,16 +291,21 @@ impl SignZone {
             records.insert(Record::from_record(param)).unwrap();
             hashes
         } else {
-            let nsecs = records.nsecs::<Bytes>(&apex, ttl);
+            let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
             records.extend(nsecs.into_iter().map(Record::from_record));
             None
         };
 
         // Sign the zone unless disabled.
         if signing_mode == SigningMode::HashAndSign {
-            eprintln!("Inception: {} [{:?}]", self.inception, self.inception);
             let extra_records = records
-                .sign(&apex, self.expiration, self.inception, keys.as_slice())
+                .sign(
+                    &apex,
+                    self.expiration,
+                    self.inception,
+                    keys.as_slice(),
+                    !self.do_not_add_keys_to_zone,
+                )
                 .unwrap();
             records.extend(extra_records.into_iter().map(Record::from_record));
         }
