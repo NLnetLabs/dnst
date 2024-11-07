@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
-
 use clap::ArgAction;
+
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
 use domain::base::{Name, NameBuilder, Record, Ttl};
