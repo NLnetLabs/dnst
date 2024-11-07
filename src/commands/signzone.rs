@@ -28,6 +28,65 @@ use super::nsec3hash::Nsec3Hash;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct SignZone {
+    // -----------------------------------------------------------------------
+    // Original ldns-signzone options in ldns-signzone -h order:
+    // -----------------------------------------------------------------------
+
+    /// Use layout in signed zone and print comments on DNSSEC records
+    #[arg(short = 'b', default_value_t = false)]
+    diagnostic_comments: bool,
+
+    // Used keys are not added to the zone
+    //#[arg(short = 'd', default_value_t = false)]
+    // TODO
+
+    // Expiration date
+    // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
+    // Default is not documented in ldns-signzone -h or man ldns-signzone but
+    // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
+    // now + 4 weeks if no expiration timestamp is specified.
+    //#[arg(short = 'e')]
+    // TODO: Option<Timestamp>
+
+    // Output zone to file
+    // Defaults to <original zone file name>.signed
+    // Undocumented: Use - to output to stdout.
+    // TODO: Option<PathBuf>
+
+    // Inception date
+    // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
+    // Default is not documented in ldns-signzone -h or man ldns-signzone but
+    // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
+    // now if no inception timestamp is specified.
+    //#[arg(short = 'i')]
+    // TODO: Option<Timestamp>
+    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
+    #[arg(short = 'o')]
+    origin: Option<Name<Bytes>>,
+
+    // Set SOA serial to the number of seconds since Jan 1st 1970
+    //#[arg(short = 'u', default_value_t = false)]
+    // TODO: set_soa_serial_to_epoch_time: bool,
+
+    // SKIPPED: -v
+    // This should be handled at the dnst top level, not per subcommand.
+
+    // Add ZONEMD resource record
+    // Can occur more than once.
+    //#[arg(short = 'z', group = "zonemd")]
+    // TODO
+
+    // Allow ZONEMDs to be added without signing
+    //#[arg(short = 'Z', value_name = "[scheme]:hash", requires = "zonemd")]
+    // TODO
+
+    // Sign DNSKEY with all keys instead of minimal
+    //#[arg(short = 'A', default_value_t = false)]
+    // TODO: sign_dnskey_with_all_keys: bool,
+
+    // Sign with every unique algorithm in the provided keys
+    //#[arg(short = 'U', default_value_t = false)]
+    // TODO: sign_with_every_unique_algorithm: bool,
     /// Use NSEC3 instead of NSEC
     #[arg(short = 'n', default_value_t = false, group = "nsec3")]
     use_nsec3: bool,
@@ -76,6 +135,10 @@ pub struct SignZone {
     )]
     nsec3_opt_out_flags_only: bool,
 
+    // -----------------------------------------------------------------------
+    // Extra options not supported by the original ldns-signzone:
+    // -----------------------------------------------------------------------
+
     /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
@@ -90,13 +153,9 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
-    /// Use layout in signed zone and print comments on DNSSEC records
-    #[arg(short = 'b', default_value_t = false)]
-    diagnostic_comments: bool,
-
-    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
-    #[arg(short = 'o')]
-    origin: Option<Name<Bytes>>,
+    // -----------------------------------------------------------------------
+    // Original ldns-signzone positional arguments in position order:
+    // -----------------------------------------------------------------------
 
     /// The zonefile to sign
     #[arg(value_name = "zonefile")]
