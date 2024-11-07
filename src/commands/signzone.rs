@@ -34,6 +34,16 @@ const FOUR_WEEKS: u32 = 2419200;
 //------------ SignZone ------------------------------------------------------
 
 #[derive(Clone, Debug, clap::Args)]
+#[clap(
+    after_help = "keys must be specified by their base name (usually K<name>+<alg>+<id>),
+  i.e. WITHOUT the .private extension.
+  If the public part of the key is not present in the zone, the DNSKEY RR
+  will be read from the file called <base name>.key. If that does not exist,
+  a default DNSKEY will be generated from the private key and added to the zone.
+  A date can be a timestamp (seconds since the epoch), or of
+  the form <YYYYMMdd[hhmmss]>
+"
+)]
 pub struct SignZone {
     // -----------------------------------------------------------------------
     // Original ldns-signzone options in ldns-signzone -h order:
@@ -46,7 +56,6 @@ pub struct SignZone {
     //#[arg(short = 'd', default_value_t = false)]
     // TODO
     /// Expiration date [default: 4 weeks from now]
-    // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now + 4 weeks if no expiration timestamp is specified.
@@ -56,7 +65,6 @@ pub struct SignZone {
         default_value_t = Timestamp::now().into_int().add(FOUR_WEEKS).into(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
-        long_help = "Expiration date [default: 4 weeks from now]\nMay be specified as either YYYYMMDD, YYYYMMDDHHmmSS or numeric Unix timestamp",
     )]
     expiration: Timestamp,
 
@@ -65,7 +73,6 @@ pub struct SignZone {
     // Undocumented: Use - to output to stdout.
     // out_file: Option<PathBuf>,
     /// Inception date [default: now]
-    // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now if no inception timestamp is specified.
@@ -75,7 +82,6 @@ pub struct SignZone {
         default_value_t = Timestamp::now(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
-        long_help = "Inception date [default: now]\nMay be specified as either YYYYMMDD, YYYYMMDDHHmmSS or numeric Unix timestamp",
     )]
     inception: Timestamp,
 
@@ -179,9 +185,6 @@ pub struct SignZone {
     zonefile_path: PathBuf,
 
     /// The keys to sign the zone with
-    ///
-    /// keys must be specified by their base name (usually
-    /// K<name>+<alg>+<id>), i.e. WITHOUT the .private extension.
     #[arg(value_name = "key")]
     key_paths: Vec<PathBuf>,
 }
