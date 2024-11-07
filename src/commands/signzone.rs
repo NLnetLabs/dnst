@@ -230,6 +230,10 @@ impl SignZone {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r, writer| match r.data() {
                     ZoneRecordData::Nsec3(nsec3) => {
+                        // TODO: For ldns-signzone backward compatibilty we
+                        // output "  ;{... <domain>.}" but I find the spacing
+                        // ugly and would prefer for dnst to output " ; {...
+                        // <domain>. }" instead.
                         writer.write_all(b" ;{ flags: ")?;
 
                         if nsec3.opt_out() {
