@@ -230,7 +230,7 @@ impl SignZone {
             records
                 .write_with_comments(&mut std::io::stdout().lock(), |r, writer| match r.data() {
                     ZoneRecordData::Nsec3(nsec3) => {
-                        writer.write_all(b" ;{{ flags: ")?;
+                        writer.write_all(b" ;{ flags: ")?;
 
                         if nsec3.opt_out() {
                             writer.write_all(b"optout")?;
