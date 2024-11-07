@@ -46,14 +46,16 @@ pub struct SignZone {
     //#[arg(short = 'd', default_value_t = false)]
     // TODO
 
-    // Expiration date
+    /// Expiration date [default: 4 weeks from now]
     // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now + 4 weeks if no expiration timestamp is specified.
     #[arg(
         short = 'e',
+        value_name = "date",
         default_value_t = Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+        hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
     )]
     expiration: Timestamp,
@@ -61,18 +63,19 @@ pub struct SignZone {
     // Output zone to file
     // Defaults to <original zone file name>.signed
     // Undocumented: Use - to output to stdout.
-    // TODO: Option<PathBuf>
+    // out_file: Option<PathBuf>,
 
-    // Inception date
+    /// Inception date [default: now]
     // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now if no inception timestamp is specified.
     #[arg(
         short = 'i',
+        value_name = "date",
         default_value_t = Timestamp::now(),
+        hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
-
     )]
     inception: Timestamp,
 
