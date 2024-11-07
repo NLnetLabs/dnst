@@ -57,6 +57,7 @@ pub struct SignZone {
         default_value_t = Timestamp::now().into_int().add(FOUR_WEEKS).into(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
+        long_help = "Expiration date [default: 4 weeks from now]\nMay be specified as either YYYYMMDD, YYYYMMDDHHmmSS or numeric Unix timestamp",
     )]
     expiration: Timestamp,
 
@@ -76,6 +77,7 @@ pub struct SignZone {
         default_value_t = Timestamp::now(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
+        long_help = "Inception date [default: now]\nMay be specified as either YYYYMMDD, YYYYMMDDHHmmSS or numeric Unix timestamp",
     )]
     inception: Timestamp,
 
