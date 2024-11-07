@@ -12,10 +12,10 @@ use clap::ArgAction;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
-use domain::base::{Name, NameBuilder, Record, Ttl};
+use domain::base::{Name, NameBuilder, Record, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::rdata::{Nsec3param, ZoneRecordData};
+use domain::rdata::{Nsec3param, Soa, ZoneRecordData};
 use domain::sign::common::KeyPair;
 use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
 use domain::sign::{SecretKeyBytes, SigningKey};
@@ -102,9 +102,12 @@ pub struct SignZone {
     #[arg(short = 'o', value_name = "domain")]
     origin: Option<Name<Bytes>>,
 
-    // Set SOA serial to the number of seconds since Jan 1st 1970
-    //#[arg(short = 'u', default_value_t = false)]
-    // TODO: set_soa_serial_to_epoch_time: bool,
+    /// Set SOA serial to the number of seconds since Jan 1st 1970
+    /// 
+    /// If this would NOT result in the SOA serial increasing it will be
+    /// incremented instead.
+    #[arg(short = 'u', default_value_t = false)]
+    set_soa_serial_to_epoch_time: bool,
 
     // SKIPPED: -v
     // This should be handled at the dnst top level, not per subcommand.
@@ -267,11 +270,16 @@ impl SignZone {
         // Import the specified keys.
         let mut keys = vec![];
         for key_path in &self.key_paths {
-            keys.push(load_key_pair(key_path)?);
+            keys.push(Self::load_key_pair(key_path)?);
         }
 
         // Read the zone file.
         let mut records = self.load_zone()?;
+
+        // Change the SOA serial.
+        if self.set_soa_serial_to_epoch_time {
+            Self::bump_soa_serial(&mut records)?;
+        }
 
         // Find the apex.
         let (apex, ttl) = Self::find_apex(&records).unwrap();
@@ -334,7 +342,8 @@ impl SignZone {
                         }
 
                         let next_owner_hash_hex = format!("{}", nsec3.next_owner());
-                        let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, &apex);
+                        let next_owner_name =
+                            Self::next_owner_hash_to_name(&next_owner_hash_hex, &apex);
 
                         let from = hashes
                             .get(r.owner())
@@ -423,86 +432,126 @@ impl SignZone {
 
         Ok((soa.family_name().cloned(), ttl))
     }
-}
 
-fn next_owner_hash_to_name(
-    next_owner_hash_hex: &str,
-    apex: &FamilyName<Name<Bytes>>,
-) -> Result<Name<Bytes>, ()> {
-    let mut builder = NameBuilder::new_bytes();
-    builder
-        .append_chars(next_owner_hash_hex.chars())
-        .map_err(|_| ())?;
-    let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
-    Ok(next_owner_name)
-}
+    fn bump_soa_serial(
+        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+    ) -> Result<(), Error> {
+        let Some(old_soa_rr) = records.find_soa() else {
+            return Err(Error::from("Error reading zonefile: missing SOA record"));
+        };
+        let ZoneRecordData::Soa(old_soa) = old_soa_rr.first().data() else {
+            return Err(Error::from("Error reading zonefile: missing SOA record"));
+        };
 
-/// Given a BIND style key pair path prefix load the keys from disk.
-///
-/// Expects a path that is the common prefix in BIND style of a pair of '.key'
-/// (public) and '.private' key files, i.e. given
-/// /path/to/K<zone_name>.+<algorithm>+<key tag> load and parse the following
-/// files:
-///
-///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.key
-///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.private
-///
-/// However, this function is not strict about the format of the prefix, it
-/// will attempt to load files with suffixes '.key' and '.private' irrespective
-/// of the format of the rest of the path.
-fn load_key_pair(key_path: &Path) -> Result<SigningKey<Bytes, KeyPair>, Error> {
-    let key_path_str = key_path.to_string_lossy();
-    let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
-    let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
+        // Undocumented behaviour in ldns-signzone: it doesn't just set the
+        // SOA serial to the current unix timestamp as is documented for '-u'
+        // but rather only does that if the resulting value would be larger
+        // than the current unix timestamp, otherwise it increments it. I
+        // assume it does that to ensure that the SOA serial advances on zone
+        // change per expectations defined in RFC 1034, though it is assuming
+        // that the SOA serial can be interpreted as a unix timestamp which
+        // may not be the intention of the zone owner.
 
-    let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
-        format!(
-            "Unable to load private key from file '{}': {}",
-            private_key_path.display(),
-            err
-        )
-    })?;
+        let now = Serial::now();
+        let new_serial = if now > old_soa.serial() {
+            now
+        } else {
+            old_soa.serial().add(1)
+        };
 
-    let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
-        format!(
-            "Unable to load public key from file '{}': {}",
-            public_key_path.display(),
-            err
-        )
-    })?;
+        let new_soa = Soa::new(
+            old_soa.mname().clone(),
+            old_soa.rname().clone(),
+            new_serial,
+            old_soa.refresh(),
+            old_soa.retry(),
+            old_soa.expire(),
+            old_soa.minimum(),
+        );
+        records.replace_soa(new_soa);
 
-    let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
-        format!(
-            "Unable to parse BIND formatted private key file '{}': {}",
-            private_key_path.display(),
-            err
-        )
-    })?;
+        Ok(())
+    }
 
-    let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
-        format!(
-            "Unable to parse BIND formatted public key file '{}': {}",
-            public_key_path.display(),
-            err
-        )
-    })?;
+    fn next_owner_hash_to_name(
+        next_owner_hash_hex: &str,
+        apex: &FamilyName<Name<Bytes>>,
+    ) -> Result<Name<Bytes>, ()> {
+        let mut builder = NameBuilder::new_bytes();
+        builder
+            .append_chars(next_owner_hash_hex.chars())
+            .map_err(|_| ())?;
+        let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
+        Ok(next_owner_name)
+    }
 
-    let key_pair =
-        KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key()).map_err(|err| {
+    /// Given a BIND style key pair path prefix load the keys from disk.
+    ///
+    /// Expects a path that is the common prefix in BIND style of a pair of '.key'
+    /// (public) and '.private' key files, i.e. given
+    /// /path/to/K<zone_name>.+<algorithm>+<key tag> load and parse the following
+    /// files:
+    ///
+    ///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.key
+    ///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.private
+    ///
+    /// However, this function is not strict about the format of the prefix, it
+    /// will attempt to load files with suffixes '.key' and '.private' irrespective
+    /// of the format of the rest of the path.
+    fn load_key_pair(key_path: &Path) -> Result<SigningKey<Bytes, KeyPair>, Error> {
+        let key_path_str = key_path.to_string_lossy();
+        let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
+        let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
+
+        let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
             format!(
-                "Unable to import private key from file '{}': {}",
+                "Unable to load private key from file '{}': {}",
                 private_key_path.display(),
                 err
             )
         })?;
 
-    let signing_key = SigningKey::new(
-        public_key_info.owner().clone(),
-        public_key_info.flags(),
-        key_pair,
-    );
+        let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
+            format!(
+                "Unable to load public key from file '{}': {}",
+                public_key_path.display(),
+                err
+            )
+        })?;
 
-    Ok(signing_key)
+        let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
+            format!(
+                "Unable to parse BIND formatted private key file '{}': {}",
+                private_key_path.display(),
+                err
+            )
+        })?;
+
+        let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
+            format!(
+                "Unable to parse BIND formatted public key file '{}': {}",
+                public_key_path.display(),
+                err
+            )
+        })?;
+
+        let key_pair =
+            KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key()).map_err(|err| {
+                format!(
+                    "Unable to import private key from file '{}': {}",
+                    private_key_path.display(),
+                    err
+                )
+            })?;
+
+        let signing_key = SigningKey::new(
+            public_key_info.owner().clone(),
+            public_key_info.flags(),
+            key_pair,
+        );
+
+        Ok(signing_key)
+    }
 }
 
 //------------ SigningMode ---------------------------------------------------
