@@ -103,7 +103,7 @@ pub struct SignZone {
     origin: Option<Name<Bytes>>,
 
     /// Set SOA serial to the number of seconds since Jan 1st 1970
-    /// 
+    ///
     /// If this would NOT result in the SOA serial increasing it will be
     /// incremented instead.
     #[arg(short = 'u', default_value_t = false)]
@@ -267,14 +267,14 @@ impl SignZone {
             Box::new(File::create(out_file)?) as Box<dyn Write>
         };
 
+        // Read the zone file.
+        let mut records = self.load_zone()?;
+
         // Import the specified keys.
         let mut keys = vec![];
         for key_path in &self.key_paths {
             keys.push(Self::load_key_pair(key_path)?);
         }
-
-        // Read the zone file.
-        let mut records = self.load_zone()?;
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -325,60 +325,62 @@ impl SignZone {
         }
 
         // Output the resulting zone, with comments if enabled.
-        if let Some(hashes) = hashes {
-            records
-                .write_with_comments(&mut writer, |r, writer| match r.data() {
-                    ZoneRecordData::Nsec3(nsec3) => {
-                        // TODO: For ldns-signzone backward compatibilty we
-                        // output "  ;{... <domain>.}" but I find the spacing
-                        // ugly and would prefer for dnst to output " ; {...
-                        // <domain>. }" instead.
-                        writer.write_all(b" ;{ flags: ")?;
+        let hashes_ref = hashes.as_ref();
+        records.write_with_comments(&mut writer, move |r, writer| match r.data() {
+            ZoneRecordData::Nsec3(nsec3) => {
+                if let Some(hashes) = hashes_ref {
+                    // TODO: For ldns-signzone backward compatibilty we output
+                    // "  ;{... <domain>.}" but I find the spacing ugly and
+                    // would prefer for dnst to output " ; {... <domain>. }"
+                    // instead.
+                    writer.write_all(b" ;{ flags: ")?;
 
-                        if nsec3.opt_out() {
-                            writer.write_all(b"optout")?;
-                        } else {
-                            writer.write_all(b"-")?;
-                        }
+                    if nsec3.opt_out() {
+                        writer.write_all(b"optout")?;
+                    } else {
+                        writer.write_all(b"-")?;
+                    }
 
-                        let next_owner_hash_hex = format!("{}", nsec3.next_owner());
-                        let next_owner_name =
-                            Self::next_owner_hash_to_name(&next_owner_hash_hex, &apex);
+                    let next_owner_hash_hex = format!("{}", nsec3.next_owner());
+                    let next_owner_name =
+                        Self::next_owner_hash_to_name(&next_owner_hash_hex, &apex);
 
-                        let from = hashes
-                            .get(r.owner())
+                    let from = hashes
+                        .get(r.owner())
+                        .map(|n| format!("{}", n.fmt_with_dot()))
+                        .unwrap_or_default();
+
+                    let to = if let Ok(next_owner_name) = next_owner_name {
+                        hashes
+                            .get(&next_owner_name)
                             .map(|n| format!("{}", n.fmt_with_dot()))
-                            .unwrap_or_default();
+                            .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
+                    } else {
+                        format!("<invalid name: {next_owner_hash_hex}>")
+                    };
 
-                        let to = if let Ok(next_owner_name) = next_owner_name {
-                            hashes
-                                .get(&next_owner_name)
-                                .map(|n| format!("{}", n.fmt_with_dot()))
-                                .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
-                        } else {
-                            format!("<invalid name: {next_owner_hash_hex}>")
-                        };
+                    writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
+                }
+                Ok(())
+            }
 
-                        writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
-                        Ok(())
-                    }
+            ZoneRecordData::Dnskey(dnskey) => {
+                writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
+                if dnskey.is_secure_entry_point() {
+                    writer.write_all(b" (ksk)")?;
+                } else if dnskey.is_zone_key() {
+                    writer.write_all(b" (zsk)")?;
+                }
+                // When PR #435 is ready.
+                // let owner = r.owner().clone();
+                // let dnskey = dnskey.clone();
+                // let key = domain::validate::Key::from_dnskey(owner, dnskey).unwrap();
+                // let key_size = key.key_size();
+                writer.write_fmt(format_args!(", size = {}b}}", "TODO"))
+            }
 
-                    ZoneRecordData::Dnskey(dnskey) => {
-                        writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
-                        if dnskey.is_secure_entry_point() {
-                            writer.write_all(b" (ksk)")?;
-                        } else if dnskey.is_zone_key() {
-                            writer.write_all(b" (zsk)")?;
-                        }
-                        writer.write_fmt(format_args!(", size = {}b}}", "TODO"))
-                    }
-
-                    _ => Ok(()),
-                })
-                .unwrap();
-        } else {
-            records.write(&mut writer).unwrap();
-        }
+            _ => Ok(()),
+        })?;
 
         Ok(())
     }
