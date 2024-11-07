@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
 
+use clap::ArgAction;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
 use domain::base::{Name, NameBuilder, Record, Ttl};
@@ -49,8 +50,17 @@ pub struct SignZone {
     // Original ldns-signzone options in ldns-signzone -h order:
     // -----------------------------------------------------------------------
     /// Use layout in signed zone and print comments on DNSSEC records
-    #[arg(short = 'b', default_value_t = false)]
-    diagnostic_comments: bool,
+    ///
+    /// Ignored when using '-f -'. Specify it twice to force output when using
+    /// '-f -'.
+    // Note: Specifying -b twice is a dnst extension, not part of the original
+    // ldns-signzone.
+    #[arg(
+        short = 'b',
+        default_value_t = 0,
+        action = ArgAction::Count,
+    )]
+    diagnostic_comments: u8,
 
     // Used keys are not added to the zone
     //#[arg(short = 'd', default_value_t = false)]
@@ -68,10 +78,12 @@ pub struct SignZone {
     )]
     expiration: Timestamp,
 
-    // Output zone to file
-    // Defaults to <original zone file name>.signed
-    // Undocumented: Use - to output to stdout.
-    // out_file: Option<PathBuf>,
+    /// Output zone to file [default: <zonefile>.signed]
+    ///
+    /// Use '-f -' to output to stdout.
+    #[arg(short = 'f', value_name = "file")]
+    out_file: Option<PathBuf>,
+
     /// Inception date [default: now]
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
@@ -214,7 +226,7 @@ impl SignZone {
         res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
     }
 
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
@@ -229,6 +241,20 @@ impl SignZone {
             SigningMode::HashOnly
         } else {
             SigningMode::HashAndSign
+        };
+
+        let diagnostic_comments = match self.diagnostic_comments {
+            0 => false,
+            1 if self.out_file == Some("-".into()) => false,
+            _ => true,
+        };
+
+        let mut writer = match &self.out_file {
+            Some(out_file) if out_file.as_os_str() != "-" => {
+                Box::new(File::create(out_file)?) as Box<dyn Write>
+            }
+
+            _ => Box::new(writer) as Box<dyn Write>,
         };
 
         // Import the specified keys.
@@ -251,7 +277,13 @@ impl SignZone {
                 param,
                 hashes,
             } = records
-                .nsec3s::<_, BytesMut>(&apex, ttl, params, opt_out, self.diagnostic_comments)
+                .nsec3s::<_, BytesMut>(
+                    &apex,
+                    ttl,
+                    params,
+                    opt_out,
+                    diagnostic_comments,
+                )
                 .unwrap();
             records.extend(recs.into_iter().map(Record::from_record));
             records.insert(Record::from_record(param)).unwrap();
@@ -274,7 +306,7 @@ impl SignZone {
         // Output the resulting zone, with comments if enabled.
         if let Some(hashes) = hashes {
             records
-                .write_with_comments(&mut std::io::stdout().lock(), |r, writer| match r.data() {
+                .write_with_comments(&mut writer, |r, writer| match r.data() {
                     ZoneRecordData::Nsec3(nsec3) => {
                         // TODO: For ldns-signzone backward compatibilty we
                         // output "  ;{... <domain>.}" but I find the spacing
@@ -323,7 +355,7 @@ impl SignZone {
                 })
                 .unwrap();
         } else {
-            records.write(&mut std::io::stdout().lock()).unwrap();
+            records.write(&mut writer).unwrap();
         }
 
         Ok(())

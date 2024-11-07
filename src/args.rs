@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use super::commands::Command;
 use super::error::Error;
 
@@ -9,7 +11,7 @@ pub struct Args {
 }
 
 impl Args {
-    pub fn execute(self) -> Result<(), Error> {
-        self.command.execute()
+    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
+        self.command.execute(writer)
     }
 }
