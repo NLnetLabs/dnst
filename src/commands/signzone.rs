@@ -80,7 +80,7 @@ pub struct SignZone {
     inception: Timestamp,
 
     /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
-    #[arg(short = 'o')]
+    #[arg(short = 'o', value_name = "domain")]
     origin: Option<Name<Bytes>>,
 
     // Set SOA serial to the number of seconds since Jan 1st 1970
