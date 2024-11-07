@@ -45,7 +45,6 @@ pub struct SignZone {
     // Used keys are not added to the zone
     //#[arg(short = 'd', default_value_t = false)]
     // TODO
-
     /// Expiration date [default: 4 weeks from now]
     // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
@@ -65,7 +64,6 @@ pub struct SignZone {
     // Defaults to <original zone file name>.signed
     // Undocumented: Use - to output to stdout.
     // out_file: Option<PathBuf>,
-
     /// Inception date [default: now]
     // YYYYYYMMDD[hhmmss] or time in seconds since the epoch
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
