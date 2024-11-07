@@ -244,18 +244,24 @@ impl SignZone {
             SigningMode::HashAndSign
         };
 
+        let out_file = if let Some(out_file) = &self.out_file {
+            out_file.clone()
+        } else {
+            let out_file = format!("{}.signed", self.zonefile_path.display());
+            PathBuf::from_str(&out_file)
+                .map_err(|err| format!("Cannot write to {out_file}: {err}"))?
+        };
+
         let diagnostic_comments = match self.diagnostic_comments {
             0 => false,
-            1 if self.out_file == Some("-".into()) => false,
+            1 if out_file.as_os_str() == "-" => false,
             _ => true,
         };
 
-        let mut writer = match &self.out_file {
-            Some(out_file) if out_file.as_os_str() != "-" => {
-                Box::new(File::create(out_file)?) as Box<dyn Write>
-            }
-
-            _ => Box::new(writer) as Box<dyn Write>,
+        let mut writer = if out_file.as_os_str() == "-" {
+            Box::new(writer) as Box<dyn Write>
+        } else {
+            Box::new(File::create(out_file)?) as Box<dyn Write>
         };
 
         // Import the specified keys.
