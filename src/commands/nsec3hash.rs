@@ -4,12 +4,16 @@ use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
 use domain::base::ToName;
 use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
+use lexopt::Arg;
 // use domain::validator::nsec::nsec3_hash;
 use octseq::OctetsBuilder;
 use ring::digest;
 use std::str::FromStr;
 
+use super::LdnsCommand;
+
 #[derive(Clone, Debug, clap::Args)]
+#[command(args_override_self = true)]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
@@ -38,6 +42,69 @@ pub struct Nsec3Hash {
     /// The domain name to hash
     #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
     name: Name<Vec<u8>>,
+}
+
+const LDNS_HELP: &str = "\
+ldns-nsec3-hash [OPTIONS] <domain name>
+  prints the NSEC3 hash of the given domain name
+
+  -a <algorithm> hashing algorithm number
+  -t <number>    iterations
+  -s <string>    salt in hex\
+";
+
+impl LdnsCommand for Nsec3Hash {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns() -> Result<Self, Error> {
+        let mut algorithm = Nsec3HashAlg::SHA1;
+        let mut iterations = 1;
+        let mut salt = Nsec3Salt::empty();
+        let mut name = None;
+
+        let mut parser = lexopt::Parser::from_env();
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('a') => {
+                    let val = parser.value()?;
+                    algorithm =
+                        Self::parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec_alg)?;
+                }
+                Arg::Short('t') => {
+                    let val = parser.value()?;
+                    iterations = Self::parse_os("iterations (-t)", &val)?;
+                }
+                Arg::Short('s') => {
+                    let val = parser.value()?;
+                    salt = Self::parse_os("salt (-s)", &val)?;
+                }
+                Arg::Value(val) => {
+                    // Strange ldns compatibility case: only the first
+                    // domain name is used.
+                    if name.is_some() {
+                        continue;
+                    }
+                    name = Some(Self::parse_os("domain name", &val)?);
+                }
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+            }
+        }
+
+        let Some(name) = name else {
+            return Err("Missing domain name argument".into());
+        };
+
+        Ok(Self {
+            algorithm,
+            iterations,
+            salt,
+            name,
+        })
+    }
 }
 
 impl Nsec3Hash {

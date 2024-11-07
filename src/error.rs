@@ -42,6 +42,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<lexopt::Error> for Error {
+    fn from(value: lexopt::Error) -> Self {
+        value.to_string().into()
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.message, f)
