@@ -1,4 +1,5 @@
-use core::ops::{Add, Sub};
+use core::ops::Add;
+use core::str::FromStr;
 
 use std::cmp::min;
 use std::fs::File;
@@ -26,6 +27,12 @@ use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
 
+//------------ Constants -----------------------------------------------------
+
+const FOUR_WEEKS: u32 = 2419200;
+
+//------------ SignZone ------------------------------------------------------
+
 #[derive(Clone, Debug, clap::Args)]
 pub struct SignZone {
     // -----------------------------------------------------------------------
@@ -44,8 +51,12 @@ pub struct SignZone {
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now + 4 weeks if no expiration timestamp is specified.
-    //#[arg(short = 'e')]
-    // TODO: Option<Timestamp>
+    #[arg(
+        short = 'e',
+        default_value_t = Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+        value_parser = ValueParser::new(SignZone::parse_timestamp),
+    )]
+    expiration: Timestamp,
 
     // Output zone to file
     // Defaults to <original zone file name>.signed
@@ -57,8 +68,14 @@ pub struct SignZone {
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now if no inception timestamp is specified.
-    //#[arg(short = 'i')]
-    // TODO: Option<Timestamp>
+    #[arg(
+        short = 'i',
+        default_value_t = Timestamp::now(),
+        value_parser = ValueParser::new(SignZone::parse_timestamp),
+
+    )]
+    inception: Timestamp,
+
     /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
     #[arg(short = 'o')]
     origin: Option<Name<Bytes>>,
@@ -167,6 +184,30 @@ pub struct SignZone {
 }
 
 impl SignZone {
+    pub fn parse_timestamp(arg: &str) -> Result<Timestamp, Error> {
+        // We can't just use Timestamp::from_str from the domain crate because
+        // ldns-signzone treats YYYYMMDD as a special case and domain does
+        // not. For invalid values this YYYYMMDDD prevents use of valid Unix
+        // timestamps that have the same value, e.g. ldns-signzone complains
+        // that for 99999999 "The month must be in the range 1 to 12". There's
+        // also no checking that an expiration timestamp is in the future of
+        // an inception timestamp (which for serial numbers is hard to say for
+        // sure but for YYYYMMDD or YYYYMMDDHHmmSS we could check).
+        let res = if arg.len() == 8 && arg.parse::<u32>().is_ok() {
+            // This can give strange errors, e.g. 99999999 warns about illegal
+            // signature time, but the alternative would be to add a
+            // dependency on chrono and parse the value ourselves in order to
+            // produce a better error message. Given that this only happens
+            // for very old or far future Unix timestamps we don't attempt to
+            // do better than this for now.
+            Timestamp::from_str(&format!("{arg}000000"))
+        } else {
+            Timestamp::from_str(arg)
+        };
+
+        res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
+    }
+
     pub fn execute(self) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
@@ -217,10 +258,9 @@ impl SignZone {
 
         // Sign the zone unless disabled.
         if signing_mode == SigningMode::HashAndSign {
-            let inception: Timestamp = Timestamp::now().into_int().sub(10).into();
-            let expiration = inception.into_int().add(2592000).into(); // XXX 30 days
+            eprintln!("Inception: {} [{:?}]", self.inception, self.inception);
             let extra_records = records
-                .sign(&apex, expiration, inception, keys.as_slice())
+                .sign(&apex, self.expiration, self.inception, keys.as_slice())
                 .unwrap();
             records.extend(extra_records.into_iter().map(Record::from_record));
         }
