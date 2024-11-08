@@ -36,13 +36,9 @@ const FOUR_WEEKS: u32 = 2419200;
 
 #[derive(Clone, Debug, clap::Args)]
 #[clap(
-    after_help = "keys must be specified by their base name (usually K<name>+<alg>+<id>),
-  i.e. WITHOUT the .private extension.
-  If the public part of the key is not present in the zone, the DNSKEY RR
-  will be read from the file called <base name>.key. If that does not exist,
-  a default DNSKEY will be generated from the private key and added to the zone.
-  A date can be a timestamp (seconds since the epoch), or of
-  the form <YYYYMMdd[hhmmss]>
+    after_help = "Keys must be specified by their base name (usually K<name>+<alg>+<id>), i.e. WITHOUT the .private or .key extension. Both .private and .key files are required.
+
+A date can be a timestamp (seconds since the epoch), or of the form <YYYYMMdd[hhmmss]>
 "
 )]
 pub struct SignZone {
