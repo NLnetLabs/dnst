@@ -371,12 +371,11 @@ impl SignZone {
                 } else if dnskey.is_zone_key() {
                     writer.write_all(b" (zsk)")?;
                 }
-                // When PR #435 is ready.
-                // let owner = r.owner().clone();
-                // let dnskey = dnskey.clone();
-                // let key = domain::validate::Key::from_dnskey(owner, dnskey).unwrap();
-                // let key_size = key.key_size();
-                writer.write_fmt(format_args!(", size = {}b}}", "TODO"))
+                let owner = r.owner().clone();
+                let dnskey = dnskey.clone();
+                let key = domain::validate::Key::from_dnskey(owner, dnskey).unwrap();
+                let key_size = key.key_size();
+                writer.write_fmt(format_args!(", size = {key_size}b}}"))
             }
 
             _ => Ok(()),
