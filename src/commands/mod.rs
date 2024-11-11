@@ -48,7 +48,7 @@ pub trait LdnsCommand: Into<Command> {
     fn parse_ldns_args() -> Result<Args, Error> {
         match Self::parse_ldns() {
             Ok(c) => Ok(Args::from(c.into())),
-            Err(e) => Err(format!("{e}\n\n{}", Self::HELP).into()),
+            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
     }
 
