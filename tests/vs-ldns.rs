@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use std::process::Command;
 use tempfile::TempDir;
 
