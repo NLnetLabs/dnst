@@ -117,8 +117,8 @@ impl Nsec3Hash {
         Name::from_str(&arg.to_lowercase())
     }
 
-    // Note: This function is only necessary until 
-    // https://github.com/NLnetLabs/domain/pull/431 is merged. 
+    // Note: This function is only necessary until
+    // https://github.com/NLnetLabs/domain/pull/431 is merged.
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
         if arg.len() >= 512 {
             Err(Error::from("Salt too long"))
