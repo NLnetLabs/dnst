@@ -14,13 +14,9 @@ fn main() {
 }
 
 fn try_ldns_compatibility() -> Option<dnst::Args> {
-    let binary_path = std::env::args_os().next().unwrap();
+    let binary_path = std::env::args_os().next()?;
 
-    let binary_name = Path::new(&binary_path)
-        .file_name()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default();
+    let binary_name = Path::new(&binary_path).file_name()?.to_str()?;
 
     let res = match binary_name {
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(),
