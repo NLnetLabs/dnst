@@ -13,3 +13,9 @@ impl Args {
         self.command.execute()
     }
 }
+
+impl From<Command> for Args {
+    fn from(value: Command) -> Self {
+        Args { command: value }
+    }
+}

@@ -81,6 +81,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<lexopt::Error> for Error {
+    fn from(value: lexopt::Error) -> Self {
+        value.to_string().into()
+    }
+}
+
 //--- Display, Debug
 
 impl fmt::Display for Error {
