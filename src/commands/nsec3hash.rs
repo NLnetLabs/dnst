@@ -17,31 +17,36 @@ use super::{parse_os, parse_os_with, LdnsCommand};
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
-        long,
+        long = "algorithm",
         short = 'a',
-        value_name = "algorithm",
+        value_name = "NUMBER OR MNEMONIC",
         default_value = "SHA-1",
         value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg)
     )]
     algorithm: Nsec3HashAlg,
 
     /// The number of hash iterations
-    // TODO: Default to 0 when run as dnst instead of as ldns-nsec3-hash
-    #[arg(long, short = 't', value_name = "number", default_value_t = 1)]
+    #[arg(
+        long = "iterations",
+        short = 'i',
+        visible_short_alias = 't',
+        value_name = "NUMBER",
+        default_value_t = 0
+    )]
     iterations: u16,
 
     /// The salt in hex representation
     #[arg(
-        long,
+        long = "salt",
         short = 's',
-        value_name = "string",
+        value_name = "HEX STRING",
         default_value_t = Nsec3Salt::empty(),
         value_parser = ValueParser::new(Nsec3Hash::parse_salt)
     )]
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "domain name", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
     name: Name<Vec<u8>>,
 }
 
@@ -51,7 +56,7 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 
   -a <algorithm> hashing algorithm number
   -t <number>    iterations
-  -s <string>    salt in hex\
+  -s <string>    salt in hex
 ";
 
 impl LdnsCommand for Nsec3Hash {
@@ -112,6 +117,8 @@ impl Nsec3Hash {
         Name::from_str(&arg.to_lowercase())
     }
 
+    // Note: This function is only necessary until 
+    // https://github.com/NLnetLabs/domain/pull/431 is merged. 
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
         if arg.len() >= 512 {
             Err(Error::from("Salt too long"))
@@ -238,14 +245,14 @@ mod tests {
 
     #[test]
     fn check_defaults() {
-        // Equivalent to ldns-nsec-hash -t 1 nlnetlabs.nl
+        // Equivalent to ldns-nsec3-hash -t 0 nlnetlabs.nl
         let args = parse_cmd_line(&["nlnetlabs.nl"]).unwrap();
 
         let mut captured_stdout = vec![];
         assert!(args.execute(&mut captured_stdout).is_ok());
         assert_eq!(
             str::from_utf8(&captured_stdout),
-            Ok("e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n")
+            Ok("asqe4ap6479d7085ljcs10a2fpb2do94.\n")
         );
     }
 
