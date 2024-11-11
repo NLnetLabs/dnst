@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
+use dnst::commands::signzone::SignZone;
 use dnst::commands::{nsec3hash::Nsec3Hash, LdnsCommand};
 
 fn main() -> ExitCode {
@@ -25,6 +26,7 @@ fn try_ldns_compatibility() -> Option<dnst::Args> {
 
     let res = match binary_name {
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(),
+        "ldns-signzone" => SignZone::parse_ldns_args(),
         _ => return None,
     };
 

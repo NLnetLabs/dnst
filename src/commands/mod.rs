@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use std::str::FromStr;
 
 use nsec3hash::Nsec3Hash;
+use signzone::SignZone;
 
 use crate::Args;
 
@@ -63,6 +64,12 @@ pub trait LdnsCommand: Into<Command> {
 impl From<Nsec3Hash> for Command {
     fn from(val: Nsec3Hash) -> Self {
         Command::Nsec3Hash(val)
+    }
+}
+
+impl From<SignZone> for Command {
+    fn from(val: SignZone) -> Self {
+        Command::SignZone(val)
     }
 }
 

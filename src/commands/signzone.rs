@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
-use clap::ArgAction;
 
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
@@ -23,10 +22,12 @@ use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
+use lexopt::Arg;
 
 use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
+use super::{parse_os, parse_os_with, LdnsCommand};
 
 //------------ Constants -----------------------------------------------------
 
@@ -46,17 +47,8 @@ pub struct SignZone {
     // Original ldns-signzone options in ldns-signzone -h order:
     // -----------------------------------------------------------------------
     /// Use layout in signed zone and print comments on DNSSEC records
-    ///
-    /// Ignored when using '-f -'. Specify it twice to force output when using
-    /// '-f -'.
-    // Note: Specifying -b twice is a dnst extension, not part of the original
-    // ldns-signzone.
-    #[arg(
-        short = 'b',
-        default_value_t = 0,
-        action = ArgAction::Count,
-    )]
-    diagnostic_comments: u8,
+    #[arg(short = 'b', default_value_t = false)]
+    diagnostic_comments: bool,
 
     /// Used keys are not added to the zone
     #[arg(short = 'd', default_value_t = false)]
@@ -147,7 +139,7 @@ pub struct SignZone {
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 't',
         value_name = "number",
-        default_value_t = 1,
+        default_value_t = 0,
         requires = "nsec3"
     )]
     iterations: u16,
@@ -201,6 +193,156 @@ pub struct SignZone {
     key_paths: Vec<PathBuf>,
 }
 
+const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
+  signs the zone with the given key(s)
+  -b            use layout in signed zone and print comments DNSSEC records
+  -d            used keys are not added to the zone
+  -e <date>     expiration date
+  -f <file>     output zone to file (default <name>.signed)
+  -i <date>     inception date
+  -o <domain>   origin for the zone
+  -u            set SOA serial to the number of seconds since 1-1-1970
+  -v            print version and exit
+  -z <[scheme:]hash>    Add ZONEMD resource record
+                <scheme> should be "simple" (or 1)
+                <hash> should be "sha384" or "sha512" (or 1 or 2)
+                this option can be given more than once
+  -Z            Allow ZONEMDs to be added without signing
+  -A            sign DNSKEY with all keys instead of minimal
+  -U            Sign with every unique algorithm in the provided keys
+  -n            use NSEC3 instead of NSEC.
+                If you use NSEC3, you can specify the following extra options:
+                -a [algorithm] hashing algorithm
+                -t [number] number of hash iterations
+                -s [string] salt
+                -p set the opt-out flag on all nsec3 rrs
+
+  keys must be specified by their base name (usually K<name>+<alg>+<id>),
+  i.e. WITHOUT the .private or .key extension.
+  A date can be a timestamp (seconds since the epoch), or of
+  the form <YYYYMMdd[hhmmss]>
+"###;
+
+impl LdnsCommand for SignZone {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns() -> Result<Self, Error> {
+        let mut diagnostic_comments = false;
+        let mut do_not_add_keys_to_zone = false;
+        let mut expiration = Timestamp::now().into_int().add(FOUR_WEEKS).into();
+        let mut out_file = Option::<PathBuf>::None;
+        let mut inception = Timestamp::now();
+        let mut origin = Option::<Name<Bytes>>::None;
+        let mut set_soa_serial_to_epoch_time = false;
+        let mut use_nsec3 = false;
+        let mut algorithm = Nsec3HashAlg::SHA1;
+        let mut iterations = 1u16;
+        let mut salt = Nsec3Salt::<Bytes>::empty();
+        let mut nsec3_opt_out = false;
+        let mut key_paths = Vec::<PathBuf>::new();
+        let mut zonefile = Option::<PathBuf>::None;
+
+        let mut parser = lexopt::Parser::from_env();
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('b') => {
+                    diagnostic_comments = true;
+                }
+                Arg::Short('d') => {
+                    do_not_add_keys_to_zone = true;
+                }
+                Arg::Short('e') => {
+                    let val = parser.value()?;
+                    expiration = parse_os_with("-e", &val, SignZone::parse_timestamp)?;
+                }
+                Arg::Short('f') => {
+                    let val = parser.value()?;
+                    out_file = Some(parse_os("-f", &val)?);
+                }
+                Arg::Short('i') => {
+                    let val = parser.value()?;
+                    inception = parse_os_with("-i", &val, SignZone::parse_timestamp)?;
+                }
+                Arg::Short('o') => {
+                    let val = parser.value()?;
+                    origin = Some(parse_os("-o", &val)?);
+                }
+                Arg::Short('u') => {
+                    set_soa_serial_to_epoch_time = true;
+                }
+                Arg::Short('v') => {
+                    let version = clap::crate_version!();
+                    println!("zone signer version {version} (dnst version {version})");
+                    std::process::exit(0);
+                }
+                Arg::Short('n') => {
+                    use_nsec3 = true;
+                }
+                Arg::Short('a') => {
+                    let val = parser.value()?;
+                    algorithm = parse_os_with("-a", &val, Nsec3Hash::parse_nsec_alg)?;
+                }
+                Arg::Short('t') => {
+                    let val = parser.value()?;
+                    iterations = parse_os("-t", &val)?;
+                }
+                Arg::Short('s') => {
+                    let val = parser.value()?;
+                    salt = parse_os("-s", &val)?;
+                }
+                Arg::Short('p') => {
+                    nsec3_opt_out = true;
+                }
+                Arg::Value(val) => {
+                    if zonefile.is_none() {
+                        zonefile = Some(parse_os("zonefile", &val)?);
+                    } else {
+                        key_paths.push(parse_os("key", &val)?);
+                    }
+                }
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+            }
+        }
+
+        let Some(zonefile_path) = zonefile else {
+            return Err("Missing zonefile argument".into());
+        };
+
+        if let Some(out_file) = &out_file {
+            if out_file.as_os_str() == "-" {
+                diagnostic_comments = false;
+            }
+        }
+
+        if key_paths.is_empty() {
+            return Err("Missing key argument".into());
+        };
+
+        Ok(Self {
+            diagnostic_comments,
+            do_not_add_keys_to_zone,
+            expiration,
+            out_file,
+            inception,
+            origin,
+            set_soa_serial_to_epoch_time,
+            use_nsec3,
+            algorithm,
+            iterations,
+            salt,
+            nsec3_opt_out_flags_only: true,
+            nsec3_opt_out,
+            hash_only: false,
+            zonefile_path,
+            key_paths,
+        })
+    }
+}
+
 impl SignZone {
     pub fn parse_timestamp(arg: &str) -> Result<Timestamp, Error> {
         // We can't just use Timestamp::from_str from the domain crate because
@@ -251,12 +393,6 @@ impl SignZone {
                 .map_err(|err| format!("Cannot write to {out_file}: {err}"))?
         };
 
-        let diagnostic_comments = match self.diagnostic_comments {
-            0 => false,
-            1 if out_file.as_os_str() == "-" => false,
-            _ => true,
-        };
-
         let mut writer = if out_file.as_os_str() == "-" {
             Box::new(writer) as Box<dyn Write>
         } else {
@@ -294,7 +430,7 @@ impl SignZone {
                     params,
                     opt_out,
                     !self.do_not_add_keys_to_zone,
-                    diagnostic_comments,
+                    self.diagnostic_comments,
                 )
                 .unwrap();
             records.extend(recs.into_iter().map(Record::from_record));
