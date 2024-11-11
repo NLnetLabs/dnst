@@ -71,13 +71,13 @@ impl LdnsCommand for Nsec3Hash {
                     algorithm =
                         Self::parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec_alg)?;
                 }
-                Arg::Short('t') => {
-                    let val = parser.value()?;
-                    iterations = Self::parse_os("iterations (-t)", &val)?;
-                }
                 Arg::Short('s') => {
                     let val = parser.value()?;
                     salt = Self::parse_os("salt (-s)", &val)?;
+                }
+                Arg::Short('t') => {
+                    let val = parser.value()?;
+                    iterations = Self::parse_os("iterations (-t)", &val)?;
                 }
                 Arg::Value(val) => {
                     // Strange ldns compatibility case: only the first
