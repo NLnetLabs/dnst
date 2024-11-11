@@ -8,6 +8,7 @@ arbitrary = { version = "1", optional = true, features = ["derive"] }
 clap      = { version = "4", features = ["derive"] }
 #domain   = "0.10.3"
 domain    = { git = "https://github.com/NLnetLabs/domain/", branch = "initial-nsec3-generation", features = ["ring", "unstable-validator"] }
+lexopt    = "0.3.0"
 
 [dev-dependencies]
 test_bin = "0.4.0"

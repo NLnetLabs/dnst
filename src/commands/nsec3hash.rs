@@ -3,11 +3,14 @@ use std::str::FromStr;
 
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::name::Name;
+use domain::base::name::{self, Name};
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::validate::nsec3_hash;
+use lexopt::Arg;
 
 use crate::error::Error;
+
+use super::{parse_os, parse_os_with, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -42,9 +45,71 @@ pub struct Nsec3Hash {
     name: Name<Vec<u8>>,
 }
 
+const LDNS_HELP: &str = "\
+ldns-nsec3-hash [OPTIONS] <domain name>
+  prints the NSEC3 hash of the given domain name
+
+  -a <algorithm> hashing algorithm number
+  -t <number>    iterations
+  -s <string>    salt in hex\
+";
+
+impl LdnsCommand for Nsec3Hash {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns() -> Result<Self, Error> {
+        let mut algorithm = Nsec3HashAlg::SHA1;
+        let mut iterations = 1;
+        let mut salt = Nsec3Salt::empty();
+        let mut name = None;
+
+        let mut parser = lexopt::Parser::from_env();
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('a') => {
+                    let val = parser.value()?;
+                    algorithm = parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec3_alg)?;
+                }
+                Arg::Short('s') => {
+                    let val = parser.value()?;
+                    salt = parse_os("salt (-s)", &val)?;
+                }
+                Arg::Short('t') => {
+                    let val = parser.value()?;
+                    iterations = parse_os("iterations (-t)", &val)?;
+                }
+                Arg::Value(val) => {
+                    // Strange ldns compatibility case: only the first
+                    // domain name is used.
+                    if name.is_some() {
+                        continue;
+                    }
+                    name = Some(parse_os("domain name", &val)?);
+                }
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+            }
+        }
+
+        let Some(name) = name else {
+            return Err("Missing domain name argument".into());
+        };
+
+        Ok(Self {
+            algorithm,
+            iterations,
+            salt,
+            name,
+        })
+    }
+}
+
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, Error> {
-        Name::from_str(&arg.to_lowercase()).map_err(|e| Error::from(e.to_string()))
+    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, name::FromStrError> {
+        Name::from_str(&arg.to_lowercase())
     }
 
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
@@ -55,17 +120,16 @@ impl Nsec3Hash {
         }
     }
 
-    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, Error> {
+    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
         if let Ok(num) = arg.parse() {
             let alg = Nsec3HashAlg::from_int(num);
             if alg.to_mnemonic().is_some() {
                 Ok(alg)
             } else {
-                Err(Error::from("unknown algorithm number"))
+                Err("unknown algorithm number")
             }
         } else {
-            Nsec3HashAlg::from_mnemonic(arg.as_bytes())
-                .ok_or(Error::from("unknown algorithm mnemonic"))
+            Nsec3HashAlg::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
         }
     }
 }
