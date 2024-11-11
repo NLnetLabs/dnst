@@ -26,11 +26,13 @@ fn create_temp_symlink(ldns_command: &str) -> std::path::PathBuf {
         .expect("Failed to create temporary directory")
         .into_path()
         .join(ldns_command);
-    std::os::unix::fs::symlink(bin_path, link_path.clone()).expect(&format!(
-        "Failed to create symbolic link {} -> {}",
-        link_path.display(),
-        bin_path.to_str().unwrap(),
-    ));
+    std::os::unix::fs::symlink(bin_path, link_path.clone()).unwrap_or_else(|_| {
+        panic!(
+            "Failed to create symbolic link {} -> {}",
+            link_path.display(),
+            bin_path.to_str().unwrap(),
+        )
+    });
     link_path
 }
 
