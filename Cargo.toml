@@ -12,7 +12,8 @@ ring    = ["domain/ring"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-domain = { git = "http://github.com/NLnetLabs/domain", branch = "dnssec-key", features = ["unstable-sign"] }
+domain = { git = "http://github.com/NLnetLabs/domain", branch = "main", features = ["unstable-sign"] }
+lexopt = "0.3.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
