@@ -13,7 +13,6 @@ use std::str::FromStr;
 use super::LdnsCommand;
 
 #[derive(Clone, Debug, clap::Args)]
-#[command(args_override_self = true)]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
