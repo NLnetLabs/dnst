@@ -12,8 +12,6 @@ pub struct Error(Box<Information>);
 #[derive(Clone)]
 struct Information {
     /// The primary error message.
-    ///
-    /// This is the innermost error to occur.
     primary: Box<str>,
 
     /// Layers of context to the error.
