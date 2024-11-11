@@ -10,7 +10,7 @@ use octseq::OctetsBuilder;
 use ring::digest;
 use std::str::FromStr;
 
-use super::LdnsCommand;
+use super::{parse_os, parse_os_with, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -67,16 +67,15 @@ impl LdnsCommand for Nsec3Hash {
             match arg {
                 Arg::Short('a') => {
                     let val = parser.value()?;
-                    algorithm =
-                        Self::parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec_alg)?;
+                    algorithm = parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec_alg)?;
                 }
                 Arg::Short('s') => {
                     let val = parser.value()?;
-                    salt = Self::parse_os("salt (-s)", &val)?;
+                    salt = parse_os("salt (-s)", &val)?;
                 }
                 Arg::Short('t') => {
                     let val = parser.value()?;
-                    iterations = Self::parse_os("iterations (-t)", &val)?;
+                    iterations = parse_os("iterations (-t)", &val)?;
                 }
                 Arg::Value(val) => {
                     // Strange ldns compatibility case: only the first
@@ -84,7 +83,7 @@ impl LdnsCommand for Nsec3Hash {
                     if name.is_some() {
                         continue;
                     }
-                    name = Some(Self::parse_os("domain name", &val)?);
+                    name = Some(parse_os("domain name", &val)?);
                 }
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {

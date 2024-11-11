@@ -51,34 +51,30 @@ pub trait LdnsCommand: Into<Command> {
             Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
     }
-
-    /// Utility function to parse an [`OsStr`] with a custom function
-    fn parse_os_with<T, E>(
-        opt: &str,
-        val: &OsStr,
-        f: impl Fn(&str) -> Result<T, E>,
-    ) -> Result<T, Error>
-    where
-        E: std::fmt::Display,
-    {
-        let Some(s) = val.to_str() else {
-            return Err(format!("Invalid value for {opt}: {val:?} is not valid unicode",).into());
-        };
-
-        f(s).map_err(|e| format!("Invalid value {val:?} for {opt}: {e}").into())
-    }
-
-    /// Utility function to parse an [`OsStr`] into a value via [`FromStr`]
-    fn parse_os<T: FromStr>(opt: &str, val: &OsStr) -> Result<T, Error>
-    where
-        T::Err: std::fmt::Display,
-    {
-        Self::parse_os_with(opt, val, T::from_str)
-    }
 }
 
 impl From<Nsec3Hash> for Command {
     fn from(val: Nsec3Hash) -> Self {
         Command::Nsec3Hash(val)
     }
+}
+
+/// Utility function to parse an [`OsStr`] with a custom function
+fn parse_os_with<T, E>(opt: &str, val: &OsStr, f: impl Fn(&str) -> Result<T, E>) -> Result<T, Error>
+where
+    E: std::fmt::Display,
+{
+    let Some(s) = val.to_str() else {
+        return Err(format!("Invalid value for {opt}: {val:?} is not valid unicode",).into());
+    };
+
+    f(s).map_err(|e| format!("Invalid value {val:?} for {opt}: {e}").into())
+}
+
+/// Utility function to parse an [`OsStr`] into a value via [`FromStr`]
+fn parse_os<T: FromStr>(opt: &str, val: &OsStr) -> Result<T, Error>
+where
+    T::Err: std::fmt::Display,
+{
+    parse_os_with(opt, val, T::from_str)
 }
