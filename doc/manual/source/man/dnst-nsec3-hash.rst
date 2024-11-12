@@ -23,7 +23,7 @@ Options
 
       Use the given number of additional iterations for the hash calculation.
 
-.. option:: -s <HEX STRING>>, --salt <HEX STRING>>
+.. option:: -s <HEX STRING>, --salt <HEX STRING>
 
       Use the given salt for the hash calculation. The salt value should be
       in hexadecimal format.
