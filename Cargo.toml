@@ -3,13 +3,18 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "ldns"
+path = "src/bin/ldns.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = [
     "zonefile",
     "bytes",
-    "validate",
+    "unstable-validate",
 ] }
+lexopt = "0.3.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.2", features = ["std"] }
