@@ -3,6 +3,10 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "ldns"
+path = "src/bin/ldns.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 domain = "0.10.1"
