@@ -12,7 +12,6 @@ lexopt    = "0.3.0"
 
 [dev-dependencies]
 test_bin = "0.4.0"
-tempfile = "3.14.0"
 
 [features]
 arbitrary = [ "dep:arbitrary", "domain/arbitrary" ]
