@@ -7,6 +7,7 @@ pub mod nsec3hash;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
+use key2ds::Key2ds;
 use nsec3hash::Nsec3Hash;
 
 use crate::Args;
@@ -65,6 +66,12 @@ pub trait LdnsCommand: Into<Command> {
 impl From<Nsec3Hash> for Command {
     fn from(val: Nsec3Hash) -> Self {
         Command::Nsec3Hash(val)
+    }
+}
+
+impl From<Key2ds> for Command {
+    fn from(val: Key2ds) -> Self {
+        Command::Key2ds(val)
     }
 }
 

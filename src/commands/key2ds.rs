@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::{fs::File, io::Write, path::PathBuf};
 
 use clap::builder::ValueParser;
@@ -8,8 +9,11 @@ use domain::base::Record;
 use domain::rdata::Ds;
 use domain::validate::DnskeyExt;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
+use lexopt::Arg;
 
 use crate::error::Error;
+
+use super::LdnsCommand;
 
 #[derive(Clone, Debug, Parser)]
 #[command(version)]
@@ -22,23 +26,10 @@ pub struct Key2ds {
     #[arg(short = 'n')]
     write_to_stdout: bool,
 
-    /// use SHA-1 for the DS hash
-    #[arg(short = '1', overrides_with_all = ["one", "two", "four", "algorithm"])]
-    one: bool,
-
-    /// use SHA-256 for the DS hash
-    #[arg(short = '2', overrides_with_all = ["one", "two", "four", "algorithm"])]
-    two: bool,
-
-    /// use SHA-384 for the DS hash
-    #[arg(short = '4', overrides_with_all = ["one", "two", "four", "algorithm"])]
-    four: bool,
-
     /// algorithm to use for digest
     #[arg(
         short = 'a',
         long = "algorithm",
-        overrides_with_all = ["one", "two", "four", "algorithm"],
         value_parser = ValueParser::new(parse_digest_alg)
     )]
     algorithm: Option<DigestAlg>,
@@ -57,8 +48,67 @@ pub fn parse_digest_alg(arg: &str) -> Result<DigestAlg, Error> {
             Err(Error::from("unknown algorithm number"))
         }
     } else {
-        DigestAlg::from_mnemonic(arg.as_bytes())
-            .ok_or(Error::from("unknown algorithm mnemonic"))
+        DigestAlg::from_mnemonic(arg.as_bytes()).ok_or(Error::from("unknown algorithm mnemonic"))
+    }
+}
+
+const LDNS_HELP: &str = "\
+ldns-key2ds [-fn] [-1|-2|-4] keyfile
+  Generate a DS RR from the DNSKEYS in keyfile
+  The following file will be created for each key:
+  `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
+  will be printed to stdout.
+
+Options:
+  -f: ignore SEP flag (i.e. make DS records for any key)
+  -n: do not write DS records to file(s) but to stdout
+  (default) use similar hash to the key algorithm
+  -1: use SHA1 for the DS hash
+  -2: use SHA256 for the DS hash
+  -4: use SHA384 for the DS hash\
+";
+
+impl LdnsCommand for Key2ds {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+        let mut ignore_sep = false;
+        let mut write_to_stdout = false;
+        let mut algorithm = None;
+        let mut keyfile = None;
+
+        let mut parser = lexopt::Parser::from_args(args);
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('1') => algorithm = Some(DigestAlg::SHA1),
+                Arg::Short('2') => algorithm = Some(DigestAlg::SHA256),
+                Arg::Short('4') => algorithm = Some(DigestAlg::SHA384),
+                Arg::Short('f') => ignore_sep = true,
+                Arg::Short('n') => write_to_stdout = true,
+                Arg::Value(val) => {
+                    if keyfile.is_some() {
+                        return Err("Only one keyfile is allowed".into());
+                    }
+                    keyfile = Some(val);
+                }
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+            }
+        }
+
+        let Some(keyfile) = keyfile else {
+            return Err("No keyfile given".into());
+        };
+
+        Ok(Self {
+            ignore_sep,
+            write_to_stdout,
+            algorithm,
+            keyfile: keyfile.into(),
+        })
     }
 }
 
@@ -70,8 +120,7 @@ impl Key2ds {
                 self.keyfile.display()
             )
         })?;
-        let zonefile =
-            domain::zonefile::inplace::Zonefile::load(&mut file).unwrap();
+        let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file).unwrap();
         for entry in zonefile {
             let entry = entry.map_err(|e| {
                 format!(
@@ -102,7 +151,9 @@ impl Key2ds {
 
             let key_tag = dnskey.key_tag();
             let sec_alg = dnskey.algorithm();
-            let digest_alg = self.determine_hash(sec_alg);
+            let digest_alg = self
+                .algorithm
+                .unwrap_or_else(|| determine_hash_from_sec_alg(sec_alg));
 
             if digest_alg == DigestAlg::GOST {
                 return Err("Error: the GOST algorithm is deprecated and must not be used. Try a different algorithm.".into());
@@ -123,15 +174,11 @@ impl Key2ds {
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
-                let filename =
-                    format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
-                let mut out_file = File::create(&filename).map_err(|e| {
-                    format!("Could not create file \"{filename}\": {e}")
-                })?;
+                let filename = format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
+                let mut out_file = File::create(&filename)
+                    .map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
                 writeln!(out_file, "{}", rr.display_zonefile(false))
-                    .map_err(|e| {
-                        format!("Could not write to file \"{filename}\": {e}")
-                    })?;
+                    .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 // This is different from ldns, but I think writing out the
                 // filename we wrote to is useful:
@@ -141,29 +188,17 @@ impl Key2ds {
 
         Ok(())
     }
+}
 
-    fn determine_hash(&self, sec_alg: SecAlg) -> DigestAlg {
-        // If a specific algorithm was set, use that
-        if self.one {
-            return DigestAlg::SHA1;
-        } else if self.two {
-            return DigestAlg::SHA256;
-        } else if self.four {
-            return DigestAlg::SHA384;
-        } else if let Some(a) = self.algorithm {
-            return a;
-        }
-
-        // Otherwise we try to determine a similar hash to the key
-        match sec_alg {
-            SecAlg::RSASHA256
-            | SecAlg::RSASHA512
-            | SecAlg::ED25519
-            | SecAlg::ED448
-            | SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
-            SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
-            SecAlg::ECC_GOST => DigestAlg::GOST,
-            _ => DigestAlg::SHA1,
-        }
+fn determine_hash_from_sec_alg(sec_alg: SecAlg) -> DigestAlg {
+    match sec_alg {
+        SecAlg::RSASHA256
+        | SecAlg::RSASHA512
+        | SecAlg::ED25519
+        | SecAlg::ED448
+        | SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
+        SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
+        SecAlg::ECC_GOST => DigestAlg::GOST,
+        _ => DigestAlg::SHA1,
     }
 }

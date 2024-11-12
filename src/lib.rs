@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::Path};
 
-use commands::{nsec3hash::Nsec3Hash, LdnsCommand};
+use commands::{key2ds::Key2ds, nsec3hash::Nsec3Hash, LdnsCommand};
 
 pub use self::args::Args;
 
@@ -15,6 +15,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(args: I) -> Opti
     let binary_name = Path::new(&binary_path).file_name()?.to_str()?;
 
     let res = match binary_name {
+        "ldns-key2ds" => Key2ds::parse_ldns_args(args_iter),
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         _ => return None,
     };
