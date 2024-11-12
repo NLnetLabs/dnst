@@ -53,10 +53,9 @@ pub struct Nsec3Hash {
 const LDNS_HELP: &str = "\
 ldns-nsec3-hash [OPTIONS] <domain name>
   prints the NSEC3 hash of the given domain name
-
-  -a <algorithm> hashing algorithm number
-  -t <number>    iterations
-  -s <string>    salt in hex
+-a [algorithm] hashing algorithm
+-t [number] number of hash iterations
+-s [string] salt
 ";
 
 impl LdnsCommand for Nsec3Hash {
