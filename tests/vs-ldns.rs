@@ -70,7 +70,7 @@ fn nsec3_hash() {
 }
 
 fn assert_cmds_eq(cmd1: &[&str], cmd2: &[&str]) {
-    let cmd1_output = Command::new(&cmd1[0]).args(&cmd1[1..]).output().unwrap();
+    let cmd1_output = Command::new(cmd1[0]).args(&cmd1[1..]).output().unwrap();
 
     let cmd2_output = test_bin::get_test_bin("dnst").args(cmd2).output().unwrap();
 
