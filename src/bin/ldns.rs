@@ -1,3 +1,9 @@
+//! This binary is intended for testing the `ldns-*` commands
+//!
+//! The `ldns` command is passed as the first argument, so that it can be
+//! executed without symlinking. This binary should not be included in any
+//! packaged version of `dnst` as it is meant for internal testing only.
+
 use std::process::ExitCode;
 
 use dnst::try_ldns_compatibility;
