@@ -4,27 +4,27 @@ dnst-nsec3-hash
 Synopsis
 --------
 
-:program:`dnst nsec3-hash` [``options``] :samp:`domain-name`
+:program:`dnst nsec3-hash` [``OPTIONS``] :samp:`<DOMAIN NAME>`
 
 Description
 -----------
 
-**dnst nsec3-hash** prints the NSEC3 hash for the given domain name.
+**dnst nsec3-hash** prints the NSEC3 hash of a given domain name.
 
 Options
 -------
 
-.. option:: -a number-or-mnemonic, --algorithm=number-or-mnemonic
+.. option:: -a <NUMBER OR MNEMONIC>, --algorithm <NUMBER OR MNEMONIC>
 
       Use the given algorithm number for the hash calculation. Defaults to
-      ``sha1``.
+      1 (SHA-1).
 
-.. option:: -s salt, --salt=count
+.. option:: -i <NUMBER>, -t <NUMBER>, --iterations <NUMBER>
+
+      Use the given number of additional iterations for the hash calculation.
+
+.. option:: -s <HEX STRING>>, --salt <HEX STRING>>
 
       Use the given salt for the hash calculation. The salt value should be
       in hexadecimal format.
-
-.. option:: -i count, -t count, --iterations=count
-
-      Use *count* iterations for the hash calculation.
 
