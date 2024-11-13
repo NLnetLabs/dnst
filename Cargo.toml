@@ -33,7 +33,7 @@ section = "net"
 priority = "optional"
 assets = [
     ["target/release/dnst", "usr/bin/", "755"],
-    ["pkg/links/ldns-nsec3-hash", "usr/bin/", "755"],
+    ["pkg/links/ldns-nsec3-hash", "usr/bin/", "777"],
     ["README.md", "usr/share/doc/dnst/", "644"],
     # TODO: Extend Ploutos to generate the man pages from sources.
     #["doc/dnst.1", "usr/share/man/man1/dnst.1", "644"],
