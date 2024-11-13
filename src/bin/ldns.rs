@@ -6,18 +6,21 @@
 
 use std::process::ExitCode;
 
+use dnst::error::Error;
 use dnst::try_ldns_compatibility;
 
 fn main() -> ExitCode {
-    let mut args = std::env::args_os();
-    args.next().unwrap();
-    let args = try_ldns_compatibility(args).expect("ldns commmand is not recognized");
-
-    match args.execute(&mut std::io::stdout()) {
+    match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             err.pretty_print();
             ExitCode::FAILURE
         }
     }
+}
+
+fn run() -> Result<(), Error> {
+    let mut args = std::env::args_os();
+    args.next().unwrap();
+    try_ldns_compatibility(args)?.execute(&mut std::io::stdout())
 }
