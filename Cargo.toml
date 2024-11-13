@@ -2,6 +2,11 @@
 name = "dnst"
 version = "0.1.0"
 edition = "2021"
+default-run = "dnst"
+
+[[bin]]
+name = "ldns"
+path = "src/bin/ldns.rs"
 
 [dependencies]
 arbitrary = { version = "1", optional = true, features = ["derive"] }
