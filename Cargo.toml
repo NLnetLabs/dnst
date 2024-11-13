@@ -44,6 +44,7 @@ copyright = "Copyright (c) 2024, NLnet Labs. All rights reserved."
 # Instead create and remove them using maintainer scripts.
 #preserve-symlinks = true
 maintainer-scripts = "pkg/debian"
+replaces = "ldnsutils"
 
 [package.metadata.generate-rpm]
 # "BSD" alone is the 3-clause license. Inheriting "license" from above causes rpmlint to
@@ -55,6 +56,7 @@ assets = [
     # TODO: Extend Ploutos to generate the man pages from sources.
     #{ source = "doc/routinator.1", dest = "/usr/share/man/man1/routinator.1", mode = "644", doc = true },
 ]
+obsoletes = [ "ldns-utils" ]
 # These get set using cargo-generate-rpm --set-metadata at package build time.
 #post_install_script = ...
 #pre_uninstall_script = ...
