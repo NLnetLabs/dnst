@@ -33,7 +33,7 @@ section = "net"
 priority = "optional"
 assets = [
     ["target/release/dnst", "usr/bin/", "755"],
-    ["links/ldns-nsec3-hash", "usr/bin/", "755"],
+    ["pkg/links/ldns-nsec3-hash", "usr/bin/", "755"],
     ["README.md", "usr/share/doc/dnst/", "644"],
     # TODO: Extend Ploutos to generate the man pages from sources.
     #["doc/dnst.1", "usr/share/man/man1/dnst.1", "644"],
@@ -49,7 +49,7 @@ preserve-symlinks = true
 license = "BSD"
 assets = [
     { source = "target/release/dnst", dest = "/usr/bin/dnst", mode = "755" },
-    { source = "links/ldns-nsec3-hash", dest = "/usr/bin/ldns-nsec3-hash", mode = "744" },
+    { source = "pkg/links/ldns-nsec3-hash", dest = "/usr/bin/ldns-nsec3-hash", mode = "744" },
     # TODO: Extend Ploutos to generate the man pages from sources.
     #{ source = "doc/routinator.1", dest = "/usr/share/man/man1/routinator.1", mode = "644", doc = true },
 ]
