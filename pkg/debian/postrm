@@ -1,8 +1,0 @@
-#!/bin/sh -e
-
-case "$1" in
-purge)
-    # Remove symbolic links
-    rm -f /usr/bin/ldns-nsec3-hash
-    ;;
-esac
