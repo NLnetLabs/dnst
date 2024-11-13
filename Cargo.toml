@@ -56,7 +56,7 @@ assets = [
     # TODO: Extend Ploutos to generate the man pages from sources.
     #{ source = "doc/routinator.1", dest = "/usr/share/man/man1/routinator.1", mode = "644", doc = true },
 ]
-obsoletes = [ "ldns-utils" ]
+obsoletes = "ldns-utils"
 # These get set using cargo-generate-rpm --set-metadata at package build time.
 #post_install_script = ...
 #pre_uninstall_script = ...
