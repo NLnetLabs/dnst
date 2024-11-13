@@ -88,13 +88,13 @@ fn assert_cmds_eq(cmd1: &[&str], cmd2: &[&str]) {
     );
     assert!(
         !cmd1_output.stdout.is_empty(),
-        "Unexpected stdout content for ldns command: {}: {:?}",
+        "Expected stdout content for command: {}: {:?}",
         cmd1.join(" "),
         std::str::from_utf8(&cmd1_output.stdout)
     );
     assert!(
         !cmd2_output.stdout.is_empty(),
-        "Unexpected stdout content for dnst command: {}: {:?}",
+        "Expected stdout content for command: {}: {:?}",
         cmd2.join(" "),
         std::str::from_utf8(&cmd2_output.stdout)
     );
