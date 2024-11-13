@@ -8,7 +8,7 @@ use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::sign::{common, GenerateParams};
 use domain::validate::Key;
 
-use crate::error::Error;
+use crate::error::{Context, Error};
 use crate::parse::parse_name;
 
 #[derive(Clone, Debug, Args)]
@@ -79,7 +79,8 @@ impl Keygen {
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
         let (secret_key, public_key) = common::generate(params)
-            .map_err(|err| format!("an implementation error occurred: {err}"))?;
+            .map_err(|err| format!("an implementation error occurred: {err}").into())
+            .context("generating a cryptographic keypair")?;
         let flags = if self.make_ksk { 257 } else { 256 };
         let public_key = Key::new(self.name.clone(), flags, public_key);
         let digest = self
@@ -94,7 +95,7 @@ impl Keygen {
             public_key.key_tag()
         );
         let mut secret_key_file = File::create_new(format!("{base}.private"))
-            .map_err(|err| format!("private key file '{base}.private' already existed: {err}"))?;
+            .map_err(|err| format!("cannot create '{base}.private': {err}"))?;
         let mut public_key_file = File::create_new(format!("{base}.key"))
             .map_err(|err| format!("public key file '{base}.key' already existed: {err}"))?;
         let mut digest_file = self
@@ -102,6 +103,7 @@ impl Keygen {
             .then(|| File::create_new(format!("{base}.ds")))
             .transpose()
             .map_err(|err| format!("digest file '{base}.ds' already existed: {err}"))?;
+
         #[cfg(target_family = "unix")]
         if self.create_symlinks {
             if let Ok(metadata) = std::fs::symlink_metadata(".private") {
@@ -127,6 +129,21 @@ impl Keygen {
                     }
                 } else {
                     return Err("'.key' already exists".into());
+                }
+            }
+
+            if digest_file.is_some() {
+                if let Ok(metadata) = std::fs::symlink_metadata(".ds") {
+                    if self.force_symlinks {
+                        if metadata.is_symlink() {
+                            std::fs::remove_file(".ds")
+                                .map_err(|err| format!("could not remove symlink '.ds': {err}"))?;
+                        } else {
+                            return Err("'.ds' already exists but is not a symlink".into());
+                        }
+                    } else {
+                        return Err("'.ds' already exists".into());
+                    }
                 }
             }
         }
@@ -177,6 +194,10 @@ impl Keygen {
                 .map_err(|err| format!("could not create symlink '.key': {err}"))?;
             fs::symlink(format!("{base}.private"), ".private")
                 .map_err(|err| format!("could not create symlink '.private': {err}"))?;
+            if digest_file.is_some() {
+                fs::symlink(format!("{base}.ds"), ".ds")
+                    .map_err(|err| format!("could not create symlink '.ds': {err}"))?;
+            }
         }
 
         // Let the user know what the base name of the files is.
