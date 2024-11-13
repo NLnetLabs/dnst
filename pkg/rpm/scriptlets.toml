@@ -4,6 +4,7 @@ post_install_script = '''
 if [ $1 -eq 1 ] ; then
     # Initial installation
     # Create symbolic links
+    ln -s /usr/bin/dnst /usr/bin/ldns-nsec3-hash
 fi
 '''
 
@@ -13,5 +14,6 @@ post_uninstall_script = '''
 
 if [ $1 -ge 1 ] ; then
     # Remove symbolic links
+    rm -f /usr/bin/ldns-nsec3-hash
 fi
 '''

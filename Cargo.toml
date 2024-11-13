@@ -52,7 +52,6 @@ maintainer-scripts = "pkg/debian"
 license = "BSD"
 assets = [
     { source = "target/release/dnst", dest = "/usr/bin/dnst", mode = "755" },
-    { source = "pkg/links/ldns-nsec3-hash", dest = "/usr/bin/ldns-nsec3-hash", mode = "744" },
     # TODO: Extend Ploutos to generate the man pages from sources.
     #{ source = "doc/routinator.1", dest = "/usr/share/man/man1/routinator.1", mode = "644", doc = true },
 ]
