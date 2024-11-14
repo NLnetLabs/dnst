@@ -22,5 +22,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Error> {
     let mut args = std::env::args_os();
     args.next().unwrap();
-    try_ldns_compatibility(args)?.execute(&mut std::io::stdout())
+    try_ldns_compatibility(args)
+        .ok_or("Unrecognised ldns command")??
+        .execute(&mut std::io::stdout())
 }
