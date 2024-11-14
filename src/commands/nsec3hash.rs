@@ -14,7 +14,6 @@ use crate::error::Error;
 use super::{parse_os, parse_os_with, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
@@ -165,8 +164,7 @@ impl Nsec3Hash {
 }
 
 // These are just basic tests as there is very little code in this module, the
-// actual NSEC3 generation should be tested as part of the domain crate. See
-// also: fuzz/fuzz_targets/nsec3-hash.rs.
+// actual NSEC3 generation should be tested as part of the domain crate.
 #[cfg(test)]
 mod tests {
     mod without_cli {
