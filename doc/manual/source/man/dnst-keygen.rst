@@ -31,13 +31,22 @@ Upon completion, ``K<name>+<alg>+<tag>`` will be printed.
 Options
 -------
 
-.. option:: -a <MNEMONIC>
+.. option:: -a <NUMBER OR MNEMONIC>
 
       Use the given signing algorithm.
 
-      Possible values are ``RSASHA256``, ``ECDSAP256SHA256``,
-      ``ECDSAP384SHA384``, ``ED25519``, ``ED448``; or ``list`` to list all
-      available algorithms.
+      Possible values are:
+
+      =================== ========== =========================
+      **Mnemonic**        **Number** **Description**
+      =================== ========== =========================
+      ``list``                       List available algorithms
+      ``RSASHA256``        8         RSA with SHA-256
+      ``ECDSAP256SHA256`` 13         ECDSA P-256 with SHA-256
+      ``ECDSAP384SHA384`` 14         ECDSA P-384 with SHA-384
+      ``ED25519``         15         ED25519
+      ``ED448``           16         ED448
+      =================== ========== =========================
 
 .. option:: -k
 
