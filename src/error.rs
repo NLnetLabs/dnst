@@ -61,7 +61,7 @@ impl Error {
             // Clap errors are already styled. We don't want our own pretty
             // styling around that and context does not make sense for command
             // line arguments either. So we just print the styled string that
-            // clap produces and return. 
+            // clap produces and return.
             PrimaryError::Clap(e) => {
                 let _ = writeln!(err, "{}", e.render().ansi());
                 return;
