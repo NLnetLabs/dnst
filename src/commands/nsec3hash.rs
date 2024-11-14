@@ -14,6 +14,7 @@ use std::str::FromStr;
 use super::{parse_os, parse_os_with, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(

@@ -1,0 +1,20 @@
+[package]
+name    = "dnst-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary     = "1.4.1"
+libfuzzer-sys = "0.4"
+dnst          = { path = "..", features = ["arbitrary"] }
+
+[[bin]]
+name  = "nsec3-hash"
+path  = "fuzz_targets/nsec3-hash.rs"
+test  = false
+doc   = false
+bench = false
