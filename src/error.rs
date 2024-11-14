@@ -5,19 +5,41 @@ use std::{error, fmt, io};
 /// A program error.
 ///
 /// Such errors are highly likely to halt the program.
-#[derive(Clone)]
 pub struct Error(Box<Information>);
 
 /// Information about an error.
-#[derive(Clone)]
 struct Information {
     /// The primary error message.
-    primary: Box<str>,
+    primary: PrimaryError,
 
     /// Layers of context to the error.
     ///
     /// Ordered from innermost to outermost.
     context: Vec<Box<str>>,
+}
+
+#[derive(Debug)]
+enum PrimaryError {
+    Clap(clap::Error),
+    Other(Box<str>),
+}
+
+impl PrimaryError {
+    fn print(&self) {
+        match self {
+            PrimaryError::Clap(e) => e.print().unwrap(),
+            PrimaryError::Other(e) => eprint!("{e}"),
+        };
+    }
+}
+
+impl fmt::Display for PrimaryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PrimaryError::Clap(e) => e.fmt(f),
+            PrimaryError::Other(e) => e.fmt(f),
+        }
+    }
 }
 
 //--- Interaction
@@ -26,7 +48,7 @@ impl Error {
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
         Self(Box::new(Information {
-            primary: error.into(),
+            primary: PrimaryError::Other(error.into()),
             context: Vec::new(),
         }))
     }
@@ -52,7 +74,8 @@ impl Error {
             "ERROR:"
         };
 
-        eprint!("[{prog}] {error_marker} {}", self.0.primary);
+        eprint!("[{prog}] {error_marker} ");
+        self.0.primary.print();
         for context in &self.0.context {
             eprint!("\n... while {context}");
         }
@@ -85,11 +108,20 @@ impl From<lexopt::Error> for Error {
     }
 }
 
+impl From<clap::Error> for Error {
+    fn from(value: clap::Error) -> Self {
+        Self(Box::new(Information {
+            primary: PrimaryError::Clap(value),
+            context: Vec::new(),
+        }))
+    }
+}
+
 //--- Display, Debug
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.0.primary)
+        self.0.primary.fmt(f)
     }
 }
 

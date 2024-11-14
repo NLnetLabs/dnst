@@ -1,15 +1,9 @@
+use std::cell::RefCell;
+use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
-use std::{cell::RefCell, ffi::OsString};
 
-use dnst::env::Env;
-
-#[macro_export]
-macro_rules! vec_os {
-    ($($xs:expr),*) => {
-        vec![$(std::ffi::OsString::from($xs)),*]
-    };
-}
+use super::Env;
 
 /// Use fake I/O and Stelline for testing
 #[derive(Default)]
