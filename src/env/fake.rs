@@ -42,6 +42,11 @@ impl FakeEnv {
         let r: &RefCell<_> = &self.stdout.0;
         r.borrow().clone()
     }
+    
+    pub fn get_stderr(&self) -> String {
+        let r: &RefCell<_> = &self.stdout.0;
+        r.borrow().clone()
+    }
 }
 
 #[derive(Clone, Default)]
