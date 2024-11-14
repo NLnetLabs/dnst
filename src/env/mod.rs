@@ -21,7 +21,6 @@ pub trait Env {
     /// Get a reference to stderr
     fn stderr(&self) -> impl fmt::Write;
 
-    // Not needed yet
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
 }

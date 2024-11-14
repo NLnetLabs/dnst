@@ -58,6 +58,10 @@ impl Error {
         let mut err = env.stderr();
 
         let error = match &self.0.primary {
+            // Clap errors are already styled. We don't want our own pretty
+            // styling around that and context does not make sense for command
+            // line arguments either. So we just print the styled string that
+            // clap produces and return. 
             PrimaryError::Clap(e) => {
                 let _ = writeln!(err, "{}", e.render().ansi());
                 return;
@@ -83,6 +87,13 @@ impl Error {
     }
 
     pub fn exit_code(&self) -> u8 {
+        // Clap uses the exit code 2 and we want to keep that, but we aren't
+        // actually returning the clap error, so we replicate that behaviour
+        // here.
+        //
+        // Argument parsing errors from the ldns-xxx commands will not be clap
+        // errors and therefore be printed with an exit code of 1. This is
+        // expected because ldns also exits with 1.
         if let PrimaryError::Clap(_) = self.0.primary {
             2
         } else {

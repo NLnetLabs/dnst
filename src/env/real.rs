@@ -8,14 +8,6 @@ use super::Env;
 pub struct RealEnv;
 
 impl Env for RealEnv {
-    // fn make_connection(&self) {
-    //     todo!()
-    // }
-
-    // fn make_stub_resolver(&self) {
-    //     todo!()
-    // }
-
     fn args_os(&self) -> impl Iterator<Item = OsString> {
         std::env::args_os()
     }
