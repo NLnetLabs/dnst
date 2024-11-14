@@ -4,7 +4,7 @@ dnst-nsec3-hash
 Synopsis
 --------
 
-:program:`dnst nsec3-hash` [``OPTIONS``] :samp:`<DOMAIN NAME>`
+:program:`dnst nsec3-hash` [``OPTIONS``] ``<DOMAIN NAME>``
 
 Description
 -----------
@@ -28,3 +28,11 @@ Options
       Use the given salt for the hash calculation. The salt value should be
       in hexadecimal format.
 
+.. option:: -h, --help
+
+      Print the help text (short summary with ``-h``, long help with
+      ``--help``).
+
+.. option:: -V, --version
+
+      Print the version.
