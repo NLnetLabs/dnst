@@ -139,7 +139,7 @@ impl Nsec3Hash {
     pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
         match arg.parse() {
             Ok(num) => Self::num_to_nsec3_alg(num),
-            Err(_) => Err("malformed algorith number"),
+            Err(_) => Err("malformed algorithm number"),
         }
     }
 
