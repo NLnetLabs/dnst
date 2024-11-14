@@ -185,7 +185,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=add-some-arbitrary-derives-for-fuzzing-support#a32cc33335586e738c1ea8315b7f3d869bbd4db3"
+source = "git+https://github.com/NLnetLabs/domain#8f6e44385a927ab1225ea06ee4e2cdc594ef48b6"
 dependencies = [
  "arbitrary",
  "bytes",
