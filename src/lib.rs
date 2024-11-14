@@ -42,12 +42,12 @@ fn parse_args(env: impl Env) -> Result<Args, Error> {
 }
 
 pub fn run(env: impl Env) -> u8 {
-    let res = parse_args(&env).and_then(|args| args.execute(env));
+    let res = parse_args(&env).and_then(|args| args.execute(&env));
     match res {
         Ok(()) => 0,
         Err(err) => {
-            err.pretty_print();
-            1
+            err.pretty_print(&env);
+            err.exit_code()
         }
     }
 }

@@ -183,3 +183,36 @@ where
     // For normal hash algorithms this should not fail.
     OwnerHash::from_octets(h.as_ref().to_vec()).expect("should not fail")
 }
+
+#[cfg(test)]
+mod test {
+    use crate::env::fake::FakeCmd;
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
+    }
+
+    #[test]
+    fn dnst_run() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 2);
+
+        let res = cmd.args(["example.test"]).run();
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(res.stdout, "o09614ibh1cq1rcc86289olr22ea0fso.\n")
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
+    }
+}

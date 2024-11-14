@@ -16,10 +16,10 @@ fn main() -> ExitCode {
     let args =
         try_ldns_compatibility(args).map(|args| args.expect("ldns commmand is not recognized"));
 
-    match args.and_then(|args| args.execute(env)) {
+    match args.and_then(|args| args.execute(&env)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            err.pretty_print();
+            err.pretty_print(env);
             ExitCode::FAILURE
         }
     }

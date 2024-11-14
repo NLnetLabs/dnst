@@ -1,4 +1,6 @@
-use std::{error, fmt, io};
+use crate::env::Env;
+use std::fmt::{self, Write};
+use std::{error, io};
 
 //------------ Error ---------------------------------------------------------
 
@@ -22,15 +24,6 @@ struct Information {
 enum PrimaryError {
     Clap(clap::Error),
     Other(Box<str>),
-}
-
-impl PrimaryError {
-    fn print(&self) {
-        match self {
-            PrimaryError::Clap(e) => e.print().unwrap(),
-            PrimaryError::Other(e) => eprint!("{e}"),
-        };
-    }
 }
 
 impl fmt::Display for PrimaryError {
@@ -60,8 +53,17 @@ impl Error {
     }
 
     /// Pretty-print this error.
-    pub fn pretty_print(self) {
+    pub fn pretty_print(&self, env: impl Env) {
         use std::io::IsTerminal;
+        let mut err = env.stderr();
+
+        let error = match &self.0.primary {
+            PrimaryError::Clap(e) => {
+                let _ = writeln!(err, "{}", e.render().ansi());
+                return;
+            }
+            PrimaryError::Other(error) => error,
+        };
 
         // NOTE: This is a multicall binary, so argv[0] is necessary for
         // program operation.  We would fail very early if it didn't exist.
@@ -74,10 +76,17 @@ impl Error {
             "ERROR:"
         };
 
-        eprint!("[{prog}] {error_marker} ");
-        self.0.primary.print();
+        let _ = write!(err, "[{prog}] {error_marker} {error}");
         for context in &self.0.context {
-            eprint!("\n... while {context}");
+            let _ = writeln!(err, "\n... while {context}");
+        }
+    }
+
+    pub fn exit_code(&self) -> u8 {
+        if let PrimaryError::Clap(_) = self.0.primary {
+            2
+        } else {
+            1
         }
     }
 }
