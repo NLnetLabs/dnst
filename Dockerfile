@@ -142,7 +142,7 @@ FROM ${BASE_IMG} AS final
 COPY --from=source /tmp/out/bin/* /usr/local/bin/
 
 # Install required runtime dependencies
-RUN apk add --no-cache tini
+RUN apk add --no-cache libgcc tini
 
 # Use Tini to ensure that our application responds to CTRL-C when run in the
 # foreground without the Docker argument "--init" (which is actually another
