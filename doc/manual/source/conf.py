@@ -189,10 +189,18 @@ latex_documents = [
 # (source start file, name, description, authors, manual section).
 man_pages = [
     ('man/dnst', 'dnst', 'DNS Management Tools', author, 1),
-    ('man/dnst-nsec3-hash', 'dnst-nsec3-hash', 'print out the NSEC3 hash for a domain name', author, 1),
-    ('man/ldns-nsec3-hash', 'ldns-nsec3-hash', 'print out the NSEC3 hash for a domain name', author, 1),
     ('man/dnst-key2ds', 'dnst-key2ds', 'Generate DS RRs from the DNSKEYs in a keyfile', author, 1),
     ('man/ldns-key2ds', 'ldns-key2ds', 'Generate DS RRs from the DNSKEYs in a keyfile', author, 1),
+    ('man/dnst-keygen', 'dnst-keygen', 'Generate a new key pair for a domain name', author, 1),
+    ('man/ldns-keygen', 'ldns-keygen', 'Generate a new key pair for a domain name', author, 1),
+    ('man/dnst-notify', 'dnst-notify', 'Send a NOTIFY message to a list of name servers', author, 1),
+    ('man/ldns-notify', 'ldns-notify', 'Send a NOTIFY message to a list of name servers', author, 1),
+    ('man/dnst-nsec3-hash', 'dnst-nsec3-hash', 'Print out the NSEC3 hash of a domain name', author, 1),
+    ('man/ldns-nsec3-hash', 'ldns-nsec3-hash', 'Print out the NSEC3 hash of a domain name', author, 1),
+    ('man/dnst-signzone', 'dnst-signzone', 'Sign the zone with the given key(s)', author, 1),
+    ('man/ldns-signzone', 'ldns-signzone', 'Sign the zone with the given key(s)', author, 1),
+    ('man/dnst-update', 'dnst-update', 'Send a dynamic update packet to update an IP (or delete all existing IPs) for a domain name', author, 1),
+    ('man/ldns-update', 'ldns-update', 'Send a dynamic update packet to update an IP (or delete all existing IPs) for a domain name', author, 1),
 ]
 
 
