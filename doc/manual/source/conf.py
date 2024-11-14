@@ -189,8 +189,8 @@ latex_documents = [
 # (source start file, name, description, authors, manual section).
 man_pages = [
     ('man/dnst', 'dnst', 'DNS Management Tools', author, 1),
-    ('man/dnst-nsec3-hash', 'dnst-nsec3-hash', 'print out the NSEC3 hash for a domain name', author, 1),
-    ('man/ldns-nsec3-hash', 'ldns-nsec3-hash', 'print out the NSEC3 hash for a domain name', author, 1),
+    ('man/dnst-nsec3-hash', 'dnst-nsec3-hash', 'DNS Management Tools', author,
+     1),
 ]
 
 
