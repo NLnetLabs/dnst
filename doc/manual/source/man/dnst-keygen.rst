@@ -35,22 +35,9 @@ Options
 
       Use the given signing algorithm.
 
-      Possible values:
-
-      .. table::
-            :widths: auto
-
-            ==================== ========================
-            **Mnemonic**         **Description**
-            ==================== ========================
-            ``list``             List all algorithms
-            ``RSASHA256``        RSA with SHA-256
-            ``ECDSAP256SHA256``  ECDSA P-256 with SHA-256
-            ``ECDSAP384SHA384``  ECDSA P-384 with SHA-384
-            ``ED25519``          ED25519
-            ``ED448``            ED448
-            ==================== ========================
-
+      Possible values are ``RSASHA256``, ``ECDSAP256SHA256``,
+      ``ECDSAP384SHA384``, ``ED25519``, ``ED448``; or ``list`` to list all
+      available algorithms.
 
 .. option:: -k
 
