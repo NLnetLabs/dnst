@@ -9,10 +9,14 @@ name = "ldns"
 path = "src/bin/ldns.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-domain = "0.10.1"
-lexopt = "0.3.0"
+arbitrary = { version = "1", optional = true, features = ["derive"] }
+clap      = { version = "4", features = ["derive"] }
+domain    = { git = "https://github.com/NLnetLabs/domain", branch = "add-some-arbitrary-derives-for-fuzzing-support" }
+lexopt    = "0.3.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
 octseq = { version = "0.5.1", features = ["std"] }
 ring = { version = "0.17" }
+
+[features]
+arbitrary = [ "dep:arbitrary", "domain/arbitrary" ]
