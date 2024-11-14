@@ -44,7 +44,7 @@ copyright = "Copyright (c) 2024, NLnet Labs. All rights reserved."
 # Instead create and remove them using maintainer scripts.
 #preserve-symlinks = true
 maintainer-scripts = "pkg/debian"
-replaces = "ldnsutils"
+conflicts = "ldnsutils"
 
 [package.metadata.generate-rpm]
 # "BSD" alone is the 3-clause license. Inheriting "license" from above causes rpmlint to
@@ -62,5 +62,5 @@ assets = [
 #pre_uninstall_script = ...
 #post_uninstall_script = ...
 
-[package.metadata.generate-rpm.obsoletes]
+[package.metadata.generate-rpm.conflicts]
 ldns-utils = "*"
