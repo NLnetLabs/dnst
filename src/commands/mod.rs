@@ -1,6 +1,7 @@
 //! The command of _dnst_.
 pub mod help;
 pub mod nsec3hash;
+pub mod version;
 
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
@@ -20,6 +21,9 @@ pub enum Command {
 
     /// Show the manual pages
     Help(self::help::Help),
+
+    /// Show the application version
+    Version(self::version::Version),
 }
 
 impl Command {
@@ -27,6 +31,7 @@ impl Command {
         match self {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(writer),
             Self::Help(help) => help.execute(),
+            Self::Version(version) => version.execute(writer),
         }
     }
 }
