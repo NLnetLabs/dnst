@@ -1,3 +1,4 @@
+use crate::env::Env;
 use crate::error::Error;
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
@@ -9,6 +10,7 @@ use lexopt::Arg;
 use octseq::OctetsBuilder;
 use ring::digest;
 use std::ffi::OsString;
+use std::fmt::Write;
 use std::str::FromStr;
 
 use super::{parse_os, parse_os_with, LdnsCommand};
@@ -128,11 +130,13 @@ impl Nsec3Hash {
 }
 
 impl Nsec3Hash {
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let hash = nsec3_hash(&self.name, self.algorithm, self.iterations, &self.salt)
             .to_string()
             .to_lowercase();
-        println!("{}.", hash);
+
+        let mut out = env.stdout();
+        writeln!(out, "{}.", hash).unwrap();
         Ok(())
     }
 }

@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use nsec3hash::Nsec3Hash;
 
+use crate::env::Env;
 use crate::Args;
 
 use super::error::Error;
@@ -23,9 +24,9 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
-            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(),
+            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Help(help) => help.execute(),
         }
     }

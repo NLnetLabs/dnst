@@ -9,11 +9,13 @@ use std::process::ExitCode;
 use dnst::try_ldns_compatibility;
 
 fn main() -> ExitCode {
+    let env = dnst::env::RealEnv;
+
     let mut args = std::env::args_os();
     args.next().unwrap();
     let args = try_ldns_compatibility(args).expect("ldns commmand is not recognized");
 
-    match args.execute() {
+    match args.execute(env) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             err.pretty_print();
