@@ -94,8 +94,8 @@ impl Error {
         // Argument parsing errors from the ldns-xxx commands will not be clap
         // errors and therefore be printed with an exit code of 1. This is
         // expected because ldns also exits with 1.
-        if let PrimaryError::Clap(_) = self.0.primary {
-            2
+        if let PrimaryError::Clap(e) = &self.0.primary {
+            e.exit_code() as u8
         } else {
             1
         }
