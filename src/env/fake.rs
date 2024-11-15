@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::sync::Mutex;
 use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
@@ -108,30 +108,27 @@ impl FakeCmd {
 
 impl FakeEnv {
     pub fn get_stdout(&self) -> String {
-        let r: &RefCell<_> = &self.stdout.0;
-        r.borrow().clone()
+        self.stdout.0.lock().unwrap().clone()
     }
 
     pub fn get_stderr(&self) -> String {
-        let r: &RefCell<_> = &self.stdout.0;
-        r.borrow().clone()
+        self.stderr.0.lock().unwrap().clone()
     }
 }
 
 /// A type to used to mock stdout and stderr
 #[derive(Clone, Default)]
-pub struct FakeStream(Arc<RefCell<String>>);
+pub struct FakeStream(Arc<Mutex<String>>);
 
 impl fmt::Write for FakeStream {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.borrow_mut().push_str(s);
+        self.0.lock().unwrap().push_str(s);
         Ok(())
     }
 }
 
 impl fmt::Display for FakeStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let r: &RefCell<_> = &self.0;
-        f.write_str(r.borrow().as_ref())
+        f.write_str(self.0.lock().unwrap().as_ref())
     }
 }
