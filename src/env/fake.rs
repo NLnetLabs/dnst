@@ -42,10 +42,7 @@ pub struct FakeEnv {
 
 impl Env for FakeEnv {
     fn args_os(&self) -> impl Iterator<Item = OsString> {
-        self.cmd
-            .cmd
-            .iter()
-            .map(Into::into)
+        self.cmd.cmd.iter().map(Into::into)
     }
 
     fn stdout(&self) -> impl fmt::Write {

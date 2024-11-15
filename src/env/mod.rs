@@ -16,17 +16,17 @@ pub trait Env {
     // fn make_stub_resolver(&self);
 
     /// Get an iterator over the command line arguments passed to the program
-    /// 
+    ///
     /// Equivalent to [`std::env::args_os`]
     fn args_os(&self) -> impl Iterator<Item = OsString>;
 
     /// Get a reference to stdout
-    /// 
+    ///
     /// Equivalent to [`std::io::stdout`]
     fn stdout(&self) -> impl fmt::Write;
 
     /// Get a reference to stderr
-    /// 
+    ///
     /// Equivalent to [`std::io::stderr`]
     fn stderr(&self) -> impl fmt::Write;
 
