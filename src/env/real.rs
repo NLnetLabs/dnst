@@ -25,6 +25,10 @@ struct FmtWriter<T: io::Write>(T);
 
 impl<T: io::Write> fmt::Write for FmtWriter<T> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        write!(self.0, "{s}").map_err(|_| fmt::Error)
+        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
+    }
+
+    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+        self.0.write_fmt(args).map_err(|_| fmt::Error)
     }
 }
