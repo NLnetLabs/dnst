@@ -44,6 +44,11 @@ pub struct Stream<T: fmt::Write>(T);
 
 impl<T: fmt::Write> Stream<T> {
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
+        // This unwrap is not _really_ safe, but we are using this as stdout.
+        // The `println` macro also ignores errors and `push_str` of the
+        // fake stream also does not return an error. If this fails, it means
+        // we can't write to stdout anymore so a graceful exit will be very
+        // hard anyway.
         self.0.write_fmt(args).unwrap();
     }
 }
