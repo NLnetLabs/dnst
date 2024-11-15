@@ -1,0 +1,23 @@
+name: Packaging
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - v*
+
+  # Triggering on PRs and arbitrary branch pushes is not enabled because most of the time only the CI build should be
+  # triggered, not the packaging build. In cases where you want to test changes to this workflow this trigger enables
+  # you to manually invoke this workflow on an arbitrary branch as needed.
+  workflow_dispatch:
+
+jobs:
+  package:
+    #
+    # Set @vN to the latest released version.
+    # For more information see: https://github.com/NLnetLabs/ploutos/blob/main/README.md
+    #
+    uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v7
+
+    # TODO

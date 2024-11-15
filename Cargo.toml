@@ -2,13 +2,14 @@
 name = "dnst"
 version = "0.1.0"
 edition = "2021"
+default-run = "dnst"
 
 [[bin]]
 name = "ldns"
 path = "src/bin/ldns.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.3.4", features = ["derive"] }
 domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = [
     "zonefile",
     "bytes",
