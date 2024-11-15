@@ -74,7 +74,9 @@ impl LdnsCommand for Keygen {
         let mut make_ksk = false;
         let mut bits = 2048;
         let mut random = String::from("/dev/urandom");
+        #[cfg(target_family = "unix")]
         let mut create_symlinks = false;
+        #[cfg(target_family = "unix")]
         let mut force_symlinks = false;
         let mut name = None;
 
@@ -101,11 +103,21 @@ impl LdnsCommand for Keygen {
                 }
 
                 Arg::Short('s') => {
-                    create_symlinks = true;
+                    #[cfg(target_family = "unix")]
+                    {
+                        create_symlinks = true;
+                    }
+                    #[cfg(not(target_family = "unix"))]
+                    return Err("symlinks not supported outside Unix platforms".into());
                 }
 
                 Arg::Short('f') => {
-                    force_symlinks = true;
+                    #[cfg(target_family = "unix")]
+                    {
+                        force_symlinks = true;
+                    }
+                    #[cfg(not(target_family = "unix"))]
+                    return Err("symlinks not supported outside Unix platforms".into());
                 }
 
                 Arg::Short('v') => {
@@ -144,7 +156,9 @@ impl LdnsCommand for Keygen {
             make_ksk,
             bits,
             random,
+            #[cfg(target_family = "unix")]
             create_symlinks,
+            #[cfg(target_family = "unix")]
             force_symlinks,
             name,
         })
