@@ -13,11 +13,11 @@ impl Env for RealEnv {
     }
 
     fn stdout(&self) -> impl fmt::Write {
-        FmtWriter(io::stdout().lock())
+        FmtWriter(io::stdout())
     }
 
     fn stderr(&self) -> impl fmt::Write {
-        FmtWriter(io::stderr().lock())
+        FmtWriter(io::stderr())
     }
 }
 
