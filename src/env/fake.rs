@@ -13,11 +13,8 @@ use super::Env;
 /// environment.
 #[derive(Clone)]
 pub struct FakeCmd {
-    /// The (sub)command to run, including `argv[0]`
-    pub cmd: Vec<OsString>,
-
-    /// The arguments for the commands
-    pub args: Vec<OsString>,
+    /// The command to run, including `argv[0]`
+    cmd: Vec<OsString>,
 }
 
 /// The result of running a [`FakeCmd`]
@@ -49,7 +46,6 @@ impl Env for FakeEnv {
             .cmd
             .iter()
             .map(Into::into)
-            .chain(self.cmd.args.clone())
     }
 
     fn stdout(&self) -> impl fmt::Write {
@@ -68,7 +64,6 @@ impl FakeCmd {
     pub fn new<S: Into<OsString>>(cmd: impl IntoIterator<Item = S>) -> Self {
         Self {
             cmd: cmd.into_iter().map(Into::into).collect(),
-            args: Vec::new(),
         }
     }
 
@@ -82,7 +77,7 @@ impl FakeCmd {
     /// ```
     pub fn args<S: Into<OsString>>(&self, args: impl IntoIterator<Item = S>) -> Self {
         let mut new = self.clone();
-        new.args.extend(args.into_iter().map(Into::into));
+        new.cmd.extend(args.into_iter().map(Into::into));
         new
     }
 
