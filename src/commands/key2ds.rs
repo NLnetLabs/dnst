@@ -1,5 +1,8 @@
 use std::ffi::OsString;
-use std::{fs::File, io::Write, path::PathBuf};
+use std::fs::File;
+use std::io::Write as _;
+use std::fmt::Write as _;
+use std::path::PathBuf;
 
 use clap::builder::ValueParser;
 use clap::Parser;
@@ -11,6 +14,7 @@ use domain::validate::DnskeyExt;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use lexopt::Arg;
 
+use crate::env::Env;
 use crate::error::Error;
 
 use super::LdnsCommand;
@@ -113,7 +117,7 @@ impl LdnsCommand for Key2ds {
 }
 
 impl Key2ds {
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let mut file = std::fs::File::open(&self.keyfile).map_err(|e| {
             format!(
                 "Failed to open public key file \"{}\": {e}",
@@ -170,19 +174,20 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                println!("{}", rr.display_zonefile(false));
+                writeln!(env.stdout(), "{}", rr.display_zonefile(false)).unwrap();
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
                 let filename = format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
                 let mut out_file = File::create(&filename)
                     .map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
+
                 writeln!(out_file, "{}", rr.display_zonefile(false))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 // This is different from ldns, but I think writing out the
                 // filename we wrote to is useful:
-                println!("Wrote DS record to: {filename}");
+                writeln!(env.stdout(), "Wrote DS record to: {filename}").unwrap();
             }
         }
 

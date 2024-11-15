@@ -37,7 +37,7 @@ impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::Key2ds(key2ds) => key2ds.execute(),
+            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Help(help) => help.execute(),
         }
     }
