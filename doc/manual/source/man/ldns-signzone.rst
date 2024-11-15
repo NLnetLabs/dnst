@@ -32,7 +32,8 @@ Options
 
 .. option:: -b
 
-      Add comments on DNSSEC records.
+      Add comments on DNSSEC records. Without this option only DNSKEY RRs
+      will have their key tag annotated in the comment.
 
 .. option:: -d
 
@@ -54,8 +55,8 @@ Options
 
 .. option:: -o <DOMAIN>
 
-      Set the origin for the zone (for zonefiles with relative names and no
-      $ORIGIN).
+      Set the origin for the zone (only necessary for zonefiles with
+      relative names and no $ORIGIN).
 
 .. option:: -u
 
@@ -80,7 +81,8 @@ Options
 NSEC3 options
 --------------------------------
 
-NSEC3 options for use with ``-n``.
+The following options can be used with ``-n`` to override the default NSEC3
+settings used.
 
 .. option:: -a <ALGORITHM>
 

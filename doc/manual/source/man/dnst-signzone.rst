@@ -32,7 +32,8 @@ Options
 
 .. option:: -b
 
-      Add comments on DNSSEC records.
+      Add comments on DNSSEC records. Without this option only DNSKEY RRs
+      will have their key tag annotated in the comment.
 
 .. option:: -d
 
@@ -52,10 +53,10 @@ Options
 
       Set the inception date of signatures to this date. Defaults to now.
 
-.. option:: -o <domain>
+.. option:: -o <DOMAIN>
 
-      Set the origin for the zone (for zonefiles with relative names and no
-      $ORIGIN).
+      Set the origin for the zone (only necessary for zonefiles with relative
+      names and no $ORIGIN).
 
 .. option:: -u
 
@@ -66,8 +67,9 @@ Options
 
 .. option:: -n
 
-      Use NSEC3 instead of NSEC. If specified, you can use extra options (see
-      :ref:`dnst-signzone-nsec3-options`).
+      Use NSEC3 instead of NSEC. By default, RFC 9276 best practice settings
+      are used: SHA-1, no extra iterations, empty salt. To use different NSEC3
+      settings see :ref:`dnst-signzone-nsec3-options`.
 
 .. option:: -H
 
@@ -84,9 +86,10 @@ Options
 NSEC3 options
 --------------------------------
 
-NSEC3 options for use with ``-n``.
+The following options can be used with ``-n`` to override the default NSEC3
+settings used.
 
-.. option:: -a <ALGORITHM>
+.. option:: -a <ALGORITHM NUMBER OR MNEMONIC>
 
       Specify the hashing algorithm. Defaults to SHA-1.
 
