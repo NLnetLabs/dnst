@@ -9,6 +9,7 @@ use lexopt::Arg;
 // use domain::validator::nsec::nsec3_hash;
 use octseq::OctetsBuilder;
 use ring::digest;
+use std::ffi::OsString;
 
 use crate::parse::parse_name;
 
@@ -57,13 +58,13 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 impl LdnsCommand for Nsec3Hash {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns() -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
 
-        let mut parser = lexopt::Parser::from_env();
+        let mut parser = lexopt::Parser::from_args(args);
 
         while let Some(arg) = parser.next()? {
             match arg {

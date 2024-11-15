@@ -4,7 +4,7 @@ pub mod help;
 pub mod keygen;
 pub mod nsec3hash;
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
 use nsec3hash::Nsec3Hash;
@@ -64,17 +64,16 @@ impl Command {
 /// These commands do their own argument parsing, because clap cannot always
 /// (easily) parse arguments in the same way that the ldns tools do.
 ///
-/// The `LdnsCommand::parse_ldns` function should parse arguments obtained
-/// with [`std::env::args`] or [`std::env::args_os`] and return an error in
-/// case of invalid arguments. The help string provided as
-/// [`LdnsCommand::HELP`] is automatically appended to returned errors.
+/// The [`LdnsCommand::parse_ldns`] function should parse arguments and
+/// return an error in case of a parsing failure. The help string provided
+/// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
 pub trait LdnsCommand: Into<Command> {
     const HELP: &'static str;
 
-    fn parse_ldns() -> Result<Self, Error>;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error>;
 
-    fn parse_ldns_args() -> Result<Args, Error> {
-        match Self::parse_ldns() {
+    fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
+        match Self::parse_ldns(args) {
             Ok(c) => Ok(Args::from(c.into())),
             Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }

@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 
@@ -68,7 +69,7 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
 impl LdnsCommand for Keygen {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns() -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
         let mut algorithm = None;
         let mut make_ksk = false;
         let mut bits = 2048;
@@ -77,7 +78,7 @@ impl LdnsCommand for Keygen {
         let mut force_symlinks = false;
         let mut name = None;
 
-        let mut parser = lexopt::Parser::from_env();
+        let mut parser = lexopt::Parser::from_args(args);
 
         while let Some(arg) = parser.next()? {
             match arg {
