@@ -85,24 +85,32 @@ impl LdnsCommand for Keygen {
         while let Some(arg) = parser.next()? {
             match arg {
                 Arg::Short('a') => {
+                    if algorithm.is_some() {
+                        return Err("cannot specify algorithm (-a) more than once".into());
+                    }
+
                     algorithm = Some(parse_os_with("algorithm (-a)", &parser.value()?, |s| {
                         AlgorithmArg::from_str(s, true)
                     })?);
                 }
 
                 Arg::Short('k') => {
+                    // NOTE: '-k' can be repeated, to no effect.
                     make_ksk = true;
                 }
 
                 Arg::Short('b') => {
+                    // NOTE: '-b' can be repeated; the last instance wins.
                     bits = parse_os("bits (-b)", &parser.value()?)?;
                 }
 
                 Arg::Short('r') => {
+                    // NOTE: '-r' can be repeated; we don't use it, so the order doesn't matter.
                     random = parse_os("randomness source (-r)", &parser.value()?)?;
                 }
 
                 Arg::Short('s') => {
+                    // NOTE: '-s' can be repeated, to no effect.
                     #[cfg(target_family = "unix")]
                     {
                         create_symlinks = true;
@@ -112,6 +120,7 @@ impl LdnsCommand for Keygen {
                 }
 
                 Arg::Short('f') => {
+                    // NOTE: '-f' can be repeated, to no effect.
                     #[cfg(target_family = "unix")]
                     {
                         force_symlinks = true;
@@ -121,6 +130,7 @@ impl LdnsCommand for Keygen {
                 }
 
                 Arg::Short('v') => {
+                    // NOTE: '-v' causes parsing to exit immediately; no later arguments are examined.
                     let version = clap::crate_version!();
                     // NOTE: The outer version is the latest version of 'ldns-keygen' we are
                     // compatible with.  This needs to be updated manually.
