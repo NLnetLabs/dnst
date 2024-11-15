@@ -1,22 +1,22 @@
-dnst-signzone
+dnst signzone
 ===============
 
 Synopsis
 --------
 
-:program:`dnst signzone` [``OPTIONS``] ``<ZONEFILE>`` ``<KEY>...``
+:program:`dnst signzone` ``[OPTIONS]`` ``<ZONEFILE>`` ``<KEY>...``
 
 Description
 -----------
 
-**dnst signzone** signs the zone with the given key(s).
+**dnst signzone** signs the zonefile with the given key(s).
 
 Keys must be specified by their base name (usually ``K<name>+<alg>+<id>``),
 i.e. WITHOUT the ``.private`` or ``.key`` extension. Both ``.private`` and
 ``.key`` files are required.
 
 A date can be a timestamp (seconds since the epoch), or of the form
-<YYYYMMdd[hhmmss]>.
+``<YYYYMMdd[hhmmss]>``.
 
 
 Options
@@ -28,20 +28,20 @@ Options
 
 .. option:: <KEY>...
 
-      The keys to sign the zone with.
+      The keys to sign the zonefile with.
 
 .. option:: -b
 
-      Use a more readable layout in the signed zone file and print comments on
-      DNSSEC records.
+      Add comments on DNSSEC records.
 
 .. option:: -d
 
-      Do not add used keys to the resulting zone file.
+      Do not add used keys to the resulting zonefile.
 
 .. option:: -e <DATE>
 
-      Set the expiration date. Defaults to 4 weeks from now.
+      Set the expiration date of signatures to this date. Defaults to
+      4 weeks from now.
 
 .. option:: -f <FILE>
 
@@ -50,7 +50,7 @@ Options
 
 .. option:: -i <DATE>
 
-      Set the inception date. Defaults to now.
+      Set the inception date of signatures to this date. Defaults to now.
 
 .. option:: -o <domain>
 
@@ -96,7 +96,7 @@ NSEC3 options for use with ``-n``.
 
 .. option:: -s <STRING>
 
-      Specify the salt. Defaults to ``-``, meaning no salt.
+      Specify the salt as a hex string. Defaults to ``-``, meaning no salt.
 
 .. option:: -p
 

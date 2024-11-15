@@ -1,10 +1,10 @@
-dnst-notify
+dnst notify
 ===============
 
 Synopsis
 --------
 
-:program:`dnst notify` [``OPTIONS``] ``-z <ZONE>`` ``<SERVERS>...``
+:program:`dnst notify` ``[OPTIONS]`` ``-z <ZONE>`` ``<SERVERS>...``
 
 Description
 -----------
@@ -27,7 +27,7 @@ Options
 
       SOA version number to include in the NOTIFY message.
 
-.. option:: -y, --tsig <name:key[:algo]>
+.. option:: -y, --tsig <NAME:KEY[:ALGO]>
 
       A base64 TSIG key and optional algorithm to use for the NOTIFY message.
       The algorithm defaults to **hmac-sha512**.

@@ -4,7 +4,7 @@ ldns-notify
 Synopsis
 --------
 
-:program:`ldns-notify` [``OPTIONS``] ``-z <ZONE>`` ``<SERVERS>...``
+:program:`ldns-notify` ``[OPTIONS]`` ``-z <ZONE>`` ``<SERVERS>...``
 
 Description
 -----------
@@ -35,7 +35,7 @@ Options
 
       Destination port to send the UDP packet to. Defaults to 53.
 
-.. option:: -y <name:key[:algo]>
+.. option:: -y <NAME:KEY[:ALGO]>
 
       A base64 TSIG key and optional algorithm to use for the NOTIFY message.
       The algorithm defaults to hmac-sha512.

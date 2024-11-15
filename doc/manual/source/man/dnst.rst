@@ -4,7 +4,7 @@ dnst
 Synopsis
 --------
 
-:program:`dnst` [``options``] ``command`` [``args``]
+:program:`dnst` ``[OPTIONS]`` ``<COMMAND>`` ``[ARGS]``
 
 Description
 -----------

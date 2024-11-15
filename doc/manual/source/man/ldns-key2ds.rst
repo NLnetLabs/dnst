@@ -4,7 +4,7 @@ ldns-key2ds
 Synopsis
 --------
 
-:program:`ldns-key2ds` [``OPTIONS``] ``<KEYFILE>``
+:program:`ldns-key2ds` ``[OPTIONS]`` ``<KEYFILE>``
 
 Description
 -----------

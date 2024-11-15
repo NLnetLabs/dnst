@@ -16,6 +16,13 @@ The manual goes here ...
    man/dnst-nsec3-hash
    man/dnst-signzone
    man/dnst-update
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: LDNS Tools reference
+   :name: toc-reference-ldns
+
    man/ldns-key2ds
    man/ldns-keygen
    man/ldns-notify

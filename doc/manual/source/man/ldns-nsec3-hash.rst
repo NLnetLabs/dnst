@@ -4,7 +4,7 @@ ldns-nsec3-hash
 Synopsis
 --------
 
-:program:`ldns-nsec3-hash` :samp:`<{domain-name}>`
+:program:`ldns-nsec3-hash` ``[OPTIONS]`` ``<DOMAIN NAME>``
 
 Description
 -----------
@@ -14,16 +14,16 @@ Description
 Options
 -------
 
-.. option:: -a number
+.. option:: -a <NUMBER>
 
       Use the given algorithm number for the hash calculation. Defaults to
       1 (SHA-1).
 
-.. option:: -s salt
+.. option:: -s <SALT>
 
       Use the given salt for the hash calculation. The salt value should be
       in hexadecimal format.
 
-.. option:: -t count
+.. option:: -t <COUNT>
 
       Use count iterations for the hash calculation.

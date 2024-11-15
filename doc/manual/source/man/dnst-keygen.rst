@@ -1,10 +1,10 @@
-dnst-keygen
+dnst keygen
 ===============
 
 Synopsis
 --------
 
-:program:`dnst keygen` [``OPTIONS``] ``-a <ALGORITHM>`` ``<DOMAIN NAME>``
+:program:`dnst keygen` ``[OPTIONS]`` ``-a <ALGORITHM>`` ``<DOMAIN NAME>``
 
 Description
 -----------

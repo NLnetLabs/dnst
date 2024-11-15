@@ -4,7 +4,7 @@ ldns-update
 Synopsis
 --------
 
-:program:`ldns-update` ``<DOMAIN NAME>`` ``[<ZONE>]`` ``<IP>``
+:program:`ldns-update` ``<DOMAIN NAME>`` ``[ZONE]`` ``<IP>``
 ``[<TSIG KEY NAME> <TSIG ALGORITHM> <TSIG KEY DATA>]``
 
 Description

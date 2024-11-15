@@ -1,10 +1,10 @@
-dnst-key2ds
+dnst key2ds
 ===============
 
 Synopsis
 --------
 
-:program:`dnst key2ds` [``OPTIONS``] ``<KEYFILE>``
+:program:`dnst key2ds` ``[OPTIONS]`` ``<KEYFILE>``
 
 Description
 -----------

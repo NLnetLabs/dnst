@@ -1,10 +1,10 @@
-dnst-nsec3-hash
+dnst nsec3-hash
 ===============
 
 Synopsis
 --------
 
-:program:`dnst nsec3-hash` [``OPTIONS``] ``<DOMAIN NAME>``
+:program:`dnst nsec3-hash` ``[OPTIONS]`` ``<DOMAIN NAME>``
 
 Description
 -----------

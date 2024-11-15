@@ -1,4 +1,4 @@
-dnst-update
+dnst update
 ===============
 
 Synopsis
