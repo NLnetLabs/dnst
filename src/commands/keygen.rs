@@ -108,7 +108,14 @@ impl LdnsCommand for Keygen {
                     force_symlinks = true;
                 }
 
-                // TODO: '-v' version argument?
+                Arg::Short('v') => {
+                    let version = clap::crate_version!();
+                    // NOTE: The outer version is the latest version of 'ldns-keygen' we are
+                    // compatible with.  This needs to be updated manually.
+                    println!("DNSSEC key generator version 1.8.4 (dnst version {version})");
+                    std::process::exit(0);
+                }
+
                 Arg::Value(value) => {
                     if name.is_some() {
                         return Err("cannot specify multiple domain names".into());
