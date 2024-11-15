@@ -1,7 +1,7 @@
-use std::sync::Mutex;
 use std::ffi::OsString;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::{error::Error, parse_args, run, Args};
 
