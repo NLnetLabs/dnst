@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
-use dnst::commands::{nsec3hash::Nsec3Hash, LdnsCommand};
+use dnst::commands::{keygen::Keygen, nsec3hash::Nsec3Hash, LdnsCommand};
 
 fn main() -> ExitCode {
     // If none of the ldns-* tools matched, then we continue with clap
@@ -25,6 +25,7 @@ fn try_ldns_compatibility() -> Option<dnst::Args> {
 
     let res = match binary_name {
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(),
+        "ldns-keygen" => Keygen::parse_ldns_args(),
         _ => return None,
     };
 

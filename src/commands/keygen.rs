@@ -7,9 +7,12 @@ use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::sign::{common, GenerateParams};
 use domain::validate::Key;
+use lexopt::Arg;
 
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
+
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, Args)]
 pub struct Keygen {
@@ -42,6 +45,108 @@ pub struct Keygen {
     /// The domain name to generate a key for
     #[arg(value_name = "domain name", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
+}
+
+const LDNS_HELP: &str = "\
+ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
+  generate a new key pair for domain
+  -a <alg>	use the specified algorithm (-a list to show a list)
+  -k		set the flags to 257; key signing key
+  -b <bits>	specify the keylength
+  -r <random>	specify a random device (defaults to /dev/random)
+		to seed the random generator with
+  -s		create additional symlinks with constant names
+  -f		force override of existing symlinks
+  -v		show the version and exit
+  The following files will be created:
+    K<name>+<alg>+<id>.key	Public key in RR format
+    K<name>+<alg>+<id>.private	Private key in key format
+    K<name>+<alg>+<id>.ds	DS in RR format (only for DNSSEC KSK keys)
+  The base name (K<name>+<alg>+<id> will be printed to stdout\
+";
+
+impl LdnsCommand for Keygen {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns() -> Result<Self, Error> {
+        let mut algorithm = None;
+        let mut make_ksk = false;
+        let mut bits = 2048;
+        let mut random = String::from("/dev/urandom");
+        let mut create_symlinks = false;
+        let mut force_symlinks = false;
+        let mut name = None;
+
+        let mut parser = lexopt::Parser::from_env();
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('a') => {
+                    algorithm = Some(parse_os_with("algorithm (-a)", &parser.value()?, |s| {
+                        AlgorithmArg::from_str(s, true)
+                    })?);
+                }
+
+                Arg::Short('k') => {
+                    make_ksk = true;
+                }
+
+                Arg::Short('b') => {
+                    bits = parse_os("bits (-b)", &parser.value()?)?;
+                }
+
+                Arg::Short('r') => {
+                    random = parse_os("randomness source (-r)", &parser.value()?)?;
+                }
+
+                Arg::Short('s') => {
+                    create_symlinks = true;
+                }
+
+                Arg::Short('f') => {
+                    force_symlinks = true;
+                }
+
+                // TODO: '-v' version argument?
+                Arg::Value(value) => {
+                    if name.is_some() {
+                        return Err("cannot specify multiple domain names".into());
+                    }
+
+                    name = Some(parse_os("domain name", &value)?);
+                }
+
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+            }
+        }
+
+        let Some(algorithm) = algorithm else {
+            return Err("Missing algorithm (-a) option".into());
+        };
+
+        let Some(name) = name else {
+            return Err("Missing domain name argument".into());
+        };
+
+        Ok(Self {
+            algorithm,
+            make_ksk,
+            bits,
+            random,
+            create_symlinks,
+            force_symlinks,
+            name,
+        })
+    }
+}
+
+impl From<Keygen> for Command {
+    fn from(value: Keygen) -> Self {
+        Self::Keygen(value)
+    }
 }
 
 impl Keygen {
