@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use dnst::try_ldns_compatibility;
 
 fn main() -> ExitCode {
-    let env = dnst::env::real::RealEnv;
+    let env = dnst::env::RealEnv;
 
     let mut args = std::env::args_os();
     args.next().unwrap();

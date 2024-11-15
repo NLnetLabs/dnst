@@ -1,10 +1,12 @@
 use std::ffi::OsString;
 use std::fmt;
 
-pub mod real;
+mod real;
 
 #[cfg(test)]
 pub mod fake;
+
+pub use real::RealEnv;
 
 pub trait Env {
     // /// Make a network connection
