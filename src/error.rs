@@ -1,5 +1,5 @@
 use crate::env::Env;
-use std::fmt::{self, Write};
+use std::fmt;
 use std::{error, io};
 
 //------------ Error ---------------------------------------------------------
@@ -63,7 +63,7 @@ impl Error {
             // line arguments either. So we just print the styled string that
             // clap produces and return.
             PrimaryError::Clap(e) => {
-                let _ = writeln!(err, "{}", e.render().ansi());
+                writeln!(err, "{}", e.render().ansi());
                 return;
             }
             PrimaryError::Other(error) => error,
@@ -80,9 +80,9 @@ impl Error {
             "ERROR:"
         };
 
-        let _ = write!(err, "[{prog}] {error_marker} {error}");
+        write!(err, "[{prog}] {error_marker} {error}");
         for context in &self.0.context {
-            let _ = writeln!(err, "\n... while {context}");
+            writeln!(err, "\n... while {context}");
         }
     }
 

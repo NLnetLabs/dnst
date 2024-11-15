@@ -3,6 +3,7 @@ use std::fmt;
 use std::io;
 
 use super::Env;
+use super::Stream;
 
 /// Use real I/O
 pub struct RealEnv;
@@ -12,12 +13,12 @@ impl Env for RealEnv {
         std::env::args_os()
     }
 
-    fn stdout(&self) -> impl fmt::Write {
-        FmtWriter(io::stdout())
+    fn stdout(&self) -> Stream<impl fmt::Write> {
+        Stream(FmtWriter(io::stdout()))
     }
 
-    fn stderr(&self) -> impl fmt::Write {
-        FmtWriter(io::stderr())
+    fn stderr(&self) -> Stream<impl fmt::Write> {
+        Stream(FmtWriter(io::stderr()))
     }
 }
 
