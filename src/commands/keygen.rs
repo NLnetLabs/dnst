@@ -129,15 +129,7 @@ impl LdnsCommand for Keygen {
                     return Err("symlinks not supported outside Unix platforms".into());
                 }
 
-                Arg::Short('v') => {
-                    // NOTE: '-v' causes parsing to exit immediately; no later arguments are examined.
-                    let version = clap::crate_version!();
-                    // NOTE: The outer version is the latest version of 'ldns-keygen' we are
-                    // compatible with.  This needs to be updated manually.
-                    println!("DNSSEC key generator version 1.8.4 (dnst version {version})");
-                    std::process::exit(0);
-                }
-
+                // TODO: '-v' version argument?
                 Arg::Value(value) => {
                     if name.is_some() {
                         return Err("cannot specify multiple domain names".into());
