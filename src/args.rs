@@ -7,7 +7,7 @@ use super::error::Error;
 #[command(version, disable_help_subcommand = true)]
 pub struct Args {
     #[command(subcommand)]
-    command: Command,
+    pub command: Command,
 }
 
 impl Args {

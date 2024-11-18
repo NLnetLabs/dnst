@@ -17,7 +17,7 @@ use crate::error::Error;
 
 use super::LdnsCommand;
 
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Parser, PartialEq, Eq)]
 #[command(version)]
 pub struct Key2ds {
     /// ignore SEP flag (i.e. make DS records for any key)
@@ -183,7 +183,9 @@ impl Key2ds {
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
-                let filename = format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
+
+                let keyname = format!("K{owner}+{sec_alg:03}+{key_tag:05}");
+                let filename = format!("{keyname}.ds");
 
                 let res = if self.force_overwrite {
                     env.file_create(&filename)
@@ -210,9 +212,7 @@ impl Key2ds {
                 writeln!(out_file, "{}", rr.display_zonefile(false))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
-                // This is different from ldns, but I think writing out the
-                // filename we wrote to is useful:
-                writeln!(env.stdout(), "Wrote DS record to: {filename}");
+                writeln!(env.stdout(), "{keyname}");
             }
         }
 
@@ -237,9 +237,125 @@ fn determine_hash_from_sec_alg(sec_alg: SecAlg) -> DigestAlg {
 mod test {
     use tempfile::TempDir;
 
+    use crate::commands::Command;
     use crate::env::fake::FakeCmd;
     use std::fs::File;
     use std::io::Write;
+    use std::path::PathBuf;
+
+    use super::Key2ds;
+
+    #[track_caller]
+    fn parse(args: FakeCmd) -> Key2ds {
+        let res = args.parse();
+        let Command::Key2ds(x) = res.unwrap().command else {
+            panic!("Not a Key2ds!");
+        };
+        x
+    }
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "key2ds"]);
+
+        cmd.parse().unwrap_err();
+        cmd.args(["keyfile1.key", "keyfile2.key"])
+            .parse()
+            .unwrap_err();
+
+        let base = Key2ds {
+            ignore_sep: false,
+            write_to_stdout: false,
+            force_overwrite: false,
+            algorithm: None,
+            keyfile: PathBuf::from("keyfile1.key"),
+        };
+
+        // Check the defaults
+        let res = parse(cmd.args(["keyfile1.key"]));
+        assert_eq!(res, base);
+
+        let res = parse(cmd.args(["keyfile1.key", "-f"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                force_overwrite: true,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "--force"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                force_overwrite: true,
+                ..base.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-key2ds"]);
+
+        cmd.parse().unwrap_err();
+        cmd.args(["keyfile1.key", "keyfile2.key"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-a", "keyfile2.key"]).parse().unwrap_err();
+        cmd.args(["-fdoesnottakeavalue", "keyfile2.key"])
+            .parse()
+            .unwrap_err();
+
+        // Check the defaults
+        let res = parse(cmd.args(["keyfile1.key"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                ignore_sep: false,
+                write_to_stdout: false,
+                force_overwrite: true,
+                algorithm: None,
+                keyfile: PathBuf::from("keyfile1.key"),
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "-f"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                ignore_sep: true,
+                write_to_stdout: false,
+                force_overwrite: true,
+                algorithm: None,
+                keyfile: PathBuf::from("keyfile1.key"),
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "-fn"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                ignore_sep: true,
+                write_to_stdout: true,
+                force_overwrite: true,
+                algorithm: None,
+                keyfile: PathBuf::from("keyfile1.key"),
+            }
+        );
+        
+        let res = parse(cmd.args(["keyfile1.key", "-fnfn"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                ignore_sep: true,
+                write_to_stdout: true,
+                force_overwrite: true,
+                algorithm: None,
+                keyfile: PathBuf::from("keyfile1.key"),
+            }
+        );
+    }
 
     fn run_setup() -> TempDir {
         let dir = tempfile::TempDir::new().unwrap();
@@ -247,7 +363,15 @@ mod test {
         file
             .write_all(b"example.test.	IN	DNSKEY	257 3 15 8AWQIqSo35guqX6WPIFsUlOnbiqGC5sydeBTVMdLGMs= ;{id = 60136 (ksk), size = 256b}\n")
             .unwrap();
-        file.flush().unwrap();
+
+        let mut file = File::create(dir.path().join("key2.key")).unwrap();
+        file.write_all(
+            b"\
+                one.test.	IN	DNSKEY	257 3 15 JKVltzkO0wxbjrY1dNKjEHrXvPqahmbmqwXaNrSwXsI=\n\
+                two.test.	IN	DNSKEY	257 3 15 F0jH0dfoYXe9/tKqoghlZTY5+K/uRQReTkjvBmr7gy8=\n\
+            ",
+        )
+        .unwrap();
 
         dir
     }
@@ -259,14 +383,28 @@ mod test {
         let res = FakeCmd::new(["dnst", "key2ds", "key1.key"]).cwd(&dir).run();
 
         assert_eq!(res.exit_code, 0, "{res:?}");
-        assert_eq!(
-            res.stdout,
-            "Wrote DS record to: Kexample.test.+015+60136.ds\n"
-        );
+        assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
         assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
+    }
+
+    #[test]
+    fn file_with_two_keys() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "key2.key"]).cwd(&dir).run();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stdout, "Kone.test.+015+38429\nKtwo.test.+015+00425\n",);
+        assert_eq!(res.stderr, "");
+
+        let out = std::fs::read_to_string(dir.path().join("Kone.test.+015+38429.ds")).unwrap();
+        assert_eq!(out, "one.test. 3600 IN DS 38429 15 2 B85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
+
+        let out = std::fs::read_to_string(dir.path().join("Ktwo.test.+015+00425.ds")).unwrap();
+        assert_eq!(out, "two.test. 3600 IN DS 425 15 2 AA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
     }
 
     #[test]
@@ -305,10 +443,7 @@ mod test {
             .run();
 
         assert_eq!(res.exit_code, 0);
-        assert_eq!(
-            res.stdout,
-            "Wrote DS record to: Kexample.test.+015+60136.ds\n"
-        );
+        assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
         assert_eq!(res.stderr, "");
     }
 }
