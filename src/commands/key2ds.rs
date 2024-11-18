@@ -1,7 +1,5 @@
 use std::ffi::OsString;
-use std::fs::File;
-use std::io::Write as _;
-use std::fmt::Write as _;
+use std::io::{self, Write as _};
 use std::path::PathBuf;
 
 use clap::builder::ValueParser;
@@ -23,12 +21,16 @@ use super::LdnsCommand;
 #[command(version)]
 pub struct Key2ds {
     /// ignore SEP flag (i.e. make DS records for any key)
-    #[arg(short = 'f')]
+    #[arg(long = "ignore-sep")]
     ignore_sep: bool,
 
     /// do not write DS records to file(s) but to stdout
     #[arg(short = 'n')]
     write_to_stdout: bool,
+
+    /// Overwrite existing DS files
+    #[arg(short = 'f', long = "force")]
+    force_overwrite: bool,
 
     /// algorithm to use for digest
     #[arg(
@@ -111,6 +113,9 @@ impl LdnsCommand for Key2ds {
             ignore_sep,
             write_to_stdout,
             algorithm,
+            // Preventing overwritten files is a dnst feature that is not
+            // present in the ldns version of this command.
+            force_overwrite: true,
             keyfile: keyfile.into(),
         })
     }
@@ -118,7 +123,7 @@ impl LdnsCommand for Key2ds {
 
 impl Key2ds {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        let mut file = std::fs::File::open(&self.keyfile).map_err(|e| {
+        let mut file = env.file_open(&self.keyfile).map_err(|e| {
             format!(
                 "Failed to open public key file \"{}\": {e}",
                 self.keyfile.display()
@@ -174,20 +179,40 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(false)).unwrap();
+                writeln!(env.stdout(), "{}", rr.display_zonefile(false));
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
                 let filename = format!("K{owner}+{sec_alg:03}+{key_tag:05}.ds");
-                let mut out_file = File::create(&filename)
-                    .map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
+
+                let res = if self.force_overwrite {
+                    env.file_create(&filename)
+                } else {
+                    let res = env.file_create_new(&filename);
+
+                    // Create a bit of a nicer message than a "File exists" IO
+                    // error.
+                    if let Err(e) = &res {
+                        if e.kind() == io::ErrorKind::AlreadyExists {
+                            return Err(format!(
+                                "The file '{filename}' already exists, use the --force to overwrite"
+                            )
+                            .into());
+                        }
+                    }
+
+                    res
+                };
+
+                let mut out_file =
+                    res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
                 writeln!(out_file, "{}", rr.display_zonefile(false))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 // This is different from ldns, but I think writing out the
                 // filename we wrote to is useful:
-                writeln!(env.stdout(), "Wrote DS record to: {filename}").unwrap();
+                writeln!(env.stdout(), "Wrote DS record to: {filename}");
             }
         }
 
@@ -205,5 +230,84 @@ fn determine_hash_from_sec_alg(sec_alg: SecAlg) -> DigestAlg {
         SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
         SecAlg::ECC_GOST => DigestAlg::GOST,
         _ => DigestAlg::SHA1,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use tempfile::TempDir;
+
+    use crate::env::fake::FakeCmd;
+    use std::fs::File;
+    use std::io::Write;
+
+    fn run_setup() -> TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut file = File::create(dir.path().join("key1.key")).unwrap();
+        file
+            .write_all(b"example.test.	IN	DNSKEY	257 3 15 8AWQIqSo35guqX6WPIFsUlOnbiqGC5sydeBTVMdLGMs= ;{id = 60136 (ksk), size = 256b}\n")
+            .unwrap();
+        file.flush().unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn file_with_single_key() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "key1.key"]).cwd(&dir).run();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(
+            res.stdout,
+            "Wrote DS record to: Kexample.test.+015+60136.ds\n"
+        );
+        assert_eq!(res.stderr, "");
+
+        let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
+        assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
+    }
+
+    #[test]
+    fn print_to_stdout() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "-n", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
+        );
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn overwrite_file() {
+        let dir = run_setup();
+
+        // Make sure the file already exists
+        File::create(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 1);
+        assert_eq!(res.stdout, "");
+        assert!(res.stderr.contains(
+            "The file 'Kexample.test.+015+60136.ds' already exists, use the --force to overwrite"
+        ));
+        
+        let res = FakeCmd::new(["dnst", "key2ds", "--force", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(res.stdout, "Wrote DS record to: Kexample.test.+015+60136.ds\n");
+        assert_eq!(res.stderr, "");
     }
 }

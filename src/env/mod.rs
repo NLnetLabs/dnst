@@ -1,5 +1,7 @@
 use std::ffi::OsString;
-use std::fmt;
+use std::{fmt, io};
+use std::fs::File;
+use std::path::Path;
 
 mod real;
 
@@ -32,6 +34,18 @@ pub trait Env {
 
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
+
+    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>;
+    
+    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>;
+    
+    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>;
 }
 
 /// A type with an infallible `write_fmt` method for use with [`write!`] macros
@@ -72,5 +86,26 @@ impl<E: Env> Env for &E {
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
         (**self).stderr()
+    }
+
+    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>,
+    {
+        (**self).file_open(path)
+    }
+
+    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>,
+    {
+        (**self).file_create(path)
+    }
+
+    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
+    where
+        P: AsRef<Path>,
+    {
+        (**self).file_create_new(path)
     }
 }
