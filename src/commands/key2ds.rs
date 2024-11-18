@@ -235,12 +235,14 @@ fn determine_hash_from_sec_alg(sec_alg: SecAlg) -> DigestAlg {
 
 #[cfg(test)]
 mod test {
+    use domain::base::iana::DigestAlg;
     use tempfile::TempDir;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
     use std::fs::File;
     use std::io::Write;
+    use std::mem::Discriminant;
     use std::path::PathBuf;
 
     use super::Key2ds;
@@ -292,6 +294,51 @@ mod test {
                 ..base.clone()
             }
         );
+
+        let res = parse(cmd.args(["keyfile1.key", "--ignore-sep"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                ignore_sep: true,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "-n"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                write_to_stdout: true,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "-a", "SHA-1"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                algorithm: Some(DigestAlg::SHA1),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "--algorithm", "SHA-1"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                algorithm: Some(DigestAlg::SHA1),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "--algorithm", "1"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                algorithm: Some(DigestAlg::SHA1),
+                ..base.clone()
+            }
+        );
     }
 
     #[test]
@@ -307,28 +354,24 @@ mod test {
             .parse()
             .unwrap_err();
 
+        let base = Key2ds {
+            ignore_sep: false,
+            write_to_stdout: false,
+            force_overwrite: true, // note that this is true
+            algorithm: None,
+            keyfile: PathBuf::from("keyfile1.key"),
+        };
+
         // Check the defaults
         let res = parse(cmd.args(["keyfile1.key"]));
-        assert_eq!(
-            res,
-            Key2ds {
-                ignore_sep: false,
-                write_to_stdout: false,
-                force_overwrite: true,
-                algorithm: None,
-                keyfile: PathBuf::from("keyfile1.key"),
-            }
-        );
+        assert_eq!(res, base,);
 
         let res = parse(cmd.args(["keyfile1.key", "-f"]));
         assert_eq!(
             res,
             Key2ds {
                 ignore_sep: true,
-                write_to_stdout: false,
-                force_overwrite: true,
-                algorithm: None,
-                keyfile: PathBuf::from("keyfile1.key"),
+                ..base.clone()
             }
         );
 
@@ -338,21 +381,27 @@ mod test {
             Key2ds {
                 ignore_sep: true,
                 write_to_stdout: true,
-                force_overwrite: true,
-                algorithm: None,
-                keyfile: PathBuf::from("keyfile1.key"),
+                ..base.clone()
             }
         );
 
-        let res = parse(cmd.args(["keyfile1.key", "-fnfn"]));
+        let res = parse(cmd.args(["keyfile1.key", "-1"]));
+        assert_eq!(
+            res,
+            Key2ds {
+                algorithm: Some(DigestAlg::SHA1),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["keyfile1.key", "-fnfn421"]));
         assert_eq!(
             res,
             Key2ds {
                 ignore_sep: true,
                 write_to_stdout: true,
-                force_overwrite: true,
-                algorithm: None,
-                keyfile: PathBuf::from("keyfile1.key"),
+                algorithm: Some(DigestAlg::SHA1),
+                ..base.clone()
             }
         );
     }
