@@ -160,6 +160,10 @@ impl error::Error for Error {}
 
 //------------ Macros --------------------------------------------------------
 
+// NOTE: Exported macros are placed in the crate root by default.  We hide
+// them using 'doc(hidden)' and then manually re-export them here, forcing
+// documentation to appear using 'doc(inline)'.
+
 #[doc(inline)]
 pub use crate::bail;
 
