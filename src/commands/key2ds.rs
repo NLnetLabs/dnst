@@ -242,7 +242,6 @@ mod test {
     use crate::env::fake::FakeCmd;
     use std::fs::File;
     use std::io::Write;
-    use std::mem::Discriminant;
     use std::path::PathBuf;
 
     use super::Key2ds;
