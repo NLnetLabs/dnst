@@ -1,7 +1,7 @@
 use std::ffi::OsString;
-use std::{fmt, io};
 use std::fs::File;
 use std::path::Path;
+use std::{fmt, io};
 
 mod real;
 
@@ -38,11 +38,11 @@ pub trait Env {
     fn file_open<P>(&self, path: P) -> Result<File, io::Error>
     where
         P: AsRef<Path>;
-    
+
     fn file_create<P>(&self, path: P) -> Result<File, io::Error>
     where
         P: AsRef<Path>;
-    
+
     fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
     where
         P: AsRef<Path>;

@@ -28,7 +28,7 @@ impl Env for RealEnv {
     {
         std::fs::File::open(path)
     }
-    
+
     fn file_create<P>(&self, path: P) -> Result<File, io::Error>
     where
         P: AsRef<std::path::Path>,

@@ -292,22 +292,23 @@ mod test {
         // Make sure the file already exists
         File::create(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
 
-        let res = FakeCmd::new(["dnst", "key2ds", "key1.key"])
-            .cwd(&dir)
-            .run();
+        let res = FakeCmd::new(["dnst", "key2ds", "key1.key"]).cwd(&dir).run();
 
         assert_eq!(res.exit_code, 1);
         assert_eq!(res.stdout, "");
         assert!(res.stderr.contains(
             "The file 'Kexample.test.+015+60136.ds' already exists, use the --force to overwrite"
         ));
-        
+
         let res = FakeCmd::new(["dnst", "key2ds", "--force", "key1.key"])
             .cwd(&dir)
             .run();
 
         assert_eq!(res.exit_code, 0);
-        assert_eq!(res.stdout, "Wrote DS record to: Kexample.test.+015+60136.ds\n");
+        assert_eq!(
+            res.stdout,
+            "Wrote DS record to: Kexample.test.+015+60136.ds\n"
+        );
         assert_eq!(res.stderr, "");
     }
 }
