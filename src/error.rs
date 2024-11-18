@@ -160,7 +160,15 @@ impl error::Error for Error {}
 
 //------------ Macros --------------------------------------------------------
 
+#[doc(inline)]
+pub use crate::bail;
+
+#[doc(inline)]
+pub use crate::ensure;
+
 /// Return an [`Error`] from the current function.
+#[doc(hidden)]
+#[macro_export]
 macro_rules! bail {
     ($fmt:expr) => {
         return Err($crate::error::Error::new(&format!($fmt)));
@@ -172,6 +180,8 @@ macro_rules! bail {
 }
 
 /// Return an [`Error`] if the given condition does not hold.
+#[doc(hidden)]
+#[macro_export]
 macro_rules! ensure {
     ($cond:expr, $fmt:expr) => {
         if !$cond { $crate::error::bail!($fmt) }
