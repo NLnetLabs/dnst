@@ -158,6 +158,30 @@ impl fmt::Debug for Error {
 
 impl error::Error for Error {}
 
+//------------ Macros --------------------------------------------------------
+
+/// Return an [`Error`] from the current function.
+macro_rules! bail {
+    ($fmt:expr) => {
+        return Err($crate::error::Error::new(&format!($fmt)));
+    };
+
+    ($fmt:expr, $($args:tt)*) => {
+        return Err($crate::error::Error::new(&format!($fmt, $($args)*)));
+    };
+}
+
+/// Return an [`Error`] if the given condition does not hold.
+macro_rules! ensure {
+    ($cond:expr, $fmt:expr) => {
+        if !$cond { $crate::error::bail!($fmt) }
+    };
+
+    ($cond:expr, $fmt:expr, $($args:tt)*) => {
+        if !$cond { $crate::error::bail!($fmt, $($args)*) }
+    };
+}
+
 //------------ Result --------------------------------------------------------
 
 /// A program result.
