@@ -1,3 +1,5 @@
+use domain::base::wire::ParseError;
+
 use crate::env::Env;
 use domain::base::wire::ParseError;
 use std::borrow::Cow;
@@ -121,6 +123,12 @@ impl From<String> for Error {
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
         Self::new(&error.to_string())
     }
 }

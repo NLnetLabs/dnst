@@ -6,7 +6,7 @@ use super::error::Error;
 
 use clap::Parser;
 
-#[derive(Clone, Debug, clap::Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(version, disable_help_subcommand = true)]
 pub struct Args {
     #[command(subcommand)]
