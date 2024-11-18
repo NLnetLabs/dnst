@@ -343,7 +343,7 @@ mod test {
                 keyfile: PathBuf::from("keyfile1.key"),
             }
         );
-        
+
         let res = parse(cmd.args(["keyfile1.key", "-fnfn"]));
         assert_eq!(
             res,
