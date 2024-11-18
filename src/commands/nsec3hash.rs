@@ -10,7 +10,6 @@ use lexopt::Arg;
 use octseq::OctetsBuilder;
 use ring::digest;
 use std::ffi::OsString;
-use std::fmt::Write;
 use std::str::FromStr;
 
 use super::{parse_os, parse_os_with, LdnsCommand};
@@ -136,7 +135,7 @@ impl Nsec3Hash {
             .to_lowercase();
 
         let mut out = env.stdout();
-        writeln!(out, "{}.", hash).unwrap();
+        writeln!(out, "{}.", hash);
         Ok(())
     }
 }

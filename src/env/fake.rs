@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use crate::{error::Error, parse_args, run, Args};
 
 use super::Env;
+use super::Stream;
 
 /// A command to run in a [`FakeEnv`]
 ///
@@ -45,12 +46,12 @@ impl Env for FakeEnv {
         self.cmd.cmd.iter().map(Into::into)
     }
 
-    fn stdout(&self) -> impl fmt::Write {
-        self.stdout.clone()
+    fn stdout(&self) -> Stream<impl fmt::Write> {
+        Stream(self.stdout.clone())
     }
 
-    fn stderr(&self) -> impl fmt::Write {
-        self.stderr.clone()
+    fn stderr(&self) -> Stream<impl fmt::Write> {
+        Stream(self.stderr.clone())
     }
 }
 
