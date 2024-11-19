@@ -23,8 +23,11 @@ Options
       Use the given algorithm for the digest. Defaults to the digest algorithm
       used for the DNSKEY, and if it can't be determined SHA-1.
 
-.. might change to --ignore-sep when implemented
-.. option:: -f
+.. option:: -f, --force
+
+      Overwrite existing ``.ds`` files.
+
+.. option:: --ignore-sep
 
       Ignore the SEP flag and make DS records for any key.
 
