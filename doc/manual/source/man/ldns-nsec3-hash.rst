@@ -22,8 +22,9 @@ Options
 .. option:: -s <SALT>
 
       Use the given salt for the hash calculation. The salt value should be
-      in hexadecimal format.
+      in hexadecimal format. Defaults to an empty salt.
 
 .. option:: -t <COUNT>
 
-      Use count iterations for the hash calculation.
+      Use the given number of additional iterations for the hash
+      calculation. Defaults to 1.
