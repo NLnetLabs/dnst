@@ -53,6 +53,8 @@ jobs:
       uses: hecrj/setup-rust-action@v2
       with:
         rust-version: "1.78.0"
+    - name: Install OpenSSL
+      run: sudo apt-get install -y libssl-dev
     - name: Install nightly Rust
       run: rustup install nightly
     - name: Check with minimal-versions
