@@ -16,7 +16,7 @@ openssl = ["domain/openssl"]
 ring    = ["domain/ring"]
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.3.4", features = ["derive"] }
 domain = { git = "http://github.com/NLnetLabs/domain", branch = "main", features = ["unstable-sign"] }
 lexopt = "0.3.0"
 

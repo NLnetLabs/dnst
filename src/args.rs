@@ -1,3 +1,5 @@
+use crate::env::Env;
+
 use super::commands::Command;
 use super::error::Error;
 
@@ -9,8 +11,8 @@ pub struct Args {
 }
 
 impl Args {
-    pub fn execute(self) -> Result<(), Error> {
-        self.command.execute()
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        self.command.execute(env)
     }
 }
 
