@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 
@@ -123,7 +124,7 @@ impl LdnsCommand for Key2ds {
 
 impl Key2ds {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        let mut file = env.file_open(&self.keyfile).map_err(|e| {
+        let mut file = File::open(env.in_cwd(&self.keyfile)).map_err(|e| {
             format!(
                 "Failed to open public key file \"{}\": {e}",
                 self.keyfile.display()
@@ -188,9 +189,9 @@ impl Key2ds {
                 let filename = format!("{keyname}.ds");
 
                 let res = if self.force_overwrite {
-                    env.file_create(&filename)
+                    File::create(env.in_cwd(&filename))
                 } else {
-                    let res = env.file_create_new(&filename);
+                    let res = File::create_new(env.in_cwd(&filename));
 
                     // Create a bit of a nicer message than a "File exists" IO
                     // error.

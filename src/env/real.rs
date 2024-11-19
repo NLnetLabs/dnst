@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::File;
 use std::io;
+use std::path::Path;
 
 use super::Env;
 use super::Stream;
@@ -22,25 +22,8 @@ impl Env for RealEnv {
         Stream(FmtWriter(io::stderr()))
     }
 
-    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<std::path::Path>,
-    {
-        std::fs::File::open(path)
-    }
-
-    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<std::path::Path>,
-    {
-        std::fs::File::create(path)
-    }
-
-    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<std::path::Path>,
-    {
-        std::fs::File::create_new(path)
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {
+        path.as_ref().into()
     }
 }
 

@@ -1,7 +1,7 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fmt;
 use std::path::Path;
-use std::{fmt, io};
 
 mod real;
 
@@ -35,17 +35,7 @@ pub trait Env {
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
 
-    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>;
-
-    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>;
-
-    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>;
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 }
 
 /// A type with an infallible `write_fmt` method for use with [`write!`] macros
@@ -88,24 +78,7 @@ impl<E: Env> Env for &E {
         (**self).stderr()
     }
 
-    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        (**self).file_open(path)
-    }
-
-    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        (**self).file_create(path)
-    }
-
-    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        (**self).file_create_new(path)
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        (**self).in_cwd(path)
     }
 }

@@ -1,7 +1,6 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::File;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -59,40 +58,10 @@ impl Env for FakeEnv {
         Stream(self.stderr.clone())
     }
 
-    fn file_open<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        File::open(self.in_cwd(path))
-    }
-
-    fn file_create<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        File::create(self.in_cwd(path))
-    }
-
-    fn file_create_new<P>(&self, path: P) -> Result<File, io::Error>
-    where
-        P: AsRef<Path>,
-    {
-        File::create_new(dbg!(self.in_cwd(path)))
-    }
-}
-
-impl FakeEnv {
-    /// If the path is relative, prepend the mocked cwd
-    fn in_cwd<P>(&self, path: P) -> PathBuf
-    where
-        P: AsRef<Path>,
-    {
-        let path = path.as_ref();
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
         match &self.cmd.cwd {
-            // If path is absolute, then Path::join will keep the path
-            // unchanged.
-            Some(p) => p.join(path),
-            None => path.to_path_buf(),
+            Some(cwd) => cwd.join(path).into(),
+            None => path.as_ref().into(),
         }
     }
 }
