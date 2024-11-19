@@ -1,11 +1,13 @@
 //! The command of _dnst_.
 
 pub mod help;
+pub mod key2ds;
 pub mod nsec3hash;
 
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
+use key2ds::Key2ds;
 use nsec3hash::Nsec3Hash;
 
 use crate::env::Env;
@@ -19,6 +21,14 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Generate a DS RR from the DNSKEYS in keyfile
+    ///
+    /// The following file will be created for each key:
+    /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
+    /// will be printed to stdout.
+    #[command(name = "key2ds")]
+    Key2ds(key2ds::Key2ds),
+
     /// Show the manual pages
     Help(self::help::Help),
 }
@@ -27,6 +37,7 @@ impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
+            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Help(help) => help.execute(),
         }
     }
@@ -56,6 +67,12 @@ pub trait LdnsCommand: Into<Command> {
 impl From<Nsec3Hash> for Command {
     fn from(val: Nsec3Hash) -> Self {
         Command::Nsec3Hash(val)
+    }
+}
+
+impl From<Key2ds> for Command {
+    fn from(val: Key2ds) -> Self {
+        Command::Key2ds(val)
     }
 }
 
