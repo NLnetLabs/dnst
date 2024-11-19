@@ -15,10 +15,6 @@ Keys must be specified by their base name (usually ``K<name>+<alg>+<id>``),
 i.e. WITHOUT the ``.private`` or ``.key`` extension. Both ``.private`` and
 ``.key`` files are required.
 
-A date can be a timestamp (seconds since the epoch), or of the form
-``<YYYYMMdd[hhmmss]>``.
-
-
 Options
 -------
 
@@ -41,8 +37,8 @@ Options
 
 .. option:: -e <DATE>
 
-      Set the expiration date of signatures to this date. Defaults to
-      4 weeks from now.
+      Set the expiration date of signatures to this date (see
+      :ref:`dnst-signzone-dates`). Defaults to 4 weeks from now.
 
 .. option:: -f <FILE>
 
@@ -51,7 +47,8 @@ Options
 
 .. option:: -i <DATE>
 
-      Set the inception date of signatures to this date. Defaults to now.
+      Set the inception date of signatures to this date (see
+      :ref:`dnst-signzone-dates`). Defaults to now.
 
 .. option:: -o <DOMAIN>
 
@@ -99,7 +96,7 @@ settings used.
 
 .. option:: -s <STRING>
 
-      Specify the salt as a hex string. Defaults to ``-``, meaning no salt.
+      Specify the salt as a hex string. Defaults to ``-``, meaning empty salt.
 
 .. option:: -p
 
@@ -109,3 +106,10 @@ settings used.
 
       Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations.
 
+.. _dnst-signzone-dates:
+
+DATES
+-----
+
+A date can be a UNIX timestamp as seconds since the Epoch (1970-01-01
+00:00 UTC), or of the form ``<YYYYMMdd[hhmmss]>``.
