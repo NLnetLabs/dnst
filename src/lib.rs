@@ -25,7 +25,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
         .to_str()
         .ok_or("Binary file name is not valid unicode")?;
 
-    match binary_name {
+    let res = match binary_name {
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         _ => return Ok(None),
     };

@@ -3,7 +3,6 @@ pub mod help;
 pub mod nsec3hash;
 
 use std::ffi::{OsStr, OsString};
-use std::io::Write;
 use std::str::FromStr;
 
 use nsec3hash::Nsec3Hash;

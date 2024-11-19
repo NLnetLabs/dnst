@@ -153,10 +153,11 @@ impl Nsec3Hash {
 
 impl Nsec3Hash {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        let hash = nsec3_hash(&self.name, self.algorithm, self.iterations, &self.salt)
-            .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
-            .to_string()
-            .to_lowercase();
+        let hash =
+            nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
+                .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
+                .to_string()
+                .to_lowercase();
 
         let mut out = env.stdout();
         writeln!(out, "{}.", hash);
@@ -176,6 +177,7 @@ mod tests {
         use domain::rdata::nsec3::Nsec3Salt;
 
         use crate::commands::nsec3hash::Nsec3Hash;
+        use crate::env::fake::{FakeCmd, FakeEnv, FakeStream};
 
         // Note: For the types we use that are provided by the domain crate,
         // construction of them from bad inputs should be tested in that
@@ -185,6 +187,12 @@ mod tests {
         // nsec3-hash`` or as `ldns-nsec3-hash`.
         #[test]
         fn execute() {
+            let env = FakeEnv {
+                cmd: FakeCmd::new(["doesn't matter"]),
+                stdout: FakeStream::default(),
+                stderr: FakeStream::default(),
+            };
+
             // We don't test all permutations as that would take too long (~20 seconds)
             #[allow(clippy::single_element_loop)]
             for algorithm in ["SHA-1"] {
@@ -196,7 +204,7 @@ mod tests {
                     salt: Nsec3Salt::empty(),
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for iterations in [0, 1, u16::MAX - 1, u16::MAX] {
@@ -206,7 +214,7 @@ mod tests {
                     salt: Nsec3Salt::empty(),
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for salt in ["", "-", "aa", "aabb", "aa".repeat(255).as_str()] {
@@ -218,7 +226,7 @@ mod tests {
                     salt,
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for name in [
@@ -233,7 +241,7 @@ mod tests {
                     salt: Nsec3Salt::empty(),
                     name,
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
         }
     }
@@ -241,8 +249,9 @@ mod tests {
     mod with_dnst_cli {
         use core::str;
 
+        use crate::env::fake::FakeCmd;
         use crate::error::Error;
-        use crate::{parse_args, Args};
+        use crate::Args;
 
         #[test]
         fn accept_good_cli_args() {
@@ -304,22 +313,23 @@ mod tests {
         //------------ Helper functions ------------------------------------------
 
         fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
-            parse_args(|| ["dnst", "nsec3-hash"].iter().chain(args).map(Into::into))
+            FakeCmd::new(["dnst", "nsec3-hash"]).args(args).parse()
         }
 
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
-            let parsed_args = parse_cmd_line(args).unwrap();
-            let mut captured_stdout = vec![];
-            parsed_args.execute(&mut captured_stdout).unwrap();
-            assert_eq!(str::from_utf8(&captured_stdout), Ok(expected_output));
+            let result = FakeCmd::new(["dnst", "nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
         }
     }
 
     mod with_ldns_cli {
         use core::str;
 
+        use crate::env::fake::FakeCmd;
         use crate::error::Error;
-        use crate::{parse_args, Args};
+        use crate::Args;
 
         #[test]
         fn accept_good_cli_args() {
@@ -378,14 +388,14 @@ mod tests {
         //------------ Helper functions ------------------------------------------
 
         fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
-            parse_args(|| ["ldns-nsec3-hash"].iter().chain(args).map(Into::into))
+            FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
-            let parsed_args = parse_cmd_line(args).unwrap();
-            let mut captured_stdout = vec![];
-            parsed_args.execute(&mut captured_stdout).unwrap();
-            assert_eq!(str::from_utf8(&captured_stdout), Ok(expected_output));
+            let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
         }
     }
 }
@@ -411,7 +421,7 @@ mod test {
 
         let res = cmd.args(["example.test"]).run();
         assert_eq!(res.exit_code, 0);
-        assert_eq!(res.stdout, "o09614ibh1cq1rcc86289olr22ea0fso.\n")
+        assert_eq!(res.stdout, "jbas736chung3bb701jkjdhqkqlhvug7.\n")
     }
 
     #[test]
