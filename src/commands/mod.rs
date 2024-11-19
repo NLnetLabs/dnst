@@ -55,7 +55,6 @@ impl Command {
         match self {
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Help(help) => help.execute(),
         }
     }

@@ -10,6 +10,7 @@ use domain::sign::{common, GenerateParams};
 use domain::validate::Key;
 use lexopt::Arg;
 
+use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
 
@@ -174,17 +175,19 @@ impl From<Keygen> for Command {
 }
 
 impl Keygen {
-    pub fn execute(self) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        let mut stdout = env.stdout();
+
         // Determine the appropriate key generation parameters.
         let params = match self.algorithm {
             AlgorithmArg::List => {
                 // Print the algorithm list and exit.
-                println!("Possible algorithms:");
-                println!("  - RSASHA256 (8)");
-                println!("  - ECDSAP256SHA256 (13)");
-                println!("  - ECDSAP384SHA384 (14)");
-                println!("  - ED25519 (15)");
-                println!("  - ED448 (16)");
+                writeln!(stdout, "Possible algorithms:");
+                writeln!(stdout, "  - RSASHA256 (8)");
+                writeln!(stdout, "  - ECDSAP256SHA256 (13)");
+                writeln!(stdout, "  - ECDSAP384SHA384 (14)");
+                writeln!(stdout, "  - ED25519 (15)");
+                writeln!(stdout, "  - ED448 (16)");
                 return Ok(());
             }
 
@@ -223,6 +226,7 @@ impl Keygen {
             public_key.algorithm().to_int(),
             public_key.key_tag()
         );
+        // TODO: Adjust for how 'Env' mocks the current directory.
         let mut secret_key_file = File::create_new(format!("{base}.private"))
             .map_err(|err| format!("cannot create '{base}.private': {err}"))?;
         let mut public_key_file = File::create_new(format!("{base}.key"))
@@ -330,7 +334,7 @@ impl Keygen {
         }
 
         // Let the user know what the base name of the files is.
-        println!("{}", base);
+        writeln!(stdout, "{}", base);
 
         Ok(())
     }
