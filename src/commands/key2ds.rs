@@ -114,7 +114,7 @@ impl LdnsCommand for Key2ds {
             ignore_sep,
             write_to_stdout,
             algorithm,
-            // Preventing overwritten files is a dnst feature that is not
+            // Preventing overwriting files is a dnst feature that is not
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
