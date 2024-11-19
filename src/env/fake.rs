@@ -1,5 +1,7 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -16,11 +18,13 @@ use super::Stream;
 pub struct FakeCmd {
     /// The command to run, including `argv[0]`
     cmd: Vec<OsString>,
+    cwd: Option<PathBuf>,
 }
 
 /// The result of running a [`FakeCmd`]
 ///
 /// The fields are public to allow for easy assertions in tests.
+#[derive(Debug)]
 pub struct FakeResult {
     pub exit_code: u8,
     pub stdout: String,
@@ -53,6 +57,13 @@ impl Env for FakeEnv {
     fn stderr(&self) -> Stream<impl fmt::Write> {
         Stream(self.stderr.clone())
     }
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        match &self.cmd.cwd {
+            Some(cwd) => cwd.join(path).into(),
+            None => path.as_ref().into(),
+        }
+    }
 }
 
 impl FakeCmd {
@@ -62,6 +73,14 @@ impl FakeCmd {
     pub fn new<S: Into<OsString>>(cmd: impl IntoIterator<Item = S>) -> Self {
         Self {
             cmd: cmd.into_iter().map(Into::into).collect(),
+            cwd: None,
+        }
+    }
+
+    pub fn cwd(&self, path: impl AsRef<Path>) -> Self {
+        Self {
+            cwd: Some(path.as_ref().to_path_buf()),
+            ..self.clone()
         }
     }
 

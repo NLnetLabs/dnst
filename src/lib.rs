@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use clap::Parser;
-use commands::{keygen::Keygen, nsec3hash::Nsec3Hash, LdnsCommand};
+use commands::{key2ds::Key2ds, keygen::Keygen, nsec3hash::Nsec3Hash, LdnsCommand};
 use env::Env;
 use error::Error;
 
@@ -27,6 +27,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
         .ok_or("Binary file name is not valid unicode")?;
 
     let res = match binary_name {
+        "ldns-key2ds" => Key2ds::parse_ldns_args(args_iter),
         "ldns-nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         "ldns-keygen" => Keygen::parse_ldns_args(args_iter),
         _ => return Ok(None),
