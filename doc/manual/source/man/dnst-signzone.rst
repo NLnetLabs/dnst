@@ -15,8 +15,8 @@ Keys must be specified by their base name (usually ``K<name>+<alg>+<id>``),
 i.e. WITHOUT the ``.private`` or ``.key`` extension. Both ``.private`` and
 ``.key`` files are required.
 
-Options
--------
+Arguments
+---------
 
 .. option:: <ZONEFILE>
 
@@ -25,6 +25,9 @@ Options
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.
+
+Options
+-------
 
 .. option:: -b
 

@@ -4,7 +4,7 @@ dnst update
 Synopsis
 --------
 
-:program:`dnst update` ``<DOMAIN NAME>`` ``[<ZONE>]`` ``<IP>``
+:program:`dnst update` ``<DOMAIN NAME>`` ``[ZONE]`` ``<IP>``
 ``[<TSIG KEY NAME> <TSIG ALGORITHM> <TSIG KEY DATA>]``
 
 Description
@@ -13,8 +13,8 @@ Description
 **dnst update** sends a dynamic update packet to update an IP (or delete all
 existing IPs) for a domain name.
 
-Options
--------
+Arguments
+---------
 
 .. option:: <DOMAIN NAME>
 
