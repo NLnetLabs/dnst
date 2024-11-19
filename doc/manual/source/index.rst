@@ -1,7 +1,12 @@
 dnst |version|
 ==============
 
-The manual goes here ...
+**dnst** is a DNS administration toolbox. It offers DNS and DNSSEC related
+functions like key generation, zone signing, printing NSEC3 hashed domain
+names, and sending UPDATE or NOTIFY messages to your name servers. More is
+coming soon.
+
+It depends on OpenSSL for its cryptography related functions.
 
 .. toctree::
    :maxdepth: 2
