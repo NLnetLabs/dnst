@@ -90,7 +90,7 @@ settings used.
 
 .. option:: -t <NUMBER>
 
-      Set the number of hash iterations. Defaults to 0.
+      Set the number of extra hash iterations. Defaults to 0.
 
 .. option:: -s <STRING>
 
