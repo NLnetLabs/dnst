@@ -1,5 +1,7 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
+use std::path::Path;
 
 mod real;
 
@@ -32,6 +34,8 @@ pub trait Env {
 
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 }
 
 /// A type with an infallible `write_fmt` method for use with [`write!`] macros
@@ -72,5 +76,9 @@ impl<E: Env> Env for &E {
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
         (**self).stderr()
+    }
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        (**self).in_cwd(path)
     }
 }
