@@ -1,5 +1,4 @@
 use std::ffi::OsString;
-use std::io::Write;
 use std::str::FromStr;
 
 use clap::builder::ValueParser;
@@ -9,6 +8,7 @@ use domain::rdata::nsec3::Nsec3Salt;
 use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
+use crate::env::Env;
 use crate::error::Error;
 
 use super::{parse_os, parse_os_with, LdnsCommand};
@@ -152,14 +152,15 @@ impl Nsec3Hash {
 }
 
 impl Nsec3Hash {
-    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
-        let hash =
-            nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
-                .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
-                .to_string()
-                .to_lowercase();
-        writeln!(writer, "{}.", hash)
-            .map_err(|err| Error::from(format!("Error writing to output: {err}")))
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        let hash = nsec3_hash(&self.name, self.algorithm, self.iterations, &self.salt)
+            .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
+            .to_string()
+            .to_lowercase();
+
+        let mut out = env.stdout();
+        writeln!(out, "{}.", hash);
+        Ok(())
     }
 }
 
@@ -386,5 +387,38 @@ mod tests {
             parsed_args.execute(&mut captured_stdout).unwrap();
             assert_eq!(str::from_utf8(&captured_stdout), Ok(expected_output));
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::env::fake::FakeCmd;
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
+    }
+
+    #[test]
+    fn dnst_run() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 2);
+
+        let res = cmd.args(["example.test"]).run();
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(res.stdout, "o09614ibh1cq1rcc86289olr22ea0fso.\n")
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
     }
 }

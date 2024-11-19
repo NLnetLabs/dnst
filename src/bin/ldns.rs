@@ -10,10 +10,17 @@ use dnst::error::Error;
 use dnst::try_ldns_compatibility;
 
 fn main() -> ExitCode {
-    match run() {
+    let env = dnst::env::RealEnv;
+
+    let mut args = std::env::args_os();
+    args.next().unwrap();
+    let args =
+        try_ldns_compatibility(args).map(|args| args.expect("ldns commmand is not recognized"));
+
+    match args.and_then(|args| args.execute(&env)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            err.pretty_print();
+            err.pretty_print(env);
             ExitCode::FAILURE
         }
     }

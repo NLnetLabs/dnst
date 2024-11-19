@@ -1,16 +1,8 @@
 use std::process::ExitCode;
 
-use dnst::error::Error;
-use dnst::parse_args;
-
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            err.pretty_print();
-            ExitCode::FAILURE
-        }
-    }
+    let env = dnst::env::RealEnv;
+    dnst::run(env).into()
 }
 
 fn run() -> Result<(), Error> {
