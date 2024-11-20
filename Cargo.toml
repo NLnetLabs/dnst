@@ -2,14 +2,28 @@
 name = "dnst"
 version = "0.1.0"
 edition = "2021"
+default-run = "dnst"
+
+[[bin]]
+name = "ldns"
+path = "src/bin/ldns.rs"
 
 [dependencies]
 bytes = "1.8.0"
 chrono = "0.4.38"
-clap = { version = "4", features = ["derive"] }
-domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = ["tsig", "zonefile", "bytes", "validate", "resolv", "net", "unstable-client-transport"] }
+# domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = ["tsig", "zonefile", "bytes", "validate", "resolv", "net", "unstable-client-transport"] }
+clap = { version = "4.3.4", features = ["derive"] }
+domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = [
+    "zonefile",
+    "bytes",
+    "unstable-validate",
+] }
+lexopt = "0.3.0"
+tokio = "1.40.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.1", features = ["std"] }
+octseq = { version = "0.5.2", features = ["std"] }
 ring = { version = "0.17" }
-tokio = "1.40.0"
+
+[dev-dependencies]
+tempfile = "3.14.0"

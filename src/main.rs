@@ -1,7 +1,6 @@
-use clap::Parser;
+use std::process::ExitCode;
 
-fn main() {
-    if let Err(err) = dnst::Args::parse().execute() {
-        eprintln!("{}", err);
-    }
+fn main() -> ExitCode {
+    let env = dnst::env::RealEnv;
+    dnst::run(env).into()
 }
