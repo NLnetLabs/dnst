@@ -2,10 +2,10 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use clap::Parser;
-use commands::LdnsCommand;
 use commands::key2ds::Key2ds;
 use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
+use commands::LdnsCommand;
 use env::Env;
 use error::Error;
 

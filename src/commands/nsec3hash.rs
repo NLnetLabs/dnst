@@ -1,10 +1,10 @@
-use std::str::FromStr;
 use std::ffi::OsString;
+use std::str::FromStr;
 
 use clap::builder::ValueParser;
-use domain::base::ToName;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::{self, Name};
+use domain::base::ToName;
 use domain::dep::octseq::OctetsBuilder;
 use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
 use lexopt::Arg;
