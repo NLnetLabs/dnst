@@ -1,15 +1,22 @@
 [package]
-name    = "dnst"
+name = "dnst"
 version = "0.1.0"
 edition = "2021"
+default-run = "dnst"
+
+[[bin]]
+name = "ldns"
+path = "src/bin/ldns.rs"
 
 [dependencies]
 bytes  = { version = "1.1", default-features = false }
-clap   = { version = "4", features = ["cargo", "derive"] }
+clap = { version = "4.3.4", features = ["cargo", "derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain", branch = "multiple-key-signing", features = [
+    "bytes",
     "openssl",
     "ring",
     "unstable-sign",
+    "unstable-validate",
     "unstable-validator",
     "unstable-zonetree",
     "zonefile",
@@ -17,5 +24,8 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "multiple-key-s
 lexopt = "0.3.0"
 
 # for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.1", features = ["std"] }
+octseq = { version = "0.5.2", features = ["std"] }
 ring = { version = "0.17" }
+
+[dev-dependencies]
+tempfile = "3.14.0"

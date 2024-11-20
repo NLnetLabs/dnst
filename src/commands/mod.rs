@@ -1,39 +1,50 @@
 //! The command of _dnst_.
+
 pub mod help;
+pub mod key2ds;
 pub mod nsec3hash;
 pub mod signzone;
 
-use std::io::Write;
-
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
+use key2ds::Key2ds;
 use nsec3hash::Nsec3Hash;
 use signzone::SignZone;
 
+use crate::env::Env;
 use crate::Args;
 
 use super::error::Error;
 
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
-    /// Prints the NSEC3 hash of a given domain name
+    /// Print the NSEC3 hash of a given domain name
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
-    /// Signs the zone with the given key(s)
+    /// Sign the zone with the given key(s)
     #[command(name = "signzone")]
     SignZone(self::signzone::SignZone),
+
+    /// Generate a DS RR from the DNSKEYS in keyfile
+    ///
+    /// The following file will be created for each key:
+    /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
+    /// will be printed to stdout.
+    #[command(name = "key2ds")]
+    Key2ds(key2ds::Key2ds),
 
     /// Show the manual pages
     Help(self::help::Help),
 }
 
 impl Command {
-    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
-            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(),
-            Self::SignZone(signzone) => signzone.execute(writer),
+            Self::Key2ds(key2ds) => key2ds.execute(env),
+            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
+            Self::SignZone(signzone) => signzone.execute(env),
             Self::Help(help) => help.execute(),
         }
     }
@@ -44,20 +55,25 @@ impl Command {
 /// These commands do their own argument parsing, because clap cannot always
 /// (easily) parse arguments in the same way that the ldns tools do.
 ///
-/// The `LdnsCommand::parse_ldns` function should parse arguments obtained
-/// with [`std::env::args`] or [`std::env::args_os`] and return an error in
-/// case of invalid arguments. The help string provided as
-/// [`LdnsCommand::HELP`] is automatically appended to returned errors.
+/// The [`LdnsCommand::parse_ldns`] function should parse arguments and
+/// return an error in case of a parsing failure. The help string provided
+/// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
 pub trait LdnsCommand: Into<Command> {
     const HELP: &'static str;
 
-    fn parse_ldns() -> Result<Self, Error>;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error>;
 
-    fn parse_ldns_args() -> Result<Args, Error> {
-        match Self::parse_ldns() {
+    fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
+        match Self::parse_ldns(args) {
             Ok(c) => Ok(Args::from(c.into())),
             Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
+    }
+}
+
+impl From<Key2ds> for Command {
+    fn from(val: Key2ds) -> Self {
+        Command::Key2ds(val)
     }
 }
 

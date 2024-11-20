@@ -2,13 +2,14 @@ use core::ops::Add;
 use core::str::FromStr;
 
 use std::cmp::min;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// TODO: use a re-export from domain?
 use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
-
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
 use domain::base::{Name, NameBuilder, Record, Serial, Ttl};
@@ -24,6 +25,7 @@ use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
 
+use crate::env::Env;
 use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
@@ -226,7 +228,7 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
 impl LdnsCommand for SignZone {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns() -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
         let mut diagnostic_comments = false;
         let mut do_not_add_keys_to_zone = false;
         let mut expiration = Timestamp::now().into_int().add(FOUR_WEEKS).into();
@@ -242,7 +244,7 @@ impl LdnsCommand for SignZone {
         let mut key_paths = Vec::<PathBuf>::new();
         let mut zonefile = Option::<PathBuf>::None;
 
-        let mut parser = lexopt::Parser::from_env();
+        let mut parser = lexopt::Parser::from_args(args);
 
         while let Some(arg) = parser.next()? {
             match arg {
@@ -368,7 +370,7 @@ impl SignZone {
         res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
     }
 
-    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
@@ -394,9 +396,13 @@ impl SignZone {
         };
 
         let mut writer = if out_file.as_os_str() == "-" {
-            Box::new(writer) as Box<dyn Write>
+            // Box::new(env.stdout()) as Box<dyn Write>
+            // FIXME: env.stdout() uses impl fmt::Write, but because of
+            // domain::sign::records::SortedRecords::write_with_comments()
+            // we need io::Write here.
+            todo!()
         } else {
-            Box::new(File::create(out_file)?) as Box<dyn Write>
+            Box::new(File::create(env.in_cwd(&out_file))?) as Box<dyn Write>
         };
 
         // Read the zone file.
@@ -517,6 +523,7 @@ impl SignZone {
     }
 
     fn load_zone(&self) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
+        // TODO: load file with env.in_cwd(zonefile_path)?
         let mut zone_file = File::open(&self.zonefile_path)?;
         let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
         if let Some(origin) = &self.origin {
