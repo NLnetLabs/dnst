@@ -3,6 +3,10 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
+use domain::net::client::protocol::UdpConnect;
+use domain::resolv::stub::conf::ResolvConf;
+use domain::resolv::StubResolver;
+
 use super::Env;
 use super::Stream;
 
@@ -24,6 +28,21 @@ impl Env for RealEnv {
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {
         path.as_ref().into()
+    }
+
+    fn dgram(
+            &self,
+            addr: std::net::SocketAddr,
+        ) -> impl domain::net::client::protocol::AsyncConnect<Connection: domain::net::client::protocol::AsyncDgramRecv + domain::net::client::protocol::AsyncDgramSend + Send + Sync + Unpin + 'static>
+               + Clone
+               + Send
+               + Sync
+               + 'static {
+        UdpConnect::new(addr)
+    }
+    
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
+        StubResolver::from_conf(config)
     }
 }
 

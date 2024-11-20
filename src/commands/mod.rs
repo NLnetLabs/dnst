@@ -9,6 +9,7 @@ use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
 use key2ds::Key2ds;
+use notify::Notify;
 use nsec3hash::Nsec3Hash;
 
 use crate::env::Env;
@@ -16,6 +17,7 @@ use crate::Args;
 
 use super::error::Error;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
     /// Print the NSEC3 hash of a given domain name
@@ -83,6 +85,12 @@ impl From<Nsec3Hash> for Command {
 impl From<Key2ds> for Command {
     fn from(val: Key2ds) -> Self {
         Command::Key2ds(val)
+    }
+}
+
+impl From<Notify> for Command {
+    fn from(val: Notify) -> Self {
+        Command::Notify(val)
     }
 }
 

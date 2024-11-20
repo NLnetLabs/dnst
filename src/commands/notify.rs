@@ -5,21 +5,20 @@ use bytes::Bytes;
 use chrono::{DateTime, Local, TimeDelta};
 use clap::builder::ValueParser;
 use domain::base::iana::{Class, Opcode};
-use domain::base::{
-    Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl,
-};
+use domain::base::{Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl};
 use domain::dep::octseq::Array;
-use domain::net::client::protocol::UdpConnect;
 use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
 use domain::rdata::Soa;
-use domain::resolv::stub::StubResolver;
 use domain::tsig::{Algorithm, Key, KeyName};
 use domain::utils::{base16, base64};
 
+use crate::env::Env;
 use crate::error::Error;
 
-#[derive(Clone, Debug)]
+use super::LdnsCommand;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct TSigInfo {
     name: KeyName,
     key: Vec<u8>,
@@ -82,21 +81,17 @@ impl FromStr for TSigInfo {
         //
         // We can correct this by checking whether the name contains a valid
         // algorithm while the algorithm doesn't.
-        if Algorithm::from_str(algorithm).is_err()
-            && Algorithm::from_str(name).is_ok()
-        {
+        if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
             (name, key, algorithm) = (key, algorithm, name);
         }
 
-        let algorithm = Algorithm::from_str(algorithm).map_err(|_| {
-            format!("Unsupported TSIG algorithm: {algorithm}")
-        })?;
+        let algorithm = Algorithm::from_str(algorithm)
+            .map_err(|_| format!("Unsupported TSIG algorithm: {algorithm}"))?;
 
-        let key = base64::decode(key)
-            .map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
+        let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
 
-        let name = Name::<Array<255>>::from_str(name)
-            .map_err(|e| format!("TSIG name is invalid: {e}"))?;
+        let name =
+            Name::<Array<255>>::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
 
         Ok(TSigInfo {
             name,
@@ -106,10 +101,10 @@ impl FromStr for TSigInfo {
     }
 }
 
-#[derive(Clone, Debug, clap::Args)]
+#[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct Notify {
     /// The zone
-    #[arg(short = 'z', required = true)]
+    #[arg(short = 'z', long = "zone", required = true)]
     zone: Name<Vec<u8>>,
 
     // The -I option is supported by ldns but is not available in domain yet.
@@ -148,13 +143,40 @@ pub struct Notify {
     servers: Vec<String>,
 }
 
+const LDNS_HELP: &str = "\
+usage: ldns-notify [other options] -z zone <servers>
+Ldns notify utility
+
+ Supported options:
+        -z zone         The zone
+        -I <address>    source address to query from
+        -s version      SOA version number to include
+        -y <name:key[:algo]>    specify named base64 tsig key, and optional an
+                        algorithm (defaults to hmac-md5.sig-alg.reg.int)
+        -p port         port to use to send to
+        -v              Print version information
+        -d              Print verbose debug information
+        -r num          max number of retries (15)
+        -h              Print this help information
+
+Report bugs to <dns-team@nlnetlabs.nl>\
+";
+
+impl LdnsCommand for Notify {
+    const HELP: &'static str = LDNS_HELP;
+
+    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(_args: I) -> Result<Self, Error> {
+        todo!()
+    }
+}
+
 impl Notify {
-    pub fn execute(&self) -> Result<(), Error> {
+    pub fn execute(&self, env: impl Env) -> Result<(), Error> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(self.run())
+        runtime.block_on(self.run(env))
     }
 
-    async fn run(&self) -> Result<(), Error> {
+    async fn run(&self, env: impl Env) -> Result<(), Error> {
         let mut msg = MessageBuilder::new_vec();
 
         let header = msg.header_mut();
@@ -193,31 +215,25 @@ impl Notify {
             .tsig
             .as_ref()
             .map(|tsig| {
-                Key::new(
-                    tsig.algorithm,
-                    &tsig.key,
-                    tsig.name.clone(),
-                    None,
-                    None,
-                )
-                .map_err(|e| format!("TSIG key is invalid: {e}"))
+                Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
+                    .map_err(|e| format!("TSIG key is invalid: {e}"))
             })
             .transpose()?;
 
         let msg = msg.into_message();
 
-        println!("# Sending packet:");
-        println!("{}", msg.display_dig_style());
+        writeln!(env.stdout(), "# Sending packet:");
+        writeln!(env.stdout(), "{}", msg.display_dig_style());
 
         if self.debug {
-            println!("Hexdump of notify packet:");
-            println!("{}", base16::encode_display(&msg));
+            writeln!(env.stdout(), "Hexdump of notify packet:");
+            writeln!(env.stdout(), "{}", base16::encode_display(&msg));
         }
 
-        let resolver = StubResolver::new();
+        let resolver = env.stub_resolver().await;
 
         for server in &self.servers {
-            println!("# sending to {}", server);
+            writeln!(env.stdout(), "# sending to {}", server);
 
             // The specified server might be an IP address. In ldns, this case is
             // handled by `getaddrinfo`, but we have to do it ourselves.
@@ -225,33 +241,38 @@ impl Notify {
             // can.
             if let Ok(addr) = server.parse() {
                 let socket = SocketAddr::new(addr, self.port);
-                self.notify_host(socket, msg.clone(), server, &tsig).await;
+                self.notify_host(&env, socket, msg.clone(), server, &tsig)
+                    .await;
                 continue;
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                eprintln!(
+                writeln!(
+                    env.stderr(),
                     "warning: invalid domain name \"{server}\", skipping."
                 );
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                eprintln!(
+                writeln!(
+                    env.stderr(),
                     "warning: could not resolve host \"{name}\", skipping."
                 );
                 continue;
             };
 
             if hosts.is_empty() {
-                eprintln!(
+                writeln!(
+                    env.stderr(),
                     "skipping bad address: {name}: Name or service not known"
                 );
                 continue;
             }
 
             for socket in hosts.port_iter(self.port) {
-                self.notify_host(socket, msg.clone(), server, &tsig).await;
+                self.notify_host(&env, socket, msg.clone(), server, &tsig)
+                    .await;
             }
         }
 
@@ -260,6 +281,7 @@ impl Notify {
 
     async fn notify_host(
         &self,
+        env: &impl Env,
         socket: SocketAddr,
         msg: Message<Vec<u8>>,
         server: &str,
@@ -267,32 +289,33 @@ impl Notify {
     ) {
         let resp = match &tsig {
             Some(tsig) => {
-                self.notify_host_with_tsig(socket, msg, tsig.clone()).await
+                self.notify_host_with_tsig(env, socket, msg, tsig.clone())
+                    .await
             }
-            None => self.notify_host_without_tsig(socket, msg).await,
+            None => self.notify_host_without_tsig(env, socket, msg).await,
         };
 
         match resp {
             Ok(resp) => {
-                println!("# reply from {server} at {socket}:");
-                println!("{resp}");
+                writeln!(env.stdout(), "# reply from {server} at {socket}:");
+                writeln!(env.stdout(), "{resp}");
             }
             Err(e) => {
-                eprintln!("{e}");
+                writeln!(env.stdout(), "{e}");
             }
         }
     }
 
     async fn notify_host_with_tsig(
         &self,
+        env: impl Env,
         socket: SocketAddr,
         msg: Message<Vec<u8>>,
         key: Key,
     ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries as u8);
-        let connection =
-            dgram::Connection::with_config(UdpConnect::new(socket), config);
+        let connection = dgram::Connection::with_config(env.dgram(socket), config);
         let connection = tsig::Connection::new(key, connection);
 
         let req = RequestMessage::new(msg).unwrap();
@@ -313,13 +336,13 @@ impl Notify {
 
     async fn notify_host_without_tsig(
         &self,
+        env: impl Env,
         socket: SocketAddr,
         msg: Message<Vec<u8>>,
     ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries as u8);
-        let connection =
-            dgram::Connection::with_config(UdpConnect::new(socket), config);
+        let connection = dgram::Connection::with_config(env.dgram(socket), config);
 
         let req = RequestMessage::new(msg).unwrap();
         let mut req = SendRequest::send_request(&connection, req);
@@ -335,5 +358,236 @@ impl Notify {
             server: Some(socket),
             time: time2 - when,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use domain::{base::Name, tsig::Algorithm, utils::base64};
+
+    use crate::{
+        commands::{notify::TSigInfo, Command},
+        env::fake::FakeCmd,
+    };
+
+    use super::Notify;
+
+    #[track_caller]
+    fn parse(cmd: FakeCmd) -> Notify {
+        let res = cmd.parse().unwrap();
+        let Command::Notify(x) = res.command else {
+            panic!("not a notify!");
+        };
+        x
+    }
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "notify"]);
+
+        cmd.parse().unwrap_err();
+        cmd.args(["--zone", "example.test"]).parse().unwrap_err();
+        cmd.args(["--zone=example.test"]).parse().unwrap_err();
+        cmd.args(["-z", "example.test"]).parse().unwrap_err();
+        cmd.args(["-zexample.test"]).parse().unwrap_err();
+
+        let base = Notify {
+            zone: Name::from_str("example.test").unwrap(),
+            soa_version: None,
+            tsig: None,
+            port: 53,
+            debug: false,
+            retries: 15,
+            servers: vec!["some.example.test".into()],
+        };
+
+        // Create a command with some arguments that we reuse for some tests
+        let cmd2 = cmd.args(["-z", "example.test", "some.example.test"]);
+
+        let res = parse(cmd2.clone());
+        assert_eq!(res, base);
+
+        for arg in ["-p", "--port"] {
+            let res = parse(cmd2.args([arg, "10"]));
+            assert_eq!(
+                res,
+                Notify {
+                    port: 10,
+                    ..base.clone()
+                }
+            );
+        }
+
+        let res = parse(cmd2.args(["-s", "10"]));
+        assert_eq!(
+            res,
+            Notify {
+                soa_version: Some(10),
+                ..base.clone()
+            }
+        );
+
+        for arg in ["-y", "--tsig"] {
+            let res = parse(cmd2.args([arg, "somekey:1234"]));
+            assert_eq!(
+                res,
+                Notify {
+                    tsig: Some(TSigInfo {
+                        name: "somekey".parse().unwrap(),
+                        key: base64::decode("1234").unwrap(),
+                        algorithm: Algorithm::Sha512,
+                    }),
+                    ..base.clone()
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "not implemented yet"]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-notify"]);
+
+        cmd.parse().unwrap_err();
+
+        // Shouldn't work at all
+        cmd.args(["--zone", "example.test"]).parse().unwrap_err();
+        cmd.args(["--zone=example.test"]).parse().unwrap_err();
+
+        // Missing servers
+        cmd.args(["-z", "example.test"]).parse().unwrap_err();
+        cmd.args(["-zexample.test"]).parse().unwrap_err();
+
+        let base = Notify {
+            zone: Name::from_str("example.test").unwrap(),
+            soa_version: None,
+            tsig: None,
+            port: 53,
+            debug: false,
+            retries: 15,
+            servers: vec!["some.example.test".into()],
+        };
+
+        // Create a command with some arguments that we reuse for some tests
+        let cmd2 = cmd.args(["-z", "example.test", "some.example.test"]);
+
+        let res = parse(cmd2.clone());
+        assert_eq!(res, base);
+
+        let res = parse(cmd2.args(["-p", "10"]));
+        assert_eq!(
+            res,
+            Notify {
+                port: 10,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd2.args(["-s", "10"]));
+        assert_eq!(
+            res,
+            Notify {
+                soa_version: Some(10),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd2.args(["-y", "somekey:1234"]));
+        assert_eq!(
+            res,
+            Notify {
+                tsig: Some(TSigInfo {
+                    name: "somekey".parse().unwrap(),
+                    key: base64::decode("1234").unwrap(),
+                    algorithm: Algorithm::Sha512,
+                }),
+                ..base.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn with_zone_and_ip() {
+        let rpl = "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            RANGE_BEGIN 0 100
+            
+            ENTRY_BEGIN
+            ADJUST copy_id
+            REPLY QR
+            SECTION QUESTION
+            nlnetlabs.test SOA
+            SECTION ANSWER
+            success.test 10 A 2.2.2.2
+            ENTRY_END
+
+            RANGE_END
+
+            SCENARIO_END
+        ";
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", "1.1.1.1"])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 0);
+        assert!(res.stdout.contains("success.test"));
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn with_zone_and_domain_name() {
+        let rpl = "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            RANGE_BEGIN 0 100
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR RD RA NOERROR
+            SECTION QUESTION
+                example.test. IN A
+            SECTION ANSWER
+                example.test. IN A 1.1.1.1
+            ENTRY_END
+            
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR RD RA NOERROR
+            SECTION QUESTION
+                example.test. IN AAAA
+            ENTRY_END
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id
+            REPLY QR
+            SECTION QUESTION
+                nlnetlabs.test SOA
+            SECTION ANSWER
+                success.test IN 10 A 2.2.2.2
+            ENTRY_END
+
+            RANGE_END
+
+            SCENARIO_END
+        ";
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", "example.test"])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 0);
+        assert!(res.stdout.contains("success.test"));
+        assert_eq!(res.stderr, "");
     }
 }

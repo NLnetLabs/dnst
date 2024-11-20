@@ -248,9 +248,9 @@ mod test {
     use super::Key2ds;
 
     #[track_caller]
-    fn parse(args: FakeCmd) -> Key2ds {
-        let res = args.parse();
-        let Command::Key2ds(x) = res.unwrap().command else {
+    fn parse(cmd: FakeCmd) -> Key2ds {
+        let res = cmd.parse().unwrap();
+        let Command::Key2ds(x) = res.command else {
             panic!("Not a Key2ds!");
         };
         x
