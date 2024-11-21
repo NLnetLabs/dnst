@@ -13,11 +13,12 @@ use domain::net::client::{dgram, tsig};
 use domain::rdata::Soa;
 use domain::tsig::{Algorithm, Key, KeyName};
 use domain::utils::{base16, base64};
+use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
 
-use super::LdnsCommand;
+use super::{parse_os, LdnsCommand};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TSigInfo {
@@ -166,8 +167,70 @@ Report bugs to <dns-team@nlnetlabs.nl>\
 impl LdnsCommand for Notify {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(_args: I) -> Result<Self, Error> {
-        todo!()
+    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(args: I) -> Result<Self, Error> {
+        let mut zone = None;
+        let mut soa_version = None;
+        let mut tsig = None;
+        let mut port = 53;
+        let mut debug = false;
+        let mut retries = 15;
+        let mut servers = Vec::new();
+
+        let mut parser = lexopt::Parser::from_args(args);
+
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('z') => {
+                    let val = parser.value()?;
+                    zone = Some(parse_os("zone (-z)", &val)?);
+                }
+                Arg::Short('I') => todo!(),
+                Arg::Short('s') => {
+                    let val = parser.value()?;
+                    soa_version = Some(parse_os("soa version (-s)", &val)?);
+                }
+                Arg::Short('y') => {
+                    let val = parser.value()?;
+                    tsig = Some(parse_os("tsig key (-y)", &val)?);
+                }
+                Arg::Short('p') => {
+                    let val = parser.value()?;
+                    port = parse_os("port (-p)", &val)?;
+                }
+                Arg::Short('v') => todo!(),
+                Arg::Short('d') => debug = true,
+                Arg::Short('r') => {
+                    let val = parser.value()?;
+                    retries = parse_os("retries (-r)", &val)?;
+                }
+                Arg::Short('h') => todo!(),
+                Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
+                Arg::Long(x) => {
+                    return Err(format!("Long options are not supported, but `--{x}` given").into())
+                }
+                Arg::Value(x) => {
+                    servers.push(parse_os("server", &x)?);
+                }
+            }
+        }
+
+        let Some(zone) = zone else {
+            return Err("Missing zone name argument".into());
+        };
+
+        if servers.is_empty() {
+            return Err("Missing servers".into());
+        }
+
+        Ok(Notify {
+            zone,
+            soa_version,
+            tsig,
+            port,
+            debug,
+            retries,
+            servers,
+        })
     }
 }
 
@@ -448,7 +511,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not implemented yet"]
     fn ldns_parse() {
         let cmd = FakeCmd::new(["ldns-notify"]);
 
@@ -462,6 +524,13 @@ mod tests {
         cmd.args(["-z", "example.test"]).parse().unwrap_err();
         cmd.args(["-zexample.test"]).parse().unwrap_err();
 
+        // Create a command with some arguments that we reuse for some tests
+        let cmd2 = cmd.args(["-z", "example.test", "some.example.test"]);
+
+        // Invalid numbers
+        cmd2.args(["-p", "blabla"]).parse().unwrap_err();
+        cmd2.args(["-r", "blabla"]).parse().unwrap_err();
+
         let base = Notify {
             zone: Name::from_str("example.test").unwrap(),
             soa_version: None,
@@ -471,9 +540,6 @@ mod tests {
             retries: 15,
             servers: vec!["some.example.test".into()],
         };
-
-        // Create a command with some arguments that we reuse for some tests
-        let cmd2 = cmd.args(["-z", "example.test", "some.example.test"]);
 
         let res = parse(cmd2.clone());
         assert_eq!(res, base);
