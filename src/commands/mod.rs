@@ -1,8 +1,8 @@
 //! The command of _dnst_.
 
 pub mod help;
-pub mod notify;
 pub mod key2ds;
+pub mod notify;
 pub mod nsec3hash;
 
 use std::ffi::{OsStr, OsString};
@@ -31,7 +31,7 @@ pub enum Command {
     /// that serial number it will disregard the message.
     #[command(name = "notify")]
     Notify(self::notify::Notify),
-    
+
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
     /// The following file will be created for each key:

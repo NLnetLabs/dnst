@@ -9,7 +9,8 @@ mod real;
 #[cfg(test)]
 pub mod fake;
 
-use domain::{net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend}, resolv::{stub::conf::ResolvConf, StubResolver}};
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
+use domain::resolv::{stub::conf::ResolvConf, StubResolver};
 pub use real::RealEnv;
 
 pub trait Env {
@@ -105,7 +106,7 @@ impl<E: Env> Env for &E {
            + 'static {
         (**self).dgram(socket)
     }
-    
+
     async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
         (**self).stub_resolver_from_conf(config).await
     }

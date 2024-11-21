@@ -96,10 +96,12 @@ impl Env for FakeEnv {
 
         config.servers = vec![];
         let resolver = StubResolver::from_conf(config);
-        resolver.add_connection(Box::new(dgram::Connection::new(Dgram::new(
-            stelline.clone(),
-            step.clone(),
-        )))).await;
+        resolver
+            .add_connection(Box::new(dgram::Connection::new(Dgram::new(
+                stelline.clone(),
+                step.clone(),
+            ))))
+            .await;
         resolver
     }
 }
