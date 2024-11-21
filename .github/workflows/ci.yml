@@ -35,7 +35,7 @@ jobs:
     - name: Install Rust
       uses: hecrj/setup-rust-action@v2
       with:
-        rust-version: "1.78.0"
+        rust-version: "1.79.0"
     - name: Install nightly Rust
       run: rustup install nightly
     - name: Check with minimal-versions
