@@ -3,6 +3,9 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
+use domain::net::client::protocol::AsyncConnect;
+use domain::net::client::protocol::AsyncDgramRecv;
+use domain::net::client::protocol::AsyncDgramSend;
 use domain::net::client::protocol::UdpConnect;
 use domain::resolv::stub::conf::ResolvConf;
 use domain::resolv::StubResolver;
@@ -31,16 +34,16 @@ impl Env for RealEnv {
     }
 
     fn dgram(
-            &self,
-            addr: std::net::SocketAddr,
-        ) -> impl domain::net::client::protocol::AsyncConnect<Connection: domain::net::client::protocol::AsyncDgramRecv + domain::net::client::protocol::AsyncDgramSend + Send + Sync + Unpin + 'static>
-               + Clone
-               + Send
-               + Sync
-               + 'static {
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
         UdpConnect::new(addr)
     }
-    
+
     async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
         StubResolver::from_conf(config)
     }
