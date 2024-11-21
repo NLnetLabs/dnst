@@ -208,7 +208,10 @@ impl Keygen {
             _ => {}
         }
 
+        // TODO: Remove attrs when more RSA algorithms are added.
+        #[allow(clippy::collapsible_match)]
         if let Some((name, params)) = value.split_once(':') {
+            #[allow(clippy::single_match)]
             match name {
                 "RSASHA256" => {
                     let bits: u32 = params.parse().map_err(|err| {
