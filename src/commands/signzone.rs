@@ -389,6 +389,10 @@ impl SignZone {
             SigningMode::HashAndSign
         };
 
+        if self.key_paths.is_empty() && !self.hash_only {
+            return Err("Missing key argument".into());
+        };
+
         let out_file = if let Some(out_file) = &self.out_file {
             out_file.clone()
         } else {
