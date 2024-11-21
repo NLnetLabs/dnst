@@ -3,8 +3,10 @@ use core::str::FromStr;
 
 use std::cmp::min;
 use std::ffi::OsString;
+use std::fmt;
+use std::fmt::Write;
 use std::fs::File;
-use std::io::Write;
+use std::io;
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
@@ -25,7 +27,7 @@ use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
 
-use crate::env::Env;
+use crate::env::{Env, Stream};
 use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
@@ -396,17 +398,13 @@ impl SignZone {
         };
 
         let mut writer = if out_file.as_os_str() == "-" {
-            // Box::new(env.stdout()) as Box<dyn Write>
-            // FIXME: env.stdout() uses impl fmt::Write, but because of
-            // domain::sign::records::SortedRecords::write_with_comments()
-            // we need io::Write here.
-            todo!()
+            FileOrStdout::Stdout(env.stdout())
         } else {
-            Box::new(File::create(env.in_cwd(&out_file))?) as Box<dyn Write>
+            FileOrStdout::File(File::create(env.in_cwd(&out_file))?)
         };
 
         // Read the zone file.
-        let mut records = self.load_zone()?;
+        let mut records = self.load_zone(&env)?;
 
         // Import the specified keys.
         let mut keys = vec![];
@@ -471,12 +469,12 @@ impl SignZone {
                     // "  ;{... <domain>.}" but I find the spacing ugly and
                     // would prefer for dnst to output " ; {... <domain>. }"
                     // instead.
-                    writer.write_all(b" ;{ flags: ")?;
+                    writer.write_str(" ;{ flags: ")?;
 
                     if nsec3.opt_out() {
-                        writer.write_all(b"optout")?;
+                        writer.write_str("optout")?;
                     } else {
-                        writer.write_all(b"-")?;
+                        writer.write_str("-")?;
                     }
 
                     let next_owner_hash_hex = format!("{}", nsec3.next_owner());
@@ -505,9 +503,9 @@ impl SignZone {
             ZoneRecordData::Dnskey(dnskey) => {
                 writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
                 if dnskey.is_secure_entry_point() {
-                    writer.write_all(b" (ksk)")?;
+                    writer.write_str(" (ksk)")?;
                 } else if dnskey.is_zone_key() {
-                    writer.write_all(b" (zsk)")?;
+                    writer.write_str(" (zsk)")?;
                 }
                 let owner = r.owner().clone();
                 let dnskey = dnskey.clone();
@@ -522,9 +520,11 @@ impl SignZone {
         Ok(())
     }
 
-    fn load_zone(&self) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
-        // TODO: load file with env.in_cwd(zonefile_path)?
-        let mut zone_file = File::open(&self.zonefile_path)?;
+    fn load_zone(
+        &self,
+        env: &impl Env,
+    ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
+        let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
         let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
@@ -706,4 +706,27 @@ enum SigningMode {
     HashOnly,
     // /// Only sign zone records, assume they are already hashed.
     // SignOnly,
+}
+
+//------------ FileOrStdout --------------------------------------------------
+
+enum FileOrStdout<T: io::Write, U: fmt::Write> {
+    File(T),
+    Stdout(Stream<U>),
+}
+
+impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        match self {
+            FileOrStdout::File(f) => f.write_all(s.as_bytes()).map_err(|_| fmt::Error),
+            FileOrStdout::Stdout(o) => Ok(o.write_str(s)),
+        }
+    }
+
+    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+        match self {
+            FileOrStdout::File(f) => f.write_fmt(args).map_err(|_| fmt::Error),
+            FileOrStdout::Stdout(o) => Ok(o.write_fmt(args)),
+        }
+    }
 }

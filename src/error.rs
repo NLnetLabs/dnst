@@ -117,6 +117,12 @@ impl From<String> for Error {
     }
 }
 
+impl From<fmt::Error> for Error {
+    fn from(error: fmt::Error) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Self::new(&error.to_string())

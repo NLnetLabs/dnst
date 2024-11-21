@@ -55,6 +55,11 @@ impl<T: fmt::Write> Stream<T> {
         // hard anyway.
         self.0.write_fmt(args).unwrap();
     }
+
+    pub fn write_str(&mut self, s: &str) {
+        // Same as with write_fmt...
+        self.0.write_str(s).unwrap();
+    }
 }
 
 impl<E: Env> Env for &E {
