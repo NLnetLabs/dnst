@@ -188,11 +188,11 @@ macro_rules! bail {
 #[macro_export]
 macro_rules! ensure {
     ($cond:expr, $fmt:expr) => {
-        if !$cond { $crate::error::bail!($fmt) }
+        if !$cond { $crate::error::bail!($fmt); }
     };
 
     ($cond:expr, $fmt:expr, $($args:tt)*) => {
-        if !$cond { $crate::error::bail!($fmt, $($args)*) }
+        if !$cond { $crate::error::bail!($fmt, $($args)*); }
     };
 }
 
