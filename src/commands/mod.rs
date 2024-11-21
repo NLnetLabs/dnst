@@ -41,6 +41,17 @@ pub enum Command {
     /// <tag> is the 16-bit tag of the key, zero-padded to 5 digits.
     ///
     /// Upon completion, 'K<name>+<alg>+<tag>' will be printed.
+    ///
+    /// The following algorithms are supported:
+    ///
+    /// - RSASHA256 (8)
+    /// - ECDSAP256SHA256 (13)
+    /// - ECDSAP384SHA384 (14)
+    /// - ED25519 (15)
+    /// - ED448 (16)
+    ///
+    /// When specified with '-a', RSA key types can be followed by a colon and the
+    /// number of bits to use, e.g. '-a RSASHA256:3072'.  2048 is the default.
     #[command(name = "keygen", verbatim_doc_comment)]
     Keygen(self::keygen::Keygen),
 

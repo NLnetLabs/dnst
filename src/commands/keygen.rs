@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 
-use clap::{builder::ValueParser, Args, ValueEnum};
+use clap::{builder::ValueParser, Args};
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
@@ -19,20 +19,17 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 #[derive(Clone, Debug, Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
-    #[arg(short = 'a', value_name = "ALGORITHM", value_enum)]
-    algorithm: AlgorithmArg,
+    #[arg(
+        short = 'a',
+        long = "algorithm",
+        value_name = "ALGORITHM",
+        value_parser = ValueParser::new(Keygen::parse_algorithm),
+    )]
+    algorithm: GenerateParams,
 
     /// Generate a key signing key instead of a zone signing key
     #[arg(short = 'k')]
     make_ksk: bool,
-
-    /// The length of the key (for RSA keys only)
-    #[arg(short = 'b', value_name = "BITS", default_value_t = 2048)]
-    bits: u32,
-
-    /// The randomness source to use for generation
-    #[arg(short = 'r', value_name = "DEVICE", default_value_t = String::from("/dev/urandom"))]
-    random: String,
 
     /// Create symlinks '.key' and '.private' to the generated keys
     #[arg(short = 's')]
@@ -74,7 +71,6 @@ impl LdnsCommand for Keygen {
         let mut algorithm = None;
         let mut make_ksk = false;
         let mut bits = 2048;
-        let mut random = String::from("/dev/urandom");
         #[cfg(target_family = "unix")]
         let mut create_symlinks = false;
         #[cfg(target_family = "unix")]
@@ -90,9 +86,30 @@ impl LdnsCommand for Keygen {
                         return Err("cannot specify algorithm (-a) more than once".into());
                     }
 
-                    algorithm = Some(parse_os_with("algorithm (-a)", &parser.value()?, |s| {
-                        AlgorithmArg::from_str(s, true)
-                    })?);
+                    algorithm = parse_os_with("algorithm (-a)", &parser.value()?, |s| {
+                        Ok(match s {
+                            "list" => {
+                                // TODO: Mock stdout and process exit?
+                                println!("Possible algorithms:");
+                                println!("  - RSASHA256 (8)");
+                                println!("  - ECDSAP256SHA256 (13)");
+                                println!("  - ECDSAP384SHA384 (14)");
+                                println!("  - ED25519 (15)");
+                                println!("  - ED448 (16)");
+                                std::process::exit(0);
+                            }
+
+                            "RSASHA256" | "8" => Some(SecAlg::RSASHA256),
+                            "ECDSAP256SHA256" | "13" => Some(SecAlg::ECDSAP256SHA256),
+                            "ECDSAP384SHA384" | "14" => Some(SecAlg::ECDSAP384SHA384),
+                            "ED25519" | "15" => Some(SecAlg::ED25519),
+                            "ED448" | "16" => Some(SecAlg::ED448),
+
+                            _ => {
+                                return Err(format!("Invalid value {s:?} for algorithm (-a)"));
+                            }
+                        })
+                    })?;
                 }
 
                 Arg::Short('k') => {
@@ -107,7 +124,7 @@ impl LdnsCommand for Keygen {
 
                 Arg::Short('r') => {
                     // NOTE: '-r' can be repeated; we don't use it, so the order doesn't matter.
-                    random = parse_os("randomness source (-r)", &parser.value()?)?;
+                    let _ = parser.value()?;
                 }
 
                 Arg::Short('s') => {
@@ -146,8 +163,16 @@ impl LdnsCommand for Keygen {
             }
         }
 
-        let Some(algorithm) = algorithm else {
-            return Err("Missing algorithm (-a) option".into());
+        let algorithm = match algorithm {
+            Some(SecAlg::RSASHA256) => GenerateParams::RsaSha256 { bits },
+            Some(SecAlg::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
+            Some(SecAlg::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
+            Some(SecAlg::ED25519) => GenerateParams::Ed25519,
+            Some(SecAlg::ED448) => GenerateParams::Ed448,
+            Some(_) => unreachable!(),
+            None => {
+                return Err("Missing algorithm (-a) option".into());
+            }
         };
 
         let Some(name) = name else {
@@ -157,8 +182,6 @@ impl LdnsCommand for Keygen {
         Ok(Self {
             algorithm,
             make_ksk,
-            bits,
-            random,
             #[cfg(target_family = "unix")]
             create_symlinks,
             #[cfg(target_family = "unix")]
@@ -175,28 +198,41 @@ impl From<Keygen> for Command {
 }
 
 impl Keygen {
+    fn parse_algorithm(value: &str) -> Result<GenerateParams, clap::Error> {
+        match value {
+            "RSASHA256" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
+            "ECDSAP256SHA256" => return Ok(GenerateParams::EcdsaP256Sha256),
+            "ECDSAP384SHA384" => return Ok(GenerateParams::EcdsaP384Sha384),
+            "ED25519" => return Ok(GenerateParams::Ed25519),
+            "ED448" => return Ok(GenerateParams::Ed448),
+            _ => {}
+        }
+
+        if let Some((name, params)) = value.split_once(':') {
+            match name {
+                "RSASHA256" => {
+                    let bits: u32 = params.parse().map_err(|err| {
+                        clap::Error::raw(
+                            clap::error::ErrorKind::InvalidValue,
+                            format!("invalid RSA key size '{params}': {err}"),
+                        )
+                    })?;
+                    return Ok(GenerateParams::RsaSha256 { bits });
+                }
+                _ => {}
+            }
+        }
+
+        Err(clap::Error::raw(
+            clap::error::ErrorKind::InvalidValue,
+            format!("unrecognized algorithm '{value}'"),
+        ))
+    }
+
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let mut stdout = env.stdout();
 
-        // Determine the appropriate key generation parameters.
-        let params = match self.algorithm {
-            AlgorithmArg::List => {
-                // Print the algorithm list and exit.
-                writeln!(stdout, "Possible algorithms:");
-                writeln!(stdout, "  - RSASHA256 (8)");
-                writeln!(stdout, "  - ECDSAP256SHA256 (13)");
-                writeln!(stdout, "  - ECDSAP384SHA384 (14)");
-                writeln!(stdout, "  - ED25519 (15)");
-                writeln!(stdout, "  - ED448 (16)");
-                return Ok(());
-            }
-
-            AlgorithmArg::RsaSha256 => GenerateParams::RsaSha256 { bits: self.bits },
-            AlgorithmArg::EcdsaP256Sha256 => GenerateParams::EcdsaP256Sha256,
-            AlgorithmArg::EcdsaP384Sha384 => GenerateParams::EcdsaP384Sha384,
-            AlgorithmArg::Ed25519 => GenerateParams::Ed25519,
-            AlgorithmArg::Ed448 => GenerateParams::Ed448,
-        };
+        let params = self.algorithm;
 
         // The digest algorithm is selected based on the key algorithm.
         let digest_alg = match params.algorithm() {
@@ -338,31 +374,4 @@ impl Keygen {
 
         Ok(())
     }
-}
-
-/// An algorithm argument.
-#[derive(Copy, Clone, Debug, ValueEnum)]
-enum AlgorithmArg {
-    /// List all algorithms.
-    List,
-
-    /// RSA with SHA-256.
-    #[value(name = "RSASHA256", alias("8"))]
-    RsaSha256,
-
-    /// ECDSA P-256 with SHA-256.
-    #[value(name = "ECDSAP256SHA256", alias("13"))]
-    EcdsaP256Sha256,
-
-    /// ECDSA P-384 with SHA-384.
-    #[value(name = "ECDSAP384SHA384", alias("14"))]
-    EcdsaP384Sha384,
-
-    /// ED25519.
-    #[value(name = "ED25519", alias("15"))]
-    Ed25519,
-
-    /// ED448.
-    #[value(name = "ED448", alias("16"))]
-    Ed448,
 }
