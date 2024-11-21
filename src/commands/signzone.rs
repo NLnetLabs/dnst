@@ -723,14 +723,20 @@ impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         match self {
             FileOrStdout::File(f) => f.write_all(s.as_bytes()).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(o) => Ok(o.write_str(s)),
+            FileOrStdout::Stdout(o) => {
+                o.write_str(s);
+                Ok(())
+            }
         }
     }
 
     fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
         match self {
             FileOrStdout::File(f) => f.write_fmt(args).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(o) => Ok(o.write_fmt(args)),
+            FileOrStdout::Stdout(o) => {
+                o.write_fmt(args);
+                Ok(())
+            }
         }
     }
 }
