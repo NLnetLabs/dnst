@@ -1,5 +1,6 @@
 use core::fmt;
-use std::{net::SocketAddr, str::FromStr};
+use std::net::SocketAddr;
+use std::str::FromStr;
 
 use bytes::Bytes;
 use chrono::{DateTime, Local, TimeDelta};
@@ -363,6 +364,7 @@ impl Notify {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
 
     use domain::{base::Name, tsig::Algorithm, utils::base64};
@@ -508,6 +510,44 @@ mod tests {
         );
     }
 
+    fn entries_for_name(name: &str, v4: &[Ipv4Addr], v6: &[Ipv6Addr]) -> String {
+        let v4 = v4
+            .iter()
+            .map(|a| format!("{name} IN 10 A {a}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let v6 = v6
+            .iter()
+            .map(|a| format!("{name} IN 10 AAAA {a}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR RD RA NOERROR
+            SECTION QUESTION
+                {name} IN A
+            SECTION ANSWER
+                {v4}
+            ENTRY_END
+            
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR RD RA NOERROR
+            SECTION QUESTION
+                {name} IN AAAA
+            SECTION ANSWER
+                {v6}
+            ENTRY_END
+        "
+        )
+    }
+
     #[test]
     fn with_zone_and_ip() {
         let rpl = "
@@ -521,9 +561,9 @@ mod tests {
             ADJUST copy_id
             REPLY QR
             SECTION QUESTION
-            nlnetlabs.test SOA
+                nlnetlabs.test SOA
             SECTION ANSWER
-            success.test 10 A 2.2.2.2
+                success.test 10 A 2.2.2.2
             ENTRY_END
 
             RANGE_END
@@ -542,31 +582,21 @@ mod tests {
 
     #[test]
     fn with_zone_and_domain_name() {
-        let rpl = "
+        let foo = entries_for_name("foo.test", &[Ipv4Addr::new(1, 2, 3, 4)], &[]);
+        let bar = entries_for_name("bar.test", &[], &[]);
+
+        let rpl = format!(
+            "
             CONFIG_END
 
             SCENARIO_BEGIN
 
             RANGE_BEGIN 0 100
-
-            ENTRY_BEGIN
-            MATCH question
-            ADJUST copy_id copy_query
-            REPLY QR RD RA NOERROR
-            SECTION QUESTION
-                example.test. IN A
-            SECTION ANSWER
-                example.test. IN A 1.1.1.1
-            ENTRY_END
             
-            ENTRY_BEGIN
-            MATCH question
-            ADJUST copy_id copy_query
-            REPLY QR RD RA NOERROR
-            SECTION QUESTION
-                example.test. IN AAAA
-            ENTRY_END
+            {foo}
 
+            {bar}
+            
             ENTRY_BEGIN
             MATCH question
             ADJUST copy_id
@@ -580,14 +610,21 @@ mod tests {
             RANGE_END
 
             SCENARIO_END
-        ";
+        "
+        );
 
-        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", "example.test"])
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", "foo.test"])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert!(res.stdout.contains("success.test"));
+        assert_eq!(res.stderr, "");
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", "bar.test"])
             .stelline(rpl.as_bytes(), "notify.rpl");
 
         let res = cmd.run();
         assert_eq!(res.exit_code, 0);
-        assert!(res.stdout.contains("success.test"));
-        assert_eq!(res.stderr, "");
+        assert!(res.stderr.contains("Name or service not known"));
     }
 }
