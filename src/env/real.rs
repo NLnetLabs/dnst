@@ -3,10 +3,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-use domain::net::client::protocol::AsyncConnect;
-use domain::net::client::protocol::AsyncDgramRecv;
-use domain::net::client::protocol::AsyncDgramSend;
-use domain::net::client::protocol::UdpConnect;
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend, UdpConnect};
 use domain::resolv::stub::conf::ResolvConf;
 use domain::resolv::StubResolver;
 

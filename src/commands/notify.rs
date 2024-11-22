@@ -430,12 +430,13 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
 
-    use domain::{base::Name, tsig::Algorithm, utils::base64};
+    use domain::base::Name;
+    use domain::tsig::Algorithm;
+    use domain::utils::base64;
 
-    use crate::{
-        commands::{notify::TSigInfo, Command},
-        env::fake::FakeCmd,
-    };
+    use crate::commands::notify::TSigInfo;
+    use crate::commands::Command;
+    use crate::env::fake::FakeCmd;
 
     use super::Notify;
 
