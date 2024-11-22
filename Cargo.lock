@@ -258,7 +258,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=multiple-key-signing#d390d15babb641d697458f5cd382ee3f74f760ca"
+source = "git+https://github.com/NLnetLabs/domain?branch=support-zonefile-fmt-with-padding#b2a2169013c94e0646127b7b51cc5d300e9ee72d"
 dependencies = [
  "bytes",
  "futures-util",

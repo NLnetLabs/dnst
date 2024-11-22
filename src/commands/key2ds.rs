@@ -180,7 +180,7 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(false));
+                writeln!(env.stdout(), "{}", rr.display_zonefile(false, true));
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -210,7 +210,7 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(false))
+                writeln!(out_file, "{}", rr.display_zonefile(false, true))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 writeln!(env.stdout(), "{keyname}");

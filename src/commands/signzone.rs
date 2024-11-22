@@ -4,7 +4,6 @@ use core::str::FromStr;
 use std::cmp::min;
 use std::ffi::OsString;
 use std::fmt;
-use std::fmt::Write;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,10 +13,10 @@ use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
-use domain::base::{Name, NameBuilder, Record, Serial, Ttl};
+use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::rdata::{Nsec3param, Soa, ZoneRecordData};
+use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData};
 use domain::sign::common::KeyPair;
 use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
 use domain::sign::{SecretKeyBytes, SigningKey};
@@ -32,6 +31,11 @@ use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, LdnsCommand};
+use core::cmp::Ordering;
+use core::fmt::Write;
+use domain::base::zonefile_fmt::ZonefileFmt;
+use std::collections::HashMap;
+use std::hash::RandomState;
 
 //------------ Constants -----------------------------------------------------
 
@@ -52,7 +56,7 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     /// Use layout in signed zone and print comments on DNSSEC records
     #[arg(short = 'b', default_value_t = false)]
-    diagnostic_comments: bool,
+    extra_comments: bool,
 
     /// Used keys are not added to the zone
     #[arg(short = 'd', default_value_t = false)]
@@ -231,7 +235,7 @@ impl LdnsCommand for SignZone {
     const HELP: &'static str = LDNS_HELP;
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
-        let mut diagnostic_comments = false;
+        let mut extra_comments = false;
         let mut do_not_add_keys_to_zone = false;
         let mut expiration = Timestamp::now().into_int().add(FOUR_WEEKS).into();
         let mut out_file = Option::<PathBuf>::None;
@@ -251,7 +255,7 @@ impl LdnsCommand for SignZone {
         while let Some(arg) = parser.next()? {
             match arg {
                 Arg::Short('b') => {
-                    diagnostic_comments = true;
+                    extra_comments = true;
                 }
                 Arg::Short('d') => {
                     do_not_add_keys_to_zone = true;
@@ -318,7 +322,7 @@ impl LdnsCommand for SignZone {
 
         if let Some(out_file) = &out_file {
             if out_file.as_os_str() == "-" {
-                diagnostic_comments = false;
+                extra_comments = false;
             }
         }
 
@@ -327,7 +331,7 @@ impl LdnsCommand for SignZone {
         };
 
         Ok(Self {
-            diagnostic_comments,
+            extra_comments,
             do_not_add_keys_to_zone,
             expiration,
             out_file,
@@ -438,7 +442,7 @@ impl SignZone {
                     params,
                     opt_out,
                     !self.do_not_add_keys_to_zone,
-                    self.diagnostic_comments,
+                    self.extra_comments,
                 )
                 .unwrap();
             records.extend(recs.into_iter().map(Record::from_record));
@@ -465,61 +469,133 @@ impl SignZone {
         }
 
         // Output the resulting zone, with comments if enabled.
+        if self.extra_comments {
+            writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.owner()))?;
+        }
+
+        if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
+            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+            if let Some(record) = records.iter().find(|r| {
+                if let ZoneRecordData::Rrsig(rrsig) = r.data() {
+                    rrsig.type_covered() == Rtype::SOA
+                } else {
+                    false
+                }
+            }) {
+                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+            }
+            if self.extra_comments {
+                writer.write_str(";\n")?;
+            }
+        }
+
+        let ec = self.extra_comments;
         let hashes_ref = hashes.as_ref();
-        records.write_with_comments(&mut writer, move |r, writer| match r.data() {
-            ZoneRecordData::Nsec3(nsec3) => {
-                if let Some(hashes) = hashes_ref {
-                    // TODO: For ldns-signzone backward compatibilty we output
-                    // "  ;{... <domain>.}" but I find the spacing ugly and
-                    // would prefer for dnst to output " ; {... <domain>. }"
-                    // instead.
-                    writer.write_str(" ;{ flags: ")?;
+        let apex = &apex;
+        let nsec3_cs = Nsec3CommentState { hashes_ref, apex };
 
-                    if nsec3.opt_out() {
-                        writer.write_str("optout")?;
+        // The signed RRs are in DNSSEC canonical order by owner name. Note:
+        // Family refers to the underlying record data, so while we are
+        // creating a new Vec, it only contains references to the original
+        // data so it's indiividual are not the records themselves.
+        let mut families = records.families().collect::<Vec<_>>();
+        if let Some(hashes) = hashes_ref {
+            // Re-order them to be in canonical order by unhashed owner name.
+            // Re-order them so that hashed names come after equivalent
+            // unhashed names.
+            families.sort_unstable_by(|a, b| {
+                let mut hashed_count = 0;
+                let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
+                    hashed_count += 1;
+                    unhashed_owner
+                } else {
+                    a.owner()
+                };
+                let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
+                    hashed_count += 2;
+                    unhashed_owner
+                } else {
+                    b.owner()
+                };
+
+                match unhashed_a.cmp(unhashed_b) {
+                    Ordering::Less => Ordering::Less,
+                    Ordering::Equal => match hashed_count {
+                        0 | 3 => Ordering::Equal,
+                        1 => Ordering::Greater,
+                        2 => Ordering::Less,
+                        _ => unreachable!(),
+                    },
+                    Ordering::Greater => Ordering::Greater,
+                }
+            })
+        }
+
+        for family in families {
+            if let Some(hashes_ref) = hashes_ref {
+                // If this is family contains an NSEC3 RR and the number of
+                // RRs in the RRSET of the unhashed owner name is zero, then
+                // the NSEC3 was generated for an empty non-terminal.
+                if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
+                    if let Some(unhashed_name) = hashes_ref.get(family.owner()) {
+                        if !records
+                            .families()
+                            .any(|family| family.owner() == unhashed_name)
+                        {
+                            writer.write_fmt(format_args!(
+                                ";; Empty nonterminal: {unhashed_name}\n"
+                            ))?;
+                        }
                     } else {
-                        writer.write_str("-")?;
+                        // ??? Every hashed name must correspond to an unhashed name?
                     }
+                }
+            }
 
-                    let next_owner_hash_hex = format!("{}", nsec3.next_owner());
-                    let next_owner_name =
-                        Self::next_owner_hash_to_name(&next_owner_hash_hex, &apex);
+            for rrset in family.rrsets() {
+                if rrset.rtype() == Rtype::SOA {
+                    // This is output separately above as the very first RRset.
+                    continue;
+                }
 
-                    let from = hashes
-                        .get(r.owner())
-                        .map(|n| format!("{}", n.fmt_with_dot()))
-                        .unwrap_or_default();
+                if rrset.rtype() == Rtype::RRSIG {
+                    // We output RRSIGs only after the RRset that they cover.
+                    continue;
+                }
 
-                    let to = if let Ok(next_owner_name) = next_owner_name {
-                        hashes
-                            .get(&next_owner_name)
-                            .map(|n| format!("{}", n.fmt_with_dot()))
-                            .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
-                    } else {
-                        format!("<invalid name: {next_owner_hash_hex}>")
+                // For each non-RRSIG RRSET RR of a given type.
+                for rr in rrset.iter() {
+                    writer.write_fmt(format_args!("{}", rr.display_zonefile(false, true)))?;
+                    match rr.data() {
+                        ZoneRecordData::Nsec3(nsec3) if ec => {
+                            nsec3.comment(&mut writer, rr, nsec3_cs)?
+                        }
+                        ZoneRecordData::Dnskey(dnskey) if ec => {
+                            dnskey.comment(&mut writer, rr, ())?
+                        }
+                        _ => { /* Nothing to do */ }
+                    }
+                    writer.write_str("\n")?;
+                }
+
+                // Now attempt to print the RRSIG that covers the RTYPE of this RRSET.
+                if let Some(covering_rrsig_rr) = family
+                    .rrsets()
+                    .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
+                    .find_map(|this_rrset| this_rrset.iter().find(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
+                {
+                    writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
+                    // rrsig.comment(&mut writer, rr, ())?;
+                    writer.write_str("\n")?;
+                    let ZoneRecordData::Rrsig(rrsig) = covering_rrsig_rr.data() else {
+                        unreachable!();
                     };
-
-                    writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
+                    if rrsig.type_covered() == Rtype::NSEC3 {
+                        writer.write_str(";\n")?;
+                    }
                 }
-                Ok(())
             }
-
-            ZoneRecordData::Dnskey(dnskey) => {
-                writer.write_fmt(format_args!(" ;{{id = {}", dnskey.key_tag()))?;
-                if dnskey.is_secure_entry_point() {
-                    writer.write_str(" (ksk)")?;
-                } else if dnskey.is_zone_key() {
-                    writer.write_str(" (zsk)")?;
-                }
-                let owner = r.owner().clone();
-                let dnskey = dnskey.clone();
-                let key = domain::validate::Key::from_dnskey(owner, dnskey).unwrap();
-                let key_size = key.key_size();
-                writer.write_fmt(format_args!(", size = {key_size}b}}"))
-            }
-
-            _ => Ok(()),
-        })?;
+        }
 
         Ok(())
     }
@@ -617,18 +693,6 @@ impl SignZone {
         Ok(())
     }
 
-    fn next_owner_hash_to_name(
-        next_owner_hash_hex: &str,
-        apex: &FamilyName<Name<Bytes>>,
-    ) -> Result<Name<Bytes>, ()> {
-        let mut builder = NameBuilder::new_bytes();
-        builder
-            .append_chars(next_owner_hash_hex.chars())
-            .map_err(|_| ())?;
-        let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
-        Ok(next_owner_name)
-    }
-
     /// Given a BIND style key pair path prefix load the keys from disk.
     ///
     /// Expects a path that is the common prefix in BIND style of a pair of '.key'
@@ -698,6 +762,18 @@ impl SignZone {
     }
 }
 
+fn next_owner_hash_to_name(
+    next_owner_hash_hex: &str,
+    apex: &FamilyName<Name<Bytes>>,
+) -> Result<Name<Bytes>, ()> {
+    let mut builder = NameBuilder::new_bytes();
+    builder
+        .append_chars(next_owner_hash_hex.chars())
+        .map_err(|_| ())?;
+    let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
+    Ok(next_owner_name)
+}
+
 //------------ SigningMode ---------------------------------------------------
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -738,5 +814,85 @@ impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
                 Ok(())
             }
         }
+    }
+}
+
+//------------ Commented -----------------------------------------------------
+
+trait Commented<T> {
+    fn comment<W: fmt::Write>(
+        &self,
+        writer: &mut W,
+        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        metadata: T,
+    ) -> Result<(), fmt::Error>;
+}
+
+#[derive(Copy, Clone)]
+struct Nsec3CommentState<'a> {
+    hashes_ref: Option<&'a HashMap<Name<Bytes>, Name<Bytes>, RandomState>>,
+    apex: &'a FamilyName<Name<Bytes>>,
+}
+
+impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
+    fn comment<'a, W: fmt::Write>(
+        &self,
+        writer: &mut W,
+        record: &'a Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        state: Nsec3CommentState<'b>,
+    ) -> Result<(), fmt::Error> {
+        if let Some(hashes) = state.hashes_ref {
+            // TODO: For ldns-signzone backward compatibilty we output
+            // "  ;{... <domain>.}" but I find the spacing ugly and
+            // would prefer for dnst to output " ; {... <domain>. }"
+            // instead.
+            writer.write_str(" ;{ flags: ")?;
+
+            if self.opt_out() {
+                writer.write_str("optout")?;
+            } else {
+                writer.write_str("-")?;
+            }
+
+            let next_owner_hash_hex = format!("{}", self.next_owner());
+            let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, state.apex);
+
+            let from = hashes
+                .get(record.owner())
+                .map(|n| format!("{}", n.fmt_with_dot()))
+                .unwrap_or_default();
+
+            let to = if let Ok(next_owner_name) = next_owner_name {
+                hashes
+                    .get(&next_owner_name)
+                    .map(|n| format!("{}", n.fmt_with_dot()))
+                    .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
+            } else {
+                format!("<invalid name: {next_owner_hash_hex}>")
+            };
+
+            writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Commented<()> for Dnskey<Bytes> {
+    fn comment<W: fmt::Write>(
+        &self,
+        writer: &mut W,
+        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        _metadata: (),
+    ) -> Result<(), fmt::Error> {
+        writer.write_fmt(format_args!(" ;{{id = {}", self.key_tag()))?;
+        if self.is_secure_entry_point() {
+            writer.write_str(" (ksk)")?;
+        } else if self.is_zone_key() {
+            writer.write_str(" (zsk)")?;
+        }
+        let owner = record.owner().clone();
+        let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
+        let key_size = key.key_size();
+        writer.write_fmt(format_args!(", size = {key_size}b}}"))
     }
 }
