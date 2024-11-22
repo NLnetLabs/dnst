@@ -1,16 +1,15 @@
-use crate::env::Env;
-use crate::error::Error;
+use std::ffi::OsString;
+use std::str::FromStr;
+
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::{self, Name};
-use domain::base::ToName;
-use domain::rdata::nsec3::{Nsec3Salt, OwnerHash};
+use domain::rdata::nsec3::Nsec3Salt;
+use domain::validate::nsec3_hash;
 use lexopt::Arg;
-// use domain::validator::nsec::nsec3_hash;
-use octseq::OctetsBuilder;
-use ring::digest;
-use std::ffi::OsString;
-use std::str::FromStr;
+
+use crate::env::Env;
+use crate::error::Error;
 
 use super::{parse_os, parse_os_with, LdnsCommand};
 
@@ -18,40 +17,45 @@ use super::{parse_os, parse_os_with, LdnsCommand};
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
-        long,
+        long = "algorithm",
         short = 'a',
-        value_name = "NUMBER_OR_MNEMONIC",
-        default_value_t = Nsec3HashAlg::SHA1,
-        value_parser = ValueParser::new(Nsec3Hash::parse_nsec_alg)
+        value_name = "NUMBER OR MNEMONIC",
+        default_value = "SHA-1",
+        value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg)
     )]
     algorithm: Nsec3HashAlg,
 
     /// The number of hash iterations
     #[arg(
-        long,
+        long = "iterations",
         short = 'i',
         visible_short_alias = 't',
         value_name = "NUMBER",
-        default_value_t = 1
+        default_value_t = 0
     )]
     iterations: u16,
 
     /// The salt in hex representation
-    #[arg(short = 's', long, value_name = "HEX_STRING", default_value_t = Nsec3Salt::empty())]
+    #[arg(
+        long = "salt",
+        short = 's',
+        value_name = "HEX STRING",
+        default_value_t = Nsec3Salt::empty(),
+        value_parser = ValueParser::new(Nsec3Hash::parse_salt)
+    )]
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
     name: Name<Vec<u8>>,
 }
 
 const LDNS_HELP: &str = "\
 ldns-nsec3-hash [OPTIONS] <domain name>
   prints the NSEC3 hash of the given domain name
-
-  -a <algorithm> hashing algorithm number
-  -t <number>    iterations
-  -s <string>    salt in hex\
+-a [algorithm] hashing algorithm
+-t [number] number of hash iterations
+-s [string] salt
 ";
 
 impl LdnsCommand for Nsec3Hash {
@@ -69,11 +73,12 @@ impl LdnsCommand for Nsec3Hash {
             match arg {
                 Arg::Short('a') => {
                     let val = parser.value()?;
-                    algorithm = parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec_alg)?;
+                    algorithm =
+                        parse_os_with("algorithm (-a)", &val, Nsec3Hash::parse_nsec3_alg_as_num)?;
                 }
                 Arg::Short('s') => {
                     let val = parser.value()?;
-                    salt = parse_os("salt (-s)", &val)?;
+                    salt = parse_os_with("salt (-s)", &val, Nsec3Hash::parse_salt)?;
                 }
                 Arg::Short('t') => {
                     let val = parser.value()?;
@@ -112,75 +117,286 @@ impl Nsec3Hash {
         Name::from_str(&arg.to_lowercase())
     }
 
-    pub fn parse_nsec_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+    // Note: This function is only necessary until
+    // https://github.com/NLnetLabs/domain/pull/431 is merged.
+    pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
+        if arg.len() >= 512 {
+            Err(Error::from("Salt too long"))
+        } else {
+            Nsec3Salt::<Vec<u8>>::from_str(arg).map_err(|err| Error::from(err.to_string()))
+        }
+    }
+
+    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
         if let Ok(num) = arg.parse() {
-            let alg = Nsec3HashAlg::from_int(num);
-            // check for valid algorithm here, to be consistent with error messages
-            // if domain::validator::nsec::supported_nsec3_hash(alg) {
-            if alg.to_mnemonic().is_some() {
-                Ok(alg)
-            } else {
-                Err("unknown algorithm number")
-            }
+            Self::num_to_nsec3_alg(num)
         } else {
             Nsec3HashAlg::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
+        }
+    }
+
+    pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+        match arg.parse() {
+            Ok(num) => Self::num_to_nsec3_alg(num),
+            Err(_) => Err("malformed algorithm number"),
+        }
+    }
+
+    pub fn num_to_nsec3_alg(num: u8) -> Result<Nsec3HashAlg, &'static str> {
+        let alg = Nsec3HashAlg::from_int(num);
+        match alg.to_mnemonic() {
+            Some(_) => Ok(alg),
+            None => Err("unknown algorithm number"),
         }
     }
 }
 
 impl Nsec3Hash {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        let hash = nsec3_hash(&self.name, self.algorithm, self.iterations, &self.salt)
-            .to_string()
-            .to_lowercase();
+        let hash =
+            nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
+                .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
+                .to_string()
+                .to_lowercase();
 
-        let mut out = env.stdout();
-        writeln!(out, "{}.", hash);
+        writeln!(env.stdout(), "{}.", hash);
         Ok(())
     }
 }
 
-// XXX: This is a verbatim copy of the nsec3_hash function from domain::validator::nsec.
-// TODO: when exposed/available, replace with implementation from domain::validator::nsec
-fn nsec3_hash<N, HashOcts>(
-    owner: N,
-    algorithm: Nsec3HashAlg,
-    iterations: u16,
-    salt: &Nsec3Salt<HashOcts>,
-) -> OwnerHash<Vec<u8>>
-where
-    N: ToName,
-    HashOcts: AsRef<[u8]>,
-{
-    let mut buf = Vec::new();
+// These are just basic tests as there is very little code in this module, the
+// actual NSEC3 generation should be tested as part of the domain crate.
+#[cfg(test)]
+mod tests {
+    mod without_cli {
+        use core::str::FromStr;
 
-    owner.compose_canonical(&mut buf).expect("infallible");
-    buf.append_slice(salt.as_slice()).expect("infallible");
+        use domain::base::iana::Nsec3HashAlg;
+        use domain::base::Name;
+        use domain::rdata::nsec3::Nsec3Salt;
 
-    let digest_type = if algorithm == Nsec3HashAlg::SHA1 {
-        &digest::SHA1_FOR_LEGACY_USE_ONLY
-    } else {
-        // totest, unsupported NSEC3 hash algorithm
-        // Unsupported.
-        panic!("should not be called with an unsupported algorithm");
-    };
+        use crate::commands::nsec3hash::Nsec3Hash;
+        use crate::env::fake::{FakeCmd, FakeEnv, FakeStream};
 
-    let mut ctx = digest::Context::new(digest_type);
-    ctx.update(&buf);
-    let mut h = ctx.finish();
+        // Note: For the types we use that are provided by the domain crate,
+        // construction of them from bad inputs should be tested in that
+        // crate, not here. This test exercises the just the actual
+        // functionalty of this module without the outer layer of CLI argument
+        // parsing which is independent of whether we are invoked as `dnst
+        // nsec3-hash`` or as `ldns-nsec3-hash`.
+        #[test]
+        fn execute() {
+            let env = FakeEnv {
+                cmd: FakeCmd::new(["unused"]),
+                stdout: FakeStream::default(),
+                stderr: FakeStream::default(),
+            };
 
-    for _ in 0..iterations {
-        buf.truncate(0);
-        buf.append_slice(h.as_ref()).expect("infallible");
-        buf.append_slice(salt.as_slice()).expect("infallible");
+            // We don't test all permutations as that would take too long (~20 seconds)
+            #[allow(clippy::single_element_loop)]
+            for algorithm in ["SHA-1"] {
+                let algorithm = Nsec3HashAlg::from_mnemonic(algorithm.as_bytes())
+                    .unwrap_or_else(|| panic!("Algorithm '{algorithm}' was expected to be okay"));
+                let nsec3_hash = Nsec3Hash {
+                    algorithm,
+                    iterations: 0,
+                    salt: Nsec3Salt::empty(),
+                    name: Name::root(),
+                };
+                nsec3_hash.execute(&env).unwrap();
+            }
 
-        let mut ctx = digest::Context::new(digest_type);
-        ctx.update(&buf);
-        h = ctx.finish();
+            for iterations in [0, 1, u16::MAX - 1, u16::MAX] {
+                let nsec3_hash = Nsec3Hash {
+                    algorithm: Nsec3HashAlg::SHA1,
+                    iterations,
+                    salt: Nsec3Salt::empty(),
+                    name: Name::root(),
+                };
+                nsec3_hash.execute(&env).unwrap();
+            }
+
+            for salt in ["", "-", "aa", "aabb", "aa".repeat(255).as_str()] {
+                let salt = Nsec3Salt::from_str(salt)
+                    .unwrap_or_else(|err| panic!("Salt '{salt}' was expected to be okay: {err}"));
+                let nsec3_hash = Nsec3Hash {
+                    algorithm: Nsec3HashAlg::SHA1,
+                    iterations: 0,
+                    salt,
+                    name: Name::root(),
+                };
+                nsec3_hash.execute(&env).unwrap();
+            }
+
+            for name in [
+                ".", "a", "a.", "ab", "ab.", "a.ab", "a.ab.", "ab.ab", "ab.ab.", "a.ab.ab",
+                "a.ab.ab.",
+            ] {
+                let name = Name::from_str(name)
+                    .unwrap_or_else(|err| panic!("Name '{name}' was expected to be okay: {err}"));
+                let nsec3_hash = Nsec3Hash {
+                    algorithm: Nsec3HashAlg::SHA1,
+                    iterations: 0,
+                    salt: Nsec3Salt::empty(),
+                    name,
+                };
+                nsec3_hash.execute(&env).unwrap();
+            }
+        }
     }
 
-    // For normal hash algorithms this should not fail.
-    OwnerHash::from_octets(h.as_ref().to_vec()).expect("should not fail")
+    mod with_dnst_cli {
+        use core::str;
+
+        use crate::env::fake::FakeCmd;
+        use crate::error::Error;
+        use crate::Args;
+
+        #[test]
+        fn accept_good_cli_args() {
+            assert_cmd_eq(&["nlnetlabs.nl"], "asqe4ap6479d7085ljcs10a2fpb2do94.\n");
+            assert_cmd_eq(
+                &["-a", "1", "nlnetlabs.nl"],
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
+            );
+            assert_cmd_eq(
+                &["-a", "SHA-1", "nlnetlabs.nl"],
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
+            );
+            assert_cmd_eq(
+                &["-i", "0", "nlnetlabs.nl"],
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
+            );
+            assert_cmd_eq(
+                &["-i", "1", "nlnetlabs.nl"],
+                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+            );
+            assert_cmd_eq(
+                &["-s", "", "nlnetlabs.nl"],
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
+            );
+            assert_cmd_eq(
+                &["-s", "DEADBEEF", "nlnetlabs.nl"],
+                "dfucs7bmmtsil9gij77k1kmocclg5d8a.\n",
+            );
+        }
+
+        #[test]
+        fn reject_bad_cli_args() {
+            assert!(parse_cmd_line(&[]).is_err());
+            assert!(parse_cmd_line(&[""]).is_err());
+
+            assert!(parse_cmd_line(&["-a"]).is_err());
+            assert!(parse_cmd_line(&["-a", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "2", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "SHA1", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "SHA-256", "nlnetlabs.nl"]).is_err());
+
+            assert!(parse_cmd_line(&["-i"]).is_err());
+            assert!(parse_cmd_line(&["-i", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-i", "", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-i", "-1", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-i", "abc", "nlnetlabs.nl"]).is_err());
+            assert!(
+                parse_cmd_line(&["-i", &((u16::MAX as u32) + 1).to_string(), "nlnetlabs.nl"])
+                    .is_err()
+            );
+
+            assert!(parse_cmd_line(&["-s"]).is_err());
+            assert!(parse_cmd_line(&["-s", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-s", "NOTHEX", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-s", &"aa".repeat(256), "nlnetlabs.nl"]).is_err());
+        }
+
+        //------------ Helper functions ------------------------------------------
+
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
+            FakeCmd::new(["dnst", "nsec3-hash"]).args(args).parse()
+        }
+
+        fn assert_cmd_eq(args: &[&str], expected_output: &str) {
+            let result = FakeCmd::new(["dnst", "nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
+        }
+    }
+
+    mod with_ldns_cli {
+        use core::str;
+
+        use crate::env::fake::FakeCmd;
+        use crate::error::Error;
+        use crate::Args;
+
+        #[test]
+        fn accept_good_cli_args() {
+            assert_cmd_eq(&["nlnetlabs.nl"], "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n");
+            assert_cmd_eq(
+                &["-a", "1", "nlnetlabs.nl"],
+                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+            );
+            assert_cmd_eq(
+                &["-t", "0", "nlnetlabs.nl"],
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
+            );
+            assert_cmd_eq(
+                &["-t", "1", "nlnetlabs.nl"],
+                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+            );
+            assert_cmd_eq(
+                &["-s", "", "nlnetlabs.nl"],
+                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+            );
+            assert_cmd_eq(
+                &["-s", "DEADBEEF", "nlnetlabs.nl"],
+                "2h8rboqdrq0ard25vrmc4hjg7m56hnhd.\n",
+            );
+        }
+
+        #[test]
+        fn reject_bad_cli_args() {
+            assert!(parse_cmd_line(&[]).is_err());
+            assert!(parse_cmd_line(&[""]).is_err());
+
+            assert!(parse_cmd_line(&["-a"]).is_err());
+            assert!(parse_cmd_line(&["-a", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "2", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "SHA1", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "SHA-1", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-a", "SHA-256", "nlnetlabs.nl"]).is_err());
+
+            assert!(parse_cmd_line(&["-t"]).is_err());
+            assert!(parse_cmd_line(&["-t", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-t", "", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-t", "-1", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-t", "abc", "nlnetlabs.nl"]).is_err());
+            assert!(
+                parse_cmd_line(&["-t", &((u16::MAX as u32) + 1).to_string(), "nlnetlabs.nl"])
+                    .is_err()
+            );
+
+            assert!(parse_cmd_line(&["-s"]).is_err());
+            assert!(parse_cmd_line(&["-s", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-s", "NOTHEX", "nlnetlabs.nl"]).is_err());
+            assert!(parse_cmd_line(&["-s", &"aa".repeat(256), "nlnetlabs.nl"]).is_err());
+        }
+
+        //------------ Helper functions ------------------------------------------
+
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
+            FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
+        }
+
+        fn assert_cmd_eq(args: &[&str], expected_output: &str) {
+            let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -204,7 +420,7 @@ mod test {
 
         let res = cmd.args(["example.test"]).run();
         assert_eq!(res.exit_code, 0);
-        assert_eq!(res.stdout, "o09614ibh1cq1rcc86289olr22ea0fso.\n")
+        assert_eq!(res.stdout, "jbas736chung3bb701jkjdhqkqlhvug7.\n")
     }
 
     #[test]

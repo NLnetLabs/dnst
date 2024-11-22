@@ -13,10 +13,10 @@ path = "src/bin/ldns.rs"
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["derive"] }
-domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = [
+domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
     "zonefile",
     "bytes",
-    "unstable-validate",
+    "unstable-validator",
     "net",
     "unstable-client-transport",
     "tsig",
@@ -25,15 +25,14 @@ domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", 
 lexopt = "0.3.0"
 tokio = "1.40.0"
 
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.2", features = ["std"] }
-ring = { version = "0.17" }
-
 # This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 
 [dev-dependencies]
+test_bin = "0.4.0"
 tempfile = "3.14.0"
-domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", features = ["unstable-stelline"] }
+domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
+    "unstable-stelline",
+] }

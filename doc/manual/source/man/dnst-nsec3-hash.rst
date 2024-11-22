@@ -22,7 +22,7 @@ Options
 .. option:: -i <NUMBER>, -t <NUMBER>, --iterations <NUMBER>
 
       Use the given number of additional iterations for the hash
-      calculation. Defaults to 1.
+      calculation. Defaults to 0.
 
 .. option:: -s <HEX STRING>, --salt <HEX STRING>
 

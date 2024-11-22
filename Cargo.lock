@@ -300,17 +300,17 @@ dependencies = [
  "chrono",
  "clap",
  "domain",
+ "lazy_static",
  "lexopt",
- "octseq",
- "ring",
  "tempfile",
+ "test_bin",
  "tokio",
 ]
 
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git#8f6e44385a927ab1225ea06ee4e2cdc594ef48b6"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=initial-nsec3-generation#e1c1db8e4103eed5f69d77d7b88581298cc00818"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -983,6 +983,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_bin"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e7a7de15468c6e65dd7db81cf3822c1ec94c71b2a3c1a976ea8e4696c91115c"
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1127,9 +1133,9 @@ checksum = "859eb650cfee7434994602c3a68b25d77ad9e68c8a6cd491616ef86661382eb3"
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.14"
+version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb9e6ca4f869e1180728b7950e35922a7fc6397f7b641499e8f3ef06e50dc83"
+checksum = "e91b56cd4cadaeb79bbf1a5645f6b4f8dc5bde8834ad5894a8db35fda9efa1fe"
 
 [[package]]
 name = "untrusted"

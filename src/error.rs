@@ -158,6 +158,44 @@ impl fmt::Debug for Error {
 
 impl error::Error for Error {}
 
+//------------ Macros --------------------------------------------------------
+
+// NOTE: Exported macros are placed in the crate root by default.  We hide
+// them using 'doc(hidden)' and then manually re-export them here, forcing
+// documentation to appear using 'doc(inline)'.
+
+#[doc(inline)]
+pub use crate::bail;
+
+#[doc(inline)]
+pub use crate::ensure;
+
+/// Return an [`Error`] from the current function.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! bail {
+    ($fmt:expr) => {
+        return Err($crate::error::Error::new(&format!($fmt)));
+    };
+
+    ($fmt:expr, $($args:tt)*) => {
+        return Err($crate::error::Error::new(&format!($fmt, $($args)*)));
+    };
+}
+
+/// Return an [`Error`] if the given condition does not hold.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $fmt:expr) => {
+        if !$cond { $crate::error::bail!($fmt); }
+    };
+
+    ($cond:expr, $fmt:expr, $($args:tt)*) => {
+        if !$cond { $crate::error::bail!($fmt, $($args)*); }
+    };
+}
+
 //------------ Result --------------------------------------------------------
 
 /// A program result.
