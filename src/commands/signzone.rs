@@ -570,9 +570,7 @@ impl SignZone {
                         ZoneRecordData::Nsec3(nsec3) if ec => {
                             nsec3.comment(&mut writer, rr, nsec3_cs)?
                         }
-                        ZoneRecordData::Dnskey(dnskey) if ec => {
-                            dnskey.comment(&mut writer, rr, ())?
-                        }
+                        ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
                         _ => { /* Nothing to do */ }
                     }
                     writer.write_str("\n")?;
