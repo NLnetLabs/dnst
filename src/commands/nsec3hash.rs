@@ -159,8 +159,7 @@ impl Nsec3Hash {
                 .to_string()
                 .to_lowercase();
 
-        let mut out = env.stdout();
-        writeln!(out, "{}.", hash);
+        writeln!(env.stdout(), "{}.", hash);
         Ok(())
     }
 }
@@ -188,7 +187,7 @@ mod tests {
         #[test]
         fn execute() {
             let env = FakeEnv {
-                cmd: FakeCmd::new(["doesn't matter"]),
+                cmd: FakeCmd::new(["unused"]),
                 stdout: FakeStream::default(),
                 stderr: FakeStream::default(),
             };
