@@ -10,16 +10,9 @@ path = "src/bin/ldns.rs"
 
 [dependencies]
 clap = { version = "4.3.4", features = ["derive"] }
-domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", features = [
-    "zonefile",
-    "bytes",
-    "unstable-validate",
-] }
+domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = ["unstable-validator", "zonefile"] }
 lexopt = "0.3.0"
 
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.2", features = ["std"] }
-ring = { version = "0.17" }
-
 [dev-dependencies]
+test_bin = "0.4.0"
 tempfile = "3.14.0"
