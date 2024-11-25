@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
 
-use clap::{builder::ValueParser, Args};
+use clap::{builder::ValueParser, Args, ValueEnum};
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
@@ -19,11 +19,19 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 #[derive(Clone, Debug, Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
+    ///
+    /// Possible values:
+    /// - RSASHA256[:<bits>]: An RSA SHA-256 key (algorithm 8) of the given size (default 2048)
+    /// - ECDSAP256SHA256:    An ECDSA P-256 SHA-256 key (algorithm 13)
+    /// - ECDSAP384SHA384:    An ECDSA P-384 SHA-384 key (algorithm 14)
+    /// - ED25519:            An Ed25519 key (algorithm 15)
+    /// - ED448:              An Ed448 key (algorithm 16)
     #[arg(
         short = 'a',
         long = "algorithm",
         value_name = "ALGORITHM",
         value_parser = ValueParser::new(Keygen::parse_algorithm),
+        verbatim_doc_comment,
     )]
     algorithm: GenerateParams,
 
@@ -31,19 +39,38 @@ pub struct Keygen {
     #[arg(short = 'k')]
     make_ksk: bool,
 
-    /// Create symlinks '.key' and '.private' to the generated keys
-    #[arg(short = 's')]
-    #[cfg(target_family = "unix")]
-    create_symlinks: bool,
-
-    /// Overwrite existing symlinks (for use with '-s')
-    #[arg(short = 'f')]
-    #[cfg(target_family = "unix")]
-    force_symlinks: bool,
+    /// Whether to create symlinks.
+    #[arg(short, long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "yes", default_value = "no")]
+    symlink: SymlinkArg,
 
     /// The domain name to generate a key for
     #[arg(value_name = "domain name", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
+}
+
+/// Symlinking behaviour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum SymlinkArg {
+    /// Don't create symlinks.
+    No,
+
+    /// Create symlinks, but don't overwrite existing ones.
+    Yes,
+
+    /// Create symlinks, overwriting existing ones.
+    Force,
+}
+
+impl SymlinkArg {
+    /// Whether symlinks should be created.
+    pub fn create(&self) -> bool {
+        matches!(self, Self::Yes | Self::Force)
+    }
+
+    /// Whether symlinks should be forced.
+    pub fn force(&self) -> bool {
+        matches!(self, Self::Force)
+    }
 }
 
 const LDNS_HELP: &str = "\
@@ -51,9 +78,8 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
   generate a new key pair for domain
   -a <alg>	use the specified algorithm (-a list to show a list)
   -k		set the flags to 257; key signing key
-  -b <bits>	specify the keylength
-  -r <random>	specify a random device (defaults to /dev/random)
-		to seed the random generator with
+  -b <bits>	specify the keylength (only used for RSA keys)
+  -r <random>	randomness device (unused)
   -s		create additional symlinks with constant names
   -f		force override of existing symlinks
   -v		show the version and exit
@@ -61,7 +87,7 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
     K<name>+<alg>+<id>.key	Public key in RR format
     K<name>+<alg>+<id>.private	Private key in key format
     K<name>+<alg>+<id>.ds	DS in RR format (only for DNSSEC KSK keys)
-  The base name (K<name>+<alg>+<id> will be printed to stdout\
+  The base name (K<name>+<alg>+<id>) will be printed to stdout
 ";
 
 impl LdnsCommand for Keygen {
@@ -71,9 +97,7 @@ impl LdnsCommand for Keygen {
         let mut algorithm = None;
         let mut make_ksk = false;
         let mut bits = 2048;
-        #[cfg(target_family = "unix")]
         let mut create_symlinks = false;
-        #[cfg(target_family = "unix")]
         let mut force_symlinks = false;
         let mut name = None;
 
@@ -129,22 +153,12 @@ impl LdnsCommand for Keygen {
 
                 Arg::Short('s') => {
                     // NOTE: '-s' can be repeated, to no effect.
-                    #[cfg(target_family = "unix")]
-                    {
-                        create_symlinks = true;
-                    }
-                    #[cfg(not(target_family = "unix"))]
-                    return Err("symlinks not supported outside Unix platforms".into());
+                    create_symlinks = true;
                 }
 
                 Arg::Short('f') => {
                     // NOTE: '-f' can be repeated, to no effect.
-                    #[cfg(target_family = "unix")]
-                    {
-                        force_symlinks = true;
-                    }
-                    #[cfg(not(target_family = "unix"))]
-                    return Err("symlinks not supported outside Unix platforms".into());
+                    force_symlinks = true;
                 }
 
                 // TODO: '-v' version argument?
@@ -175,6 +189,13 @@ impl LdnsCommand for Keygen {
             }
         };
 
+        let symlink = match (create_symlinks, force_symlinks) {
+            (true, true) => SymlinkArg::Force,
+            (true, false) => SymlinkArg::Yes,
+            // If only '-f' is specified, no symlinking is done.
+            (false, _) => SymlinkArg::No,
+        };
+
         let Some(name) = name else {
             return Err("Missing domain name argument".into());
         };
@@ -182,10 +203,7 @@ impl LdnsCommand for Keygen {
         Ok(Self {
             algorithm,
             make_ksk,
-            #[cfg(target_family = "unix")]
-            create_symlinks,
-            #[cfg(target_family = "unix")]
-            force_symlinks,
+            symlink,
             name,
         })
     }
@@ -252,11 +270,14 @@ impl Keygen {
         let (secret_key, public_key) = common::generate(params)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
+        // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
         let public_key = Key::new(self.name.clone(), flags, public_key);
-        let digest = self
-            .make_ksk
-            .then(|| public_key.digest(digest_alg).unwrap());
+        let digest = self.make_ksk.then(|| {
+            public_key
+                .digest(digest_alg)
+                .expect("only supported digest algorithms are used")
+        });
 
         // Open the appropriate files to write the key.
         let base = format!(
@@ -276,10 +297,10 @@ impl Keygen {
             .transpose()
             .map_err(|err| format!("digest file '{base}.ds' already existed: {err}"))?;
 
-        #[cfg(target_family = "unix")]
-        if self.create_symlinks {
+        #[cfg(unix)]
+        if self.symlink.create() {
             if let Ok(metadata) = std::fs::symlink_metadata(".private") {
-                if self.force_symlinks {
+                if self.symlink.force() {
                     if metadata.is_symlink() {
                         std::fs::remove_file(".private")
                             .map_err(|err| format!("could not remove symlink '.private': {err}"))?;
@@ -292,7 +313,7 @@ impl Keygen {
             }
 
             if let Ok(metadata) = std::fs::symlink_metadata(".key") {
-                if self.force_symlinks {
+                if self.symlink.force() {
                     if metadata.is_symlink() {
                         std::fs::remove_file(".key")
                             .map_err(|err| format!("could not remove symlink '.key': {err}"))?;
@@ -306,7 +327,7 @@ impl Keygen {
 
             if digest_file.is_some() {
                 if let Ok(metadata) = std::fs::symlink_metadata(".ds") {
-                    if self.force_symlinks {
+                    if self.symlink.force() {
                         if metadata.is_symlink() {
                             std::fs::remove_file(".ds")
                                 .map_err(|err| format!("could not remove symlink '.ds': {err}"))?;
@@ -318,6 +339,11 @@ impl Keygen {
                     }
                 }
             }
+        }
+
+        #[cfg(not(unix))]
+        if self.symlink.create() {
+            return Err("Symlinks can only be created on Unix platforms".into());
         }
 
         // Prepare the contents to write.
@@ -359,7 +385,7 @@ impl Keygen {
         }
 
         #[cfg(target_family = "unix")]
-        if self.create_symlinks {
+        if self.symlink.create() {
             use std::os::unix::fs;
 
             fs::symlink(format!("{base}.key"), ".key")
