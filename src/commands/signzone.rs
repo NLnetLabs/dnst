@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::hash::RandomState;
-use std::io;
+use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
@@ -413,7 +413,9 @@ impl SignZone {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
-            FileOrStdout::File(File::create(env.in_cwd(&out_file))?)
+            let file = File::create(env.in_cwd(&out_file))?;
+            let file = BufWriter::new(file);
+            FileOrStdout::File(file)
         };
 
         // Import the specified keys and check that the keys are all for the same zone.
