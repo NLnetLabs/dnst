@@ -1,10 +1,14 @@
+use core::cmp::Ordering;
+use core::fmt::Write;
 use core::ops::Add;
 use core::str::FromStr;
 
 use std::cmp::min;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
+use std::hash::RandomState;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -13,6 +17,7 @@ use bytes::{Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
+use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
@@ -31,11 +36,6 @@ use crate::error::Error;
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, LdnsCommand};
-use core::cmp::Ordering;
-use core::fmt::Write;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use std::collections::HashMap;
-use std::hash::RandomState;
 
 //------------ Constants -----------------------------------------------------
 
@@ -134,7 +134,7 @@ pub struct SignZone {
         short = 'a',
         value_name = "algorithm",
         default_value = "SHA-1",
-        value_parser = ValueParser::new(Nsec3Hash::parse_nsec_alg),
+        value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg),
         requires = "nsec3"
     )]
     algorithm: Nsec3HashAlg,
@@ -293,7 +293,7 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('a') => {
                     let val = parser.value()?;
-                    algorithm = parse_os_with("-a", &val, Nsec3Hash::parse_nsec_alg)?;
+                    algorithm = parse_os_with("-a", &val, Nsec3Hash::parse_nsec3_alg)?;
                 }
                 Arg::Short('t') => {
                     let val = parser.value()?;

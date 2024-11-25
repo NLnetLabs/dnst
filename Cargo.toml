@@ -23,9 +23,6 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "support-zonefi
 ] }
 lexopt = "0.3.0"
 
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.2", features = ["std"] }
-ring = { version = "0.17" }
-
 [dev-dependencies]
+test_bin = "0.4.0"
 tempfile = "3.14.0"
