@@ -657,12 +657,21 @@ impl SignZone {
         env: &impl Env,
         expected_apex: Option<&Name<Bytes>>,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
+        // Don't use Zonefile::load() as it knows nothing about the size of
+        // the original file so uses default allocation which allocates more
+        // bytes than are needed. Instead control the allocation size based on
+        // our knowledge of the file size.
         let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
-        let mut reader = inplace::Zonefile::load(&mut zone_file)?;
+        let zone_file_len = zone_file.metadata()?.len();
+        let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
+        std::io::copy(&mut zone_file, &mut buf)?;
+        let mut reader = buf.into_inner();
+        let mut records = SortedRecords::new();
+
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
         }
-        let mut records = SortedRecords::new();
+
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
             match entry {
