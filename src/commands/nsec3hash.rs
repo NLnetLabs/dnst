@@ -9,7 +9,7 @@ use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
 use crate::env::Env;
-use crate::error::Error;
+use crate::error::{Error, Exit};
 
 use super::{parse_os, parse_os_with, LdnsCommand};
 
@@ -59,9 +59,11 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 ";
 
 impl LdnsCommand for Nsec3Hash {
+    const NAME: &'static str = "nsec3-hash";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(_env: impl Env, args: I) -> Result<Self, Exit> {
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1;
         let mut salt = Nsec3Salt::empty();
@@ -250,7 +252,7 @@ mod tests {
         use core::str;
 
         use crate::env::fake::FakeCmd;
-        use crate::error::Error;
+        use crate::error::Exit;
         use crate::Args;
 
         #[test]
@@ -312,7 +314,7 @@ mod tests {
 
         //------------ Helper functions ------------------------------------------
 
-        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Exit> {
             FakeCmd::new(["dnst", "nsec3-hash"]).args(args).parse()
         }
 
@@ -328,7 +330,7 @@ mod tests {
         use core::str;
 
         use crate::env::fake::FakeCmd;
-        use crate::error::Error;
+        use crate::error::Exit;
         use crate::Args;
 
         #[test]
@@ -387,7 +389,7 @@ mod tests {
 
         //------------ Helper functions ------------------------------------------
 
-        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Exit> {
             FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 

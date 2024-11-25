@@ -4,6 +4,7 @@ pub mod key2ds;
 pub mod notify;
 pub mod nsec3hash;
 
+use clap::crate_version;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
@@ -12,6 +13,7 @@ use notify::Notify;
 use nsec3hash::Nsec3Hash;
 
 use crate::env::Env;
+use crate::error::Exit;
 use crate::Args;
 
 use super::error::Error;
@@ -63,15 +65,45 @@ impl Command {
 /// return an error in case of a parsing failure. The help string provided
 /// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
 pub trait LdnsCommand: Into<Command> {
+    const NAME: &'static str;
     const HELP: &'static str;
+    const COMPATIBLE_VERSION: &'static str;
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error>;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(env: impl Env, args: I) -> Result<Self, Exit>;
 
-    fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        match Self::parse_ldns(args) {
+    fn parse_ldns_args<I: IntoIterator<Item = OsString>>(
+        env: impl Env,
+        args: I,
+    ) -> Result<Args, Exit> {
+        match Self::parse_ldns(env, args) {
             Ok(c) => Ok(Args::from(c.into())),
-            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
+            Err(Exit::Success) => Err(Exit::Success),
+            Err(Exit::Error(e)) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
+    }
+
+    fn print_help(env: impl Env) -> Result<(), Exit> {
+        writeln!(env.stdout(), "{}", Self::HELP);
+        Err(Exit::Success)
+    }
+
+    fn print_version(env: impl Env) -> Result<(), Exit> {
+        let mut out = env.stdout();
+        write!(
+            out,
+            "ldns-{} provided by dnst version {}",
+            Self::NAME,
+            crate_version!()
+        );
+        if !Self::COMPATIBLE_VERSION.is_empty() {
+            write!(
+                out,
+                " (compatible with ldns version {})",
+                Self::COMPATIBLE_VERSION
+            );
+        }
+        writeln!(out);
+        Err(Exit::Success)
     }
 }
 

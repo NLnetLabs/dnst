@@ -16,7 +16,7 @@ use domain::utils::{base16, base64};
 use lexopt::Arg;
 
 use crate::env::Env;
-use crate::error::Error;
+use crate::error::{Error, Exit};
 
 use super::{parse_os, LdnsCommand};
 
@@ -165,9 +165,14 @@ Report bugs to <dns-team@nlnetlabs.nl>\
 ";
 
 impl LdnsCommand for Notify {
+    const NAME: &'static str = "notify";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(
+        env: impl Env,
+        args: I,
+    ) -> Result<Self, Exit> {
         let mut zone = None;
         let mut soa_version = None;
         let mut tsig = None;
@@ -197,13 +202,13 @@ impl LdnsCommand for Notify {
                     let val = parser.value()?;
                     port = parse_os("port (-p)", &val)?;
                 }
-                Arg::Short('v') => todo!(),
                 Arg::Short('d') => debug = true,
                 Arg::Short('r') => {
                     let val = parser.value()?;
                     retries = parse_os("retries (-r)", &val)?;
                 }
-                Arg::Short('h') => todo!(),
+                Arg::Short('h') => Self::print_help(&env)?,
+                Arg::Short('v') => Self::print_version(&env)?,
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())
@@ -575,6 +580,14 @@ mod tests {
                 ..base.clone()
             }
         );
+    }
+
+    #[test]
+    fn version() {
+        let res = FakeCmd::new(["ldns-notify", "-v"]).run();
+        assert_eq!(res.exit_code, 0);
+        assert!(res.stdout.contains("ldns-notify provided by dnst version"));
+        assert!(res.stdout.contains("(compatible with ldns version 1.8.4)"));
     }
 
     fn entries_for_name(name: &str, v4: &[Ipv4Addr], v6: &[Ipv6Addr]) -> String {

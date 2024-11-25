@@ -13,7 +13,8 @@ use domain::stelline::client::CurrStepValue;
 use domain::stelline::dgram::Dgram;
 use domain::stelline::parse_stelline::{self, Stelline};
 
-use crate::{error::Error, parse_args, run, Args};
+use crate::error::Exit;
+use crate::{parse_args, run, Args};
 
 use super::Env;
 use super::Stream;
@@ -147,7 +148,7 @@ impl FakeCmd {
     }
 
     /// Parse the arguments of this [`FakeCmd`] and return the result
-    pub fn parse(&self) -> Result<Args, Error> {
+    pub fn parse(&self) -> Result<Args, Exit> {
         debug_assert!(
             self.stelline.is_none(),
             "We shouldn't need Stelline for argument parsing"

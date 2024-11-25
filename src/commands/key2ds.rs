@@ -14,7 +14,7 @@ use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use lexopt::Arg;
 
 use crate::env::Env;
-use crate::error::Error;
+use crate::error::{Error, Exit};
 
 use super::LdnsCommand;
 
@@ -76,9 +76,11 @@ Options:
 ";
 
 impl LdnsCommand for Key2ds {
+    const NAME: &'static str = "key2ds";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(_env: impl Env, args: I) -> Result<Self, Exit> {
         let mut ignore_sep = false;
         let mut write_to_stdout = false;
         let mut algorithm = None;
