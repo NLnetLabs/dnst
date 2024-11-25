@@ -436,7 +436,7 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
-        assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136\t15\t2\t52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
     }
 
     #[test]
@@ -450,10 +450,10 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kone.test.+015+38429.ds")).unwrap();
-        assert_eq!(out, "one.test. 3600 IN DS 38429 15 2 B85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
+        assert_eq!(out, "one.test.\t3600\tIN\tDS\t38429\t15\t2\tB85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
 
         let out = std::fs::read_to_string(dir.path().join("Ktwo.test.+015+00425.ds")).unwrap();
-        assert_eq!(out, "two.test. 3600 IN DS 425 15 2 AA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
+        assert_eq!(out, "two.test.\t3600\tIN\tDS\t425\t15\t2\tAA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
     }
 
     #[test]
@@ -467,7 +467,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
+            "example.test.\t3600\tIN\tDS\t60136\t15\t2\t52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
         );
         assert_eq!(res.stderr, "");
     }
