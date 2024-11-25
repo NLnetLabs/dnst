@@ -1,6 +1,6 @@
 use std::ffi::OsString;
-use std::fs::File;
 use std::io::Write;
+use std::path::Path;
 
 use clap::{builder::ValueParser, Args, ValueEnum};
 use domain::base::iana::{DigestAlg, SecAlg};
@@ -279,71 +279,28 @@ impl Keygen {
                 .expect("only supported digest algorithms are used")
         });
 
-        // Open the appropriate files to write the key.
         let base = format!(
             "K{}+{:03}+{:05}",
             self.name.fmt_with_dot(),
             public_key.algorithm().to_int(),
             public_key.key_tag()
         );
-        // TODO: Adjust for how 'Env' mocks the current directory.
-        let mut secret_key_file = File::create_new(format!("{base}.private"))
-            .map_err(|err| format!("cannot create '{base}.private': {err}"))?;
-        let mut public_key_file = File::create_new(format!("{base}.key"))
-            .map_err(|err| format!("public key file '{base}.key' already existed: {err}"))?;
-        let mut digest_file = self
-            .make_ksk
-            .then(|| File::create_new(format!("{base}.ds")))
-            .transpose()
-            .map_err(|err| format!("digest file '{base}.ds' already existed: {err}"))?;
 
-        #[cfg(unix)]
-        if self.symlink.create() {
-            if let Ok(metadata) = std::fs::symlink_metadata(".private") {
-                if self.symlink.force() {
-                    if metadata.is_symlink() {
-                        std::fs::remove_file(".private")
-                            .map_err(|err| format!("could not remove symlink '.private': {err}"))?;
-                    } else {
-                        return Err("'.private' already exists but is not a symlink".into());
-                    }
-                } else {
-                    return Err("'.private' already exists".into());
-                }
-            }
+        let secret_key_path = format!("{base}.private");
+        let public_key_path = format!("{base}.key");
+        let digest_file_path = self.make_ksk.then(|| format!("{base}.ds"));
 
-            if let Ok(metadata) = std::fs::symlink_metadata(".key") {
-                if self.symlink.force() {
-                    if metadata.is_symlink() {
-                        std::fs::remove_file(".key")
-                            .map_err(|err| format!("could not remove symlink '.key': {err}"))?;
-                    } else {
-                        return Err("'.key' already exists but is not a symlink".into());
-                    }
-                } else {
-                    return Err("'.key' already exists".into());
-                }
-            }
+        let mut secret_key_file = env.fs_create_new(&secret_key_path)?;
+        let mut public_key_file = env.fs_create_new(&public_key_path)?;
+        let mut digest_file = digest_file_path
+            .as_ref()
+            .map(|digest_file_path| env.fs_create_new(digest_file_path))
+            .transpose()?;
 
-            if digest_file.is_some() {
-                if let Ok(metadata) = std::fs::symlink_metadata(".ds") {
-                    if self.symlink.force() {
-                        if metadata.is_symlink() {
-                            std::fs::remove_file(".ds")
-                                .map_err(|err| format!("could not remove symlink '.ds': {err}"))?;
-                        } else {
-                            return Err("'.ds' already exists but is not a symlink".into());
-                        }
-                    } else {
-                        return Err("'.ds' already exists".into());
-                    }
-                }
-            }
-        }
-
-        #[cfg(not(unix))]
-        if self.symlink.create() {
-            return Err("Symlinks can only be created on Unix platforms".into());
+        Self::symlink(&secret_key_path, ".private", self.symlink, &env)?;
+        Self::symlink(&public_key_path, ".key", self.symlink, &env)?;
+        if let Some(digest_file_path) = &digest_file_path {
+            Self::symlink(&digest_file_path, ".ds", self.symlink, &env)?;
         }
 
         // Prepare the contents to write.
@@ -372,35 +329,29 @@ impl Keygen {
                 .map_err(|err| format!("error while writing digest file '{base}.ds': {err}"))?;
         }
 
-        secret_key_file.sync_all().map_err(|err| {
-            format!("error while writing private key file '{base}.private': {err}")
-        })?;
-        public_key_file
-            .sync_all()
-            .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
-        if let Some(digest_file) = digest_file.as_mut() {
-            digest_file
-                .sync_all()
-                .map_err(|err| format!("error while writing digest file '{base}.ds': {err}"))?;
-        }
-
-        #[cfg(target_family = "unix")]
-        if self.symlink.create() {
-            use std::os::unix::fs;
-
-            fs::symlink(format!("{base}.key"), ".key")
-                .map_err(|err| format!("could not create symlink '.key': {err}"))?;
-            fs::symlink(format!("{base}.private"), ".private")
-                .map_err(|err| format!("could not create symlink '.private': {err}"))?;
-            if digest_file.is_some() {
-                fs::symlink(format!("{base}.ds"), ".ds")
-                    .map_err(|err| format!("could not create symlink '.ds': {err}"))?;
-            }
-        }
-
         // Let the user know what the base name of the files is.
         writeln!(stdout, "{}", base);
 
         Ok(())
+    }
+
+    /// Create a symlink to the given location.
+    fn symlink(
+        target: impl AsRef<Path>,
+        link: impl AsRef<Path>,
+        how: SymlinkArg,
+        env: &impl Env,
+    ) -> Result<(), Error> {
+        #[cfg(unix)]
+        match how {
+            SymlinkArg::No => Ok(()),
+            SymlinkArg::Yes => env.fs_symlink(target, link),
+            SymlinkArg::Force => env.fs_symlink_force(target, link),
+        }
+
+        #[cfg(not(unix))]
+        if how.create() {
+            Err("Symlinks can only be created on Unix platforms".into())
+        }
     }
 }
