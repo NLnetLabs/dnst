@@ -1,5 +1,4 @@
 //! The command of _dnst_.
-
 pub mod help;
 pub mod key2ds;
 pub mod keygen;
