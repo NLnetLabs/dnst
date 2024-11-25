@@ -23,7 +23,9 @@ use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData};
 use domain::sign::common::KeyPair;
-use domain::sign::records::{FamilyName, Nsec3OptOut, Nsec3Records, SortedRecords};
+use domain::sign::records::{
+    Family, FamilyName, Nsec3OptOut, Nsec3Records, RecordsIter, SortedRecords,
+};
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
@@ -531,20 +533,27 @@ impl SignZone {
             }
         }
 
-        let ec = self.extra_comments;
         let hashes_ref = hashes.as_ref();
         let apex = &apex;
         let nsec3_cs = Nsec3CommentState { hashes_ref, apex };
 
-        // The signed RRs are in DNSSEC canonical order by owner name. Note:
-        // Family refers to the underlying record data, so while we are
+        // The signed RRs are in DNSSEC canonical order by owner name. For
+        // compatibility with ldns-signzone, re-order them to be in canonical
+        // order by unhashed owner name and so that hashed names come after
+        // equivalent unhashed names.
+        //
+        // INCOMAPATIBILITY WARNING: Unlike ldns-signzone, we only apply this
+        // ordering if `-b` is specified.
+        //
+        // Note: Family refers to the underlying record data, so while we are
         // creating a new Vec, it only contains references to the original
         // data so it's indiividual are not the records themselves.
-        let mut families = records.families().collect::<Vec<_>>();
-        if let Some(hashes) = hashes_ref {
-            // Re-order them to be in canonical order by unhashed owner name.
-            // Re-order them so that hashed names come after equivalent
-            // unhashed names.
+        let mut families;
+        let family_iter: AnyFamiliesIter = if self.extra_comments && hashes_ref.is_some() {
+            families = records.families().collect::<Vec<_>>();
+            let Some(hashes) = hashes_ref else {
+                unreachable!();
+            };
             families.sort_unstable_by(|a, b| {
                 let mut hashed_count = 0;
                 let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
@@ -570,10 +579,13 @@ impl SignZone {
                     },
                     Ordering::Greater => Ordering::Greater,
                 }
-            })
-        }
+            });
+            families.iter().into()
+        } else {
+            records.families().into()
+        };
 
-        for family in families {
+        for family in family_iter {
             if let Some(hashes_ref) = hashes_ref {
                 // If this is family contains an NSEC3 RR and the number of
                 // RRs in the RRSET of the unhashed owner name is zero, then
@@ -609,7 +621,7 @@ impl SignZone {
                 for rr in rrset.iter() {
                     writer.write_fmt(format_args!("{}", rr.display_zonefile(false, true)))?;
                     match rr.data() {
-                        ZoneRecordData::Nsec3(nsec3) if ec => {
+                        ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
                             nsec3.comment(&mut writer, rr, nsec3_cs)?
                         }
                         ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
@@ -945,5 +957,53 @@ impl Commented<()> for Dnskey<Bytes> {
         let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
         let key_size = key.key_size();
         writer.write_fmt(format_args!(", size = {key_size}b}}"))
+    }
+}
+
+//------------ AnyFamiliesIter -----------------------------------------------
+
+type FamilyIterByValue<'a> =
+    std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>;
+type FamilyIterByRef<'a> = RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+
+/// An iterator over a collection of [`Family`], whether by reference or not.
+enum AnyFamiliesIter<'a> {
+    VecIter(FamilyIterByValue<'a>),
+    FamiliesIter(FamilyIterByRef<'a>),
+}
+
+impl<'a> Iterator for AnyFamiliesIter<'a>
+where
+    Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>: Clone,
+{
+    type Item = Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            AnyFamiliesIter::VecIter(it) => it.next().cloned(),
+            AnyFamiliesIter::FamiliesIter(it) => it.next(),
+        }
+    }
+}
+
+//--- From<std::slice::Iter<'a, Family<'a, N, D>>>
+
+impl<'a> From<std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>>
+    for AnyFamiliesIter<'a>
+{
+    fn from(
+        iter: std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>,
+    ) -> Self {
+        Self::VecIter(iter)
+    }
+}
+
+//--- From<RecordsIter<'a, N, D>>
+
+impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
+    for AnyFamiliesIter<'a>
+{
+    fn from(iter: RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>) -> Self {
+        Self::FamiliesIter(iter)
     }
 }
