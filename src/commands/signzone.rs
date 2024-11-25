@@ -13,7 +13,7 @@ use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
