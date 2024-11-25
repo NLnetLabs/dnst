@@ -32,6 +32,7 @@ use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
+use rayon::slice::ParallelSliceMut;
 
 use crate::env::{Env, Stream};
 use crate::error::Error;
@@ -656,13 +657,17 @@ impl SignZone {
         &self,
         env: &impl Env,
         expected_apex: Option<&Name<Bytes>>,
-    ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
+    ) -> Result<SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>, Error> {
         let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
         let mut reader = inplace::Zonefile::load(&mut zone_file)?;
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
         }
-        let mut records = SortedRecords::new();
+
+        // Push records to an unsorted vec, then sort at the end, as this is faster than
+        // sorting one record at a time.
+        let mut records = Vec::<Record<_, _>>::new();
+
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
             match entry {
@@ -678,9 +683,7 @@ impl SignZone {
                         }
                     }
 
-                    records.insert(record).map_err(|record| {
-                        format!("Invalid zone file: Duplicate record detected: {record:?}")
-                    })?;
+                    records.push(record);
                 }
                 Entry::Include { .. } => {
                     return Err(Error::from(
@@ -689,11 +692,16 @@ impl SignZone {
                 }
             }
         }
+
+        // Use a multi-threaded parallel sorter to sort our unsorted vec into
+        // a `SortedRecords` type.
+        let records = SortedRecords::<_, _, MultiThreadedSorter>::from(records);
+
         Ok(records)
     }
 
     fn find_apex(
-        records: &SortedRecords<StoredName, StoredRecordData>,
+        records: &SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
     ) -> Result<(FamilyName<Name<Bytes>>, Ttl), Error> {
         let soa = match records.find_soa() {
             Some(soa) => soa,
@@ -717,7 +725,11 @@ impl SignZone {
     }
 
     fn bump_soa_serial(
-        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        records: &mut SortedRecords<
+            Name<Bytes>,
+            ZoneRecordData<Bytes, Name<Bytes>>,
+            MultiThreadedSorter,
+        >,
     ) -> Result<(), Error> {
         let Some(old_soa_rr) = records.find_soa() else {
             return Err(Error::from("Error reading zonefile: missing SOA record"));
@@ -1005,5 +1017,23 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
 {
     fn from(iter: RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>) -> Self {
         Self::FamiliesIter(iter)
+    }
+}
+
+//------------ MultiThreadedSorter -------------------------------------------
+
+/// A parallelized sort implementation for use with [`SortedRecords`].
+///
+/// TODO: Should we add a `-j` (jobs) command line argument to override the
+/// default Rayon behaviour of using as many threads as their are CPU cores?
+struct MultiThreadedSorter;
+
+impl domain::sign::records::Sorter for MultiThreadedSorter {
+    fn sort_by<N, D, F>(records: &mut Vec<Record<N, D>>, compare: F)
+    where
+        Record<N, D>: Send,
+        F: Fn(&Record<N, D>, &Record<N, D>) -> Ordering + Sync,
+    {
+        records.par_sort_by(compare);
     }
 }
