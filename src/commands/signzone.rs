@@ -13,7 +13,7 @@ use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::FlattenInto;
@@ -816,9 +816,15 @@ impl SignZone {
             }
         }
 
+        // Don't use Zonefile::load() as it knows nothing about the size of
+        // the original file so uses default allocation which allocates more
+        // bytes than are needed. Instead control the allocation size based on
+        // our knowledge of the file size.
         let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
         let zone_file_len = zone_file.metadata()?.len();
-        let mut reader = inplace::Zonefile::load(&mut zone_file)?;
+        let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
+        std::io::copy(&mut zone_file, &mut buf)?;
+        let mut reader = buf.into_inner();
         let n_records = reader.len() as u64;
 
         if let Some(origin) = &self.origin {
