@@ -867,12 +867,7 @@ impl SignZone {
                         }
                     }
 
-                    if !matches!(
-                        record.rtype(),
-                        Rtype::NSEC | Rtype::NSEC3 | Rtype::RRSIG | Rtype::DNSKEY
-                    ) {
-                        records.push(record);
-                    }
+                    records.push(record);
                     if let Some(pb) = &pb {
                         pb.set_position(pos as u64);
                     }
