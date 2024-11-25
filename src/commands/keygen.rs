@@ -16,7 +16,7 @@ use crate::parse::parse_name;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
-#[derive(Clone, Debug, Args)]
+#[derive(Clone, Debug, PartialEq, Eq, Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
     ///
@@ -353,5 +353,196 @@ impl Keygen {
         if how.create() {
             Err("Symlinks can only be created on Unix platforms".into())
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use domain::sign::GenerateParams;
+    use tempfile::TempDir;
+
+    use crate::commands::Command;
+    use crate::env::fake::FakeCmd;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    use super::{Keygen, SymlinkArg};
+
+    #[track_caller]
+    fn parse(args: FakeCmd) -> Keygen {
+        let res = args.parse();
+        let Command::Keygen(x) = res.unwrap().command else {
+            panic!("Not a Keygen!");
+        };
+        x
+    }
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "keygen"]);
+
+        // Algorithm and domain name are needed.
+        let _ = cmd.parse().unwrap_err();
+
+        // Multiple domain names cannot be provided.
+        let _ = cmd
+            .args(["foo.example.org", "bar.example.org"])
+            .parse()
+            .unwrap_err();
+
+        let base = Keygen {
+            algorithm: GenerateParams::Ed25519,
+            make_ksk: false,
+            symlink: SymlinkArg::No,
+            name: "example.org".parse().unwrap(),
+        };
+
+        // The simplest invocation.
+        assert_eq!(parse(cmd.args(["-a", "ED25519", "example.org"])), base);
+
+        // Test 'algorithm':
+        // - RSA-SHA256 uses 2048 bits by default.
+        assert_eq!(
+            parse(cmd.args(["-a", "RSASHA256", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                ..base.clone()
+            }
+        );
+        // - RSA-SHA256 accepts other key sizes.
+        assert_eq!(
+            parse(cmd.args(["-a", "RSASHA256:1024", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                ..base.clone()
+            }
+        );
+
+        // Test 'make_ksk':
+        assert_eq!(
+            parse(cmd.args(["-a", "ED25519", "-k", "example.org"])),
+            Keygen {
+                make_ksk: true,
+                ..base.clone()
+            }
+        );
+
+        // Test 'symlink':
+        // - Symlinks can be disabled.
+        for symlink in ["-s=no", "--symlink=no"] {
+            assert_eq!(
+                parse(cmd.args(["-a", "ED25519", symlink, "example.org"])),
+                Keygen {
+                    symlink: SymlinkArg::No,
+                    ..base.clone()
+                }
+            );
+        }
+        // - Symlinks can be enabled.
+        for symlink in ["-s", "-s=yes", "--symlink", "--symlink=yes"] {
+            assert_eq!(
+                parse(cmd.args(["-a", "ED25519", symlink, "example.org"])),
+                Keygen {
+                    symlink: SymlinkArg::Yes,
+                    ..base.clone()
+                }
+            );
+        }
+        // - Symlinks can be enabled with overwriting.
+        for symlink in ["-s=force", "--symlink=force"] {
+            assert_eq!(
+                parse(cmd.args(["-a", "ED25519", symlink, "example.org"])),
+                Keygen {
+                    symlink: SymlinkArg::Force,
+                    ..base.clone()
+                }
+            );
+        }
+
+        // Test 'name':
+        // - Domain names can have a trailing dot.
+        assert_eq!(parse(cmd.args(["-a", "ED25519", "example.org."])), base);
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-keygen"]);
+
+        // Algorithm and domain name are needed.
+        let _ = cmd.parse().unwrap_err();
+
+        // Multiple domain names cannot be provided.
+        let _ = cmd
+            .args(["foo.example.org", "bar.example.org"])
+            .parse()
+            .unwrap_err();
+
+        let base = Keygen {
+            algorithm: GenerateParams::Ed25519,
+            make_ksk: false,
+            symlink: SymlinkArg::No,
+            name: "example.org".parse().unwrap(),
+        };
+
+        // The simplest invocation.
+        assert_eq!(parse(cmd.args(["-a", "ED25519", "example.org"])), base);
+
+        // Test 'algorithm':
+        // - RSA-SHA256 uses 2048 bits by default.
+        assert_eq!(
+            parse(cmd.args(["-a", "RSASHA256", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                ..base.clone()
+            }
+        );
+        // - RSA-SHA256 accepts other key sizes.
+        assert_eq!(
+            parse(cmd.args(["-a", "RSASHA256", "-b", "1024", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                ..base.clone()
+            }
+        );
+
+        // Test 'make_ksk':
+        assert_eq!(
+            parse(cmd.args(["-a", "ED25519", "-k", "example.org"])),
+            Keygen {
+                make_ksk: true,
+                ..base.clone()
+            }
+        );
+
+        // Test 'symlink':
+        // - Symlinks can be enabled.
+        assert_eq!(
+            parse(cmd.args(["-a", "ED25519", "-s", "example.org"])),
+            Keygen {
+                symlink: SymlinkArg::Yes,
+                ..base.clone()
+            }
+        );
+        // - Symlinks can be enabled with overwriting.
+        assert_eq!(
+            parse(cmd.args(["-a", "ED25519", "-s", "-f", "example.org"])),
+            Keygen {
+                symlink: SymlinkArg::Force,
+                ..base.clone()
+            }
+        );
+        // - '-f' without '-s' does not enable symlinks.
+        assert_eq!(
+            parse(cmd.args(["-a", "ED25519", "-f", "example.org"])),
+            Keygen {
+                symlink: SymlinkArg::No,
+                ..base.clone()
+            }
+        );
+
+        // Test 'name':
+        // - Domain names can have a trailing dot.
+        assert_eq!(parse(cmd.args(["-a", "ED25519", "example.org."])), base);
     }
 }
