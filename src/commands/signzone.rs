@@ -189,6 +189,10 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
+    /// Do not require that key names match the apex.
+    #[arg(short = 'M', default_value_t = false)]
+    no_require_keys_match_apex: bool,
+
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
@@ -347,6 +351,7 @@ impl LdnsCommand for SignZone {
             hash_only: false,
             zonefile_path,
             key_paths,
+            no_require_keys_match_apex: false,
         })
     }
 }
@@ -411,14 +416,49 @@ impl SignZone {
             FileOrStdout::File(File::create(env.in_cwd(&out_file))?)
         };
 
-        // Read the zone file.
-        let mut records = self.load_zone(&env)?;
+        // Import the specified keys and check that the keys are all for the same zone.
+        let mut keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
 
-        // Import the specified keys.
-        let mut keys = vec![];
-        for key_path in &self.key_paths {
-            keys.push(Self::load_key_pair(key_path)?);
+        if self.key_paths.is_empty() {
+            return Err("No keys to sign with. Aborting.".into());
         }
+
+        let mut first_key_owner = None;
+
+        for key_path in &self.key_paths {
+            let key = Self::load_key_pair(key_path)?;
+
+            if !self.no_require_keys_match_apex {
+                if first_key_owner.is_none() {
+                    first_key_owner.replace(key.owner().clone());
+                }
+
+                for key in &keys {
+                    // Check the key name against the specified origin, if any,
+                    if let Some(origin) = &self.origin {
+                        if origin != key.owner() {
+                            return Err(format!("{}.key has different name ({}) than the specified origin ({origin})", key_path.display(), key.owner()).into());
+                        }
+                    }
+
+                    if Some(key.owner()) != first_key_owner.as_ref() {
+                        return Err(format!(
+                            "{}.key has different name ({}) to key {} ({})",
+                            key_path.display(),
+                            key.owner(),
+                            self.key_paths[0].display(),
+                            first_key_owner.unwrap()
+                        )
+                        .into());
+                    }
+                }
+            }
+
+            keys.push(key);
+        }
+
+        // Read the zone file.
+        let mut records = self.load_zone(&env, first_key_owner.as_ref())?;
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -588,7 +628,7 @@ impl SignZone {
                     let ZoneRecordData::Rrsig(rrsig) = covering_rrsig_rr.data() else {
                         unreachable!();
                     };
-                    if rrsig.type_covered() == Rtype::NSEC3 {
+                    if self.extra_comments && rrsig.type_covered() == Rtype::NSEC3 {
                         writer.write_str(";\n")?;
                     }
                 }
@@ -601,9 +641,10 @@ impl SignZone {
     fn load_zone(
         &self,
         env: &impl Env,
+        expected_apex: Option<&Name<Bytes>>,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
-        let mut reader = inplace::Zonefile::load(&mut zone_file).unwrap();
+        let mut reader = inplace::Zonefile::load(&mut zone_file)?;
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
         }
@@ -613,6 +654,16 @@ impl SignZone {
             match entry {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
+                    if let Some(expected_apex) = expected_apex {
+                        if record.rtype() == Rtype::SOA && record.owner() != expected_apex {
+                            return Err(format!(
+                                "Zone apex ({}) does not match the expected apex ({expected_apex})",
+                                record.owner()
+                            )
+                            .into());
+                        }
+                    }
+
                     records.insert(record).map_err(|record| {
                         format!("Invalid zone file: Duplicate record detected: {record:?}")
                     })?;
