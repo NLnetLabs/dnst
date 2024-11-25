@@ -11,7 +11,7 @@ path = "src/bin/ldns.rs"
 [dependencies]
 bytes  = { version = "1.1", default-features = false }
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "support-zonefile-fmt-with-padding", features = [
+domain = { git = "https://github.com/NLnetLabs/domain", branch = "byo-signing-sorter-impl", features = [
     "bytes",
     "openssl",
     "ring",
@@ -22,6 +22,7 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "support-zonefi
     "zonefile",
 ] }
 lexopt = "0.3.0"
+rayon = "1.10.0"
 
 [dev-dependencies]
 test_bin = "0.4.0"
