@@ -31,6 +31,9 @@ use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
+use indicatif::{
+    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+};
 use lexopt::Arg;
 use rayon::slice::ParallelSliceMut;
 
@@ -43,6 +46,8 @@ use super::{parse_os, parse_os_with, LdnsCommand};
 //------------ Constants -----------------------------------------------------
 
 const FOUR_WEEKS: u32 = 2419200;
+const PROGRESS_STYLE: &str =
+    "{msg} {spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta})";
 
 //------------ SignZone ------------------------------------------------------
 
@@ -195,6 +200,14 @@ pub struct SignZone {
     /// Do not require that key names match the apex.
     #[arg(short = 'M', default_value_t = false)]
     no_require_keys_match_apex: bool,
+
+    /// Show progress bars.
+    #[arg(long = "progress", default_value_t = false)]
+    progress: bool,
+
+    /// Show verbose output.
+    #[arg(long = "verbose", default_value_t = false)]
+    verbose: bool,
 
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
@@ -355,6 +368,8 @@ impl LdnsCommand for SignZone {
             zonefile_path,
             key_paths,
             no_require_keys_match_apex: false,
+            progress: false,
+            verbose: false,
         })
     }
 }
@@ -413,12 +428,14 @@ impl SignZone {
                 .map_err(|err| format!("Cannot write to {out_file}: {err}"))?
         };
 
-        let mut writer = if out_file.as_os_str() == "-" {
-            FileOrStdout::Stdout(env.stdout())
+        let (mut writer, mut log) = if out_file.as_os_str() == "-" {
+            // Don't allow logging to stdout when the output zone will be
+            // written to stdout.
+            (FileOrStdout::Stdout(env.stdout()), None)
         } else {
             let file = File::create(env.in_cwd(&out_file))?;
             let file = BufWriter::new(file);
-            FileOrStdout::File(file)
+            (FileOrStdout::File(file), Some(env.stdout()))
         };
 
         // Import the specified keys and check that the keys are all for the same zone.
@@ -431,7 +448,7 @@ impl SignZone {
         let mut first_key_owner = None;
 
         for key_path in &self.key_paths {
-            let key = Self::load_key_pair(key_path)?;
+            let key = self.load_key_pair(key_path, &mut log)?;
 
             if !self.no_require_keys_match_apex {
                 if first_key_owner.is_none() {
@@ -463,7 +480,8 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let mut records = self.load_zone(&env, first_key_owner.as_ref())?;
+        let mut records = self.load_zone(&env, first_key_owner.as_ref(), &mut log)?;
+        let n_records = records.len();
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -474,6 +492,21 @@ impl SignZone {
         let (apex, ttl) = Self::find_apex(&records).unwrap();
 
         // Hash the zone with NSEC or NSEC3.
+        let pb = if matches!(&log, Some(log) if log.is_terminal() && self.progress) {
+            let pb = ProgressBar::new(0).with_message("Hashing");
+            pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(1));
+            pb.set_style(
+                ProgressStyle::with_template(PROGRESS_STYLE)
+                    .unwrap()
+                    .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                        write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                    })
+                    .progress_chars("#>-"),
+            );
+            Some(pb)
+        } else {
+            None
+        };
         let hashes = if self.use_nsec3 {
             let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
             let Nsec3Records {
@@ -481,13 +514,26 @@ impl SignZone {
                 param,
                 hashes,
             } = records
-                .nsec3s::<_, BytesMut>(
+                .nsec3s::<_, BytesMut, _>(
                     &apex,
                     ttl,
                     params,
                     opt_out,
                     !self.do_not_add_keys_to_zone,
                     self.extra_comments,
+                    |inc_pos, inc_len, new_phase| {
+                        if let Some(pb) = &pb {
+                            if inc_len > 0 {
+                                pb.inc_length(inc_len as u64);
+                            }
+                            if inc_pos > 0 {
+                                pb.inc(inc_pos as u64);
+                            }
+                            if let Some(new_phase) = new_phase {
+                                pb.set_message(new_phase);
+                            }
+                        }
+                    },
                 )
                 .unwrap();
             records.extend(recs.into_iter().map(Record::from_record));
@@ -499,8 +545,39 @@ impl SignZone {
             None
         };
 
+        if let Some(pb) = pb {
+            let len = pb.length().unwrap();
+            let elapsed = pb.elapsed();
+            pb.finish_and_clear();
+            if self.verbose {
+                if let Some(log) = &mut log {
+                    writeln!(
+                        log,
+                        "Hashed {n_records} records in {len} steps in {}",
+                        HumanDuration(elapsed)
+                    );
+                }
+            }
+        }
+
         // Sign the zone unless disabled.
         if signing_mode == SigningMode::HashAndSign {
+            let n_records = records.len();
+            let pb = if matches!(&log, Some(log) if log.is_terminal() && self.progress) {
+                let pb = ProgressBar::new(0).with_message("Signing");
+                pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(1));
+                pb.set_style(
+                    ProgressStyle::with_template(PROGRESS_STYLE)
+                        .unwrap()
+                        .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                            write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                        })
+                        .progress_chars("#>-"),
+                );
+                Some(pb)
+            } else {
+                None
+            };
             let extra_records = records
                 .sign(
                     &apex,
@@ -508,10 +585,56 @@ impl SignZone {
                     self.inception,
                     keys.as_slice(),
                     !self.do_not_add_keys_to_zone,
+                    |inc_pos, inc_len, new_phase| {
+                        if let Some(pb) = &pb {
+                            if inc_len > 0 {
+                                pb.inc_length(inc_len as u64);
+                            }
+                            if inc_pos > 0 {
+                                pb.inc(inc_pos as u64);
+                            }
+                            if let Some(new_phase) = new_phase {
+                                pb.set_message(new_phase);
+                            }
+                        }
+                    },
                 )
                 .unwrap();
             records.extend(extra_records.into_iter().map(Record::from_record));
+
+            if let Some(pb) = pb {
+                let len = pb.length().unwrap();
+                let elapsed = pb.elapsed();
+                pb.finish_and_clear();
+                if self.verbose {
+                    if let Some(log) = &mut log {
+                        writeln!(
+                            log,
+                            "Signed {n_records} records in {len} steps in {}",
+                            HumanDuration(elapsed)
+                        );
+                    }
+                }
+            }
         }
+
+        let n_records = records.len();
+        let pb = if matches!(&log, Some(log) if log.is_terminal() && self.progress) {
+            let num_families = records.families().count();
+            let pb = ProgressBar::new(num_families as u64);
+            pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(1));
+            pb.set_style(
+                ProgressStyle::with_template(PROGRESS_STYLE)
+                    .unwrap()
+                    .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                        write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                    })
+                    .progress_chars("#>-"),
+            );
+            Some(pb)
+        } else {
+            None
+        };
 
         // Output the resulting zone, with comments if enabled.
         if self.extra_comments {
@@ -532,6 +655,9 @@ impl SignZone {
             if self.extra_comments {
                 writer.write_str(";\n")?;
             }
+            if let Some(pb) = &pb {
+                pb.inc(1);
+            }
         }
 
         let hashes_ref = hashes.as_ref();
@@ -551,6 +677,9 @@ impl SignZone {
         // data so it's indiividual are not the records themselves.
         let mut families;
         let family_iter: AnyFamiliesIter = if self.extra_comments && hashes_ref.is_some() {
+            if let Some(pb) = &pb {
+                pb.set_message("Applying diagnostic ordering");
+            }
             families = records.families().collect::<Vec<_>>();
             let Some(hashes) = hashes_ref else {
                 unreachable!();
@@ -586,6 +715,9 @@ impl SignZone {
             records.families().into()
         };
 
+        if let Some(pb) = &pb {
+            pb.set_message("Saving");
+        }
         for family in family_iter {
             if let Some(hashes_ref) = hashes_ref {
                 // If this is family contains an NSEC3 RR and the number of
@@ -648,6 +780,25 @@ impl SignZone {
                     }
                 }
             }
+
+            if let Some(pb) = &pb {
+                pb.inc(1);
+            }
+        }
+
+        if let Some(pb) = pb {
+            let len = pb.length().unwrap();
+            let elapsed = pb.elapsed();
+            pb.finish_and_clear();
+            if self.verbose {
+                if let Some(log) = &mut log {
+                    writeln!(
+                        log,
+                        "Saved {n_records} records in {len} steps in {}",
+                        HumanDuration(elapsed)
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -657,7 +808,14 @@ impl SignZone {
         &self,
         env: &impl Env,
         expected_apex: Option<&Name<Bytes>>,
+        log: &mut Option<Stream<impl Write>>,
     ) -> Result<SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>, Error> {
+        if self.verbose {
+            if let Some(log) = log {
+                writeln!(log, "Loading zone from '{}'", self.zonefile_path.display());
+            }
+        }
+
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
         // bytes than are needed. Instead control the allocation size based on
@@ -667,10 +825,27 @@ impl SignZone {
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
         std::io::copy(&mut zone_file, &mut buf)?;
         let mut reader = buf.into_inner();
+        let n_records = reader.len() as u64;
 
         if let Some(origin) = &self.origin {
             reader.set_origin(origin.clone());
         }
+
+        let pb = if matches!(log, Some(log) if log.is_terminal() && self.progress) {
+            let pb = ProgressBar::new(n_records).with_message("Parsing");
+            pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(1));
+            pb.set_style(
+                ProgressStyle::with_template(PROGRESS_STYLE)
+                    .unwrap()
+                    .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                        write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                    })
+                    .progress_chars("#>-"),
+            );
+            Some(pb)
+        } else {
+            None
+        };
 
         // Push records to an unsorted vec, then sort at the end, as this is faster than
         // sorting one record at a time.
@@ -678,8 +853,9 @@ impl SignZone {
 
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
+
             match entry {
-                Entry::Record(record) => {
+                Entry::Record(record, pos) => {
                     let record: StoredRecord = record.flatten_into();
                     if let Some(expected_apex) = expected_apex {
                         if record.rtype() == Rtype::SOA && record.owner() != expected_apex {
@@ -692,18 +868,40 @@ impl SignZone {
                     }
 
                     records.push(record);
+                    if let Some(pb) = &pb {
+                        pb.set_position(pos as u64);
+                    }
                 }
                 Entry::Include { .. } => {
-                    return Err(Error::from(
-                        "Invalid zone file: $INCLUDE directive is not supported",
-                    ));
+                    return Err("Invalid zone file: $INCLUDE directive is not supported".into());
                 }
             }
+        }
+
+        if let Some(pb) = &pb {
+            pb.set_message("Sorting");
         }
 
         // Use a multi-threaded parallel sorter to sort our unsorted vec into
         // a `SortedRecords` type.
         let records = SortedRecords::<_, _, MultiThreadedSorter>::from(records);
+
+        if let Some(pb) = pb {
+            let len = pb.length().unwrap();
+            let elapsed = pb.elapsed();
+            pb.finish_and_clear();
+            if self.verbose {
+                if let Some(log) = log {
+                    writeln!(
+                        log,
+                        "Loaded {len} records from {} [{} bytes] in {}",
+                        self.zonefile_path.display(),
+                        HumanBytes(zone_file_len),
+                        HumanDuration(elapsed)
+                    );
+                }
+            }
+        }
 
         Ok(records)
     }
@@ -789,10 +987,24 @@ impl SignZone {
     /// However, this function is not strict about the format of the prefix, it
     /// will attempt to load files with suffixes '.key' and '.private' irrespective
     /// of the format of the rest of the path.
-    fn load_key_pair(key_path: &Path) -> Result<SigningKey<Bytes, KeyPair>, Error> {
+    fn load_key_pair(
+        &self,
+        key_path: &Path,
+        log: &mut Option<Stream<impl Write>>,
+    ) -> Result<SigningKey<Bytes, KeyPair>, Error> {
         let key_path_str = key_path.to_string_lossy();
         let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
         let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
+
+        if self.verbose {
+            if let Some(log) = log {
+                writeln!(
+                    log,
+                    "Loading private key from '{}'",
+                    private_key_path.display()
+                );
+            }
+        }
 
         let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
             format!(
@@ -801,6 +1013,16 @@ impl SignZone {
                 err
             )
         })?;
+
+        if self.verbose {
+            if let Some(log) = log {
+                writeln!(
+                    log,
+                    "Loading public key from '{}'",
+                    public_key_path.display()
+                );
+            }
+        }
 
         let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
             format!(

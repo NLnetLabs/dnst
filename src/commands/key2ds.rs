@@ -140,7 +140,7 @@ impl Key2ds {
             })?;
 
             // We only care about records in a zonefile
-            let Entry::Record(record) = entry else {
+            let Entry::Record(record, _) = entry else {
                 continue;
             };
 
