@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::Path;
 
 use super::Env;
@@ -15,11 +15,15 @@ impl Env for RealEnv {
     }
 
     fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stdout()))
+        let stdout = io::stdout();
+        let is_term = stdout.is_terminal();
+        Stream(FmtWriter(stdout), is_term)
     }
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stderr()))
+        let stderr = io::stderr();
+        let is_term = stderr.is_terminal();
+        Stream(FmtWriter(stderr), is_term)
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {

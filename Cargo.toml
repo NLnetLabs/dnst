@@ -11,7 +11,7 @@ path = "src/bin/ldns.rs"
 [dependencies]
 bytes  = { version = "1.1", default-features = false }
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "byo-signing-sorter-impl", features = [
+domain = { git = "https://github.com/NLnetLabs/domain", branch = "report-signing-progress", features = [
     "bytes",
     "openssl",
     "ring",
@@ -21,6 +21,7 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "byo-signing-so
     "unstable-zonetree",
     "zonefile",
 ] }
+indicatif = { version = "0.17.9" }
 lexopt = "0.3.0"
 rayon = "1.10.0"
 

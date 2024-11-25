@@ -44,7 +44,7 @@ pub trait Env {
 /// [`std::io::Write`]. Additionally, this `write_fmt` does not return a
 /// result. This means that we can use the [`write!`] and [`writeln`] macros
 /// without handling errors.
-pub struct Stream<T: fmt::Write>(T);
+pub struct Stream<T: fmt::Write>(T, bool);
 
 impl<T: fmt::Write> Stream<T> {
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
@@ -59,6 +59,10 @@ impl<T: fmt::Write> Stream<T> {
     pub fn write_str(&mut self, s: &str) {
         // Same as with write_fmt...
         self.0.write_str(s).unwrap();
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.1
     }
 }
 
