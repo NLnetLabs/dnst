@@ -4,7 +4,7 @@ use core::ops::Add;
 use core::str::FromStr;
 
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
@@ -12,7 +12,6 @@ use std::hash::RandomState;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
-// TODO: use a re-export from domain?
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
@@ -21,6 +20,7 @@ use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
+use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme, Zonemd};
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
@@ -32,6 +32,8 @@ use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
+use octseq::builder::with_infallible;
+use ring::digest;
 
 use crate::env::{Env, Stream};
 use crate::error::Error;
@@ -109,15 +111,26 @@ pub struct SignZone {
 
     // SKIPPED: -v
     // This should be handled at the dnst top level, not per subcommand.
+    /// Add a ZONEMD resource record
+    ///
+    /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
+    /// <scheme> currently only supports "SIMPLE" (1).
+    ///
+    /// Can occur more than once, but only one per unique scheme and hash
+    /// tuple will be added.
+    #[arg(
+        short = 'z',
+        value_name = "[scheme:]hash",
+        value_parser = Self::parse_zonemd_tuple,
+        action = clap::ArgAction::Append
+    )]
+    // Clap doesn't support HashSet (without complex workarounds), therefore
+    // the uniqueness of the tuples need to be checked at runtime.
+    zonemd: Vec<ZonemdTuple>,
 
-    // Add ZONEMD resource record
-    // Can occur more than once.
-    //#[arg(short = 'z', group = "zonemd")]
-    // TODO
-
-    // Allow ZONEMDs to be added without signing
-    //#[arg(short = 'Z', value_name = "[scheme]:hash", requires = "zonemd")]
-    // TODO
+    /// Allow ZONEMDs to be added without signing
+    #[arg(short = 'Z', requires = "zonemd")]
+    allow_zonemd_without_signing: bool,
 
     // Sign DNSKEY with all keys instead of minimal
     //#[arg(short = 'A', default_value_t = false)]
@@ -200,6 +213,7 @@ pub struct SignZone {
     zonefile_path: PathBuf,
 
     /// The keys to sign the zone with
+    // May be omitted if -Z or -H are given
     #[arg(value_name = "key")]
     key_paths: Vec<PathBuf>,
 }
@@ -247,6 +261,8 @@ impl LdnsCommand for SignZone {
         let mut inception = Timestamp::now();
         let mut origin = Option::<Name<Bytes>>::None;
         let mut set_soa_serial_to_epoch_time = false;
+        let mut zonemd = Vec::new();
+        let mut allow_zonemd_without_signing = false;
         let mut use_nsec3 = false;
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1u16;
@@ -283,6 +299,14 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('u') => {
                     set_soa_serial_to_epoch_time = true;
+                }
+                Arg::Short('z') => {
+                    let val = parser.value()?;
+                    // FIXME: make parsing take lower case like the original
+                    zonemd.push(parse_os_with("-z", &val, SignZone::parse_zonemd_tuple)?);
+                }
+                Arg::Short('Z') => {
+                    allow_zonemd_without_signing = true;
                 }
                 Arg::Short('v') => {
                     let version = clap::crate_version!();
@@ -331,7 +355,10 @@ impl LdnsCommand for SignZone {
             }
         }
 
-        if key_paths.is_empty() {
+        // Logically this should also check that zonemd flags are given, but
+        // ldns-signzone just copies the unsigned zone (without comments) when
+        // using only -Z (without -z).
+        if key_paths.is_empty() && !allow_zonemd_without_signing {
             return Err("Missing key argument".into());
         };
 
@@ -343,11 +370,15 @@ impl LdnsCommand for SignZone {
             inception,
             origin,
             set_soa_serial_to_epoch_time,
+            zonemd,
+            allow_zonemd_without_signing,
             use_nsec3,
             algorithm,
             iterations,
             salt,
             nsec3_opt_out_flags_only: true,
+            // TODO: is mixed up with flags_only? The commend on clap args says
+            // nsec3_opt_out is not originally supported, but flags_only is
             nsec3_opt_out,
             hash_only: false,
             zonefile_path,
@@ -358,6 +389,27 @@ impl LdnsCommand for SignZone {
 }
 
 impl SignZone {
+    fn parse_zonemd_tuple(arg: &str) -> Result<ZonemdTuple, Error> {
+        let scheme;
+        let hash_alg;
+
+        if let Some((s, h)) = arg.split_once(':') {
+            scheme = s
+                .parse()
+                .map_err(|e| format!("Error while parsing zonemd scheme: {e}"))?;
+            hash_alg = h
+                .parse()
+                .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
+        } else {
+            scheme = ZonemdScheme::Simple;
+            hash_alg = arg
+                .parse()
+                .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
+        };
+
+        Ok(ZonemdTuple(scheme, hash_alg))
+    }
+
     pub fn parse_timestamp(arg: &str) -> Result<Timestamp, Error> {
         // We can't just use Timestamp::from_str from the domain crate because
         // ldns-signzone treats YYYYMMDD as a special case and domain does
@@ -383,6 +435,9 @@ impl SignZone {
     }
 
     pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
+        // Make sure, zonemd arguments are unique
+        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone().into_iter());
+
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
@@ -396,11 +451,15 @@ impl SignZone {
         let signing_mode = if self.hash_only {
             SigningMode::HashOnly
         } else {
-            SigningMode::HashAndSign
-        };
-
-        if self.key_paths.is_empty() && !self.hash_only {
-            return Err("Missing key argument".into());
+            if self.key_paths.is_empty() {
+                if self.allow_zonemd_without_signing {
+                    SigningMode::None
+                } else {
+                    return Err("Missing key argument".into());
+                }
+            } else {
+                SigningMode::HashAndSign
+            }
         };
 
         let out_file = if let Some(out_file) = &self.out_file {
@@ -418,10 +477,6 @@ impl SignZone {
             let file = BufWriter::new(file);
             FileOrStdout::File(file)
         };
-
-        if self.key_paths.is_empty() {
-            return Err("No keys to sign with. Aborting.".into());
-        }
 
         // ldns-signzone only shows these warnings if verbosity < 1 but offers
         // no way to configure the verbosity level. I assume the intent was to
@@ -571,31 +626,62 @@ impl SignZone {
         }
 
         // Find the apex.
-        let (apex, ttl) = Self::find_apex(&records).unwrap();
+        let (apex, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
-        // Hash the zone with NSEC or NSEC3.
-        let hashes = if self.use_nsec3 {
-            let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-            let Nsec3Records {
-                recs,
-                param,
-                hashes,
-            } = records
-                .nsec3s::<_, BytesMut>(
-                    &apex,
-                    ttl,
-                    params,
-                    opt_out,
-                    !self.do_not_add_keys_to_zone,
-                    self.extra_comments,
-                )
-                .unwrap();
-            records.extend(recs.into_iter().map(Record::from_record));
-            records.insert(Record::from_record(param)).unwrap();
-            hashes
+        if !zonemd.is_empty() {
+            // Remove existing ZONEMD RRs at apex for any class (it's class independent).
+            let _ = records.remove_all_by_name_class_rtype(
+                apex.owner().clone(),
+                None,
+                Some(Rtype::ZONEMD),
+            );
+
+            // Insert placeholder ZONEMD at apex for
+            // correct NSEC(3) bitmap (will be replaced later).
+            let placeholder_zonemd = ZoneRecordData::Zonemd(Zonemd::new(
+                soa_serial,
+                ZonemdScheme::Reserved,
+                ZonemdAlgorithm::Reserved,
+                Bytes::default(),
+            ));
+            let _ = records.insert(Record::new(
+                apex.owner().clone(),
+                apex.class(),
+                ttl,
+                placeholder_zonemd,
+            ));
+        }
+
+        // Hash the zone with NSEC or NSEC3, unless only ZONEMD is done.
+        let hashes = if matches!(
+            signing_mode,
+            SigningMode::HashOnly | SigningMode::HashAndSign
+        ) {
+            if self.use_nsec3 {
+                let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+                let Nsec3Records {
+                    recs,
+                    param,
+                    hashes,
+                } = records
+                    .nsec3s::<_, BytesMut>(
+                        &apex,
+                        ttl,
+                        params,
+                        opt_out,
+                        !self.do_not_add_keys_to_zone,
+                        self.extra_comments,
+                    )
+                    .unwrap();
+                records.extend(recs.into_iter().map(Record::from_record));
+                records.insert(Record::from_record(param)).unwrap();
+                hashes
+            } else {
+                let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
+                records.extend(nsecs.into_iter().map(Record::from_record));
+                None
+            }
         } else {
-            let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
-            records.extend(nsecs.into_iter().map(Record::from_record));
             None
         };
 
@@ -611,6 +697,64 @@ impl SignZone {
                 )
                 .map_err(|_| "Signing failed")?;
             records.extend(extra_records.into_iter().map(Record::from_record));
+        }
+
+        if !zonemd.is_empty() {
+            // Remove existing ZONEMD RRs at apex (the placeholder is no longer needed)
+            let _ = records.remove_first_by_name_class_rtype(
+                apex.owner().clone(),
+                None,
+                Some(Rtype::ZONEMD),
+            );
+
+            let mut zonemd_rrs = Vec::new();
+
+            for z in &zonemd {
+                // For now, only the SIMPLE scheme for ZONEMD is defined
+                if z.0 != ZonemdScheme::Simple {
+                    return Err("unsupported zonemd scheme (only SIMPLE is supported)".into());
+                }
+                let digest = Self::create_zonemd_digest_simple(&apex, &records, z.1)?;
+                // println!("ZONEMD Digest: {}", domain::utils::base16::encode_string(digest.as_ref()));
+
+                // Create actual ZONEMD RR
+                let tmp_zrr = ZoneRecordData::Zonemd(Zonemd::new(
+                    soa_serial,
+                    z.0,
+                    z.1,
+                    Bytes::copy_from_slice(digest.as_ref()),
+                ));
+                zonemd_rrs.push(Record::new(
+                    apex.owner().clone(),
+                    apex.class(),
+                    ttl,
+                    tmp_zrr,
+                ));
+            }
+
+            // Add ZONEMD RRs to output records
+            records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
+
+            // Sign only ZONEMD RRs
+            let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
+                SortedRecords::from(zonemd_rrs);
+            let mut zonemd_rrsig = zonemd_rrs
+                .sign(
+                    &apex,
+                    // self.expiration,
+                    Timestamp::from_str("2111111111").unwrap(),
+                    self.inception,
+                    keys.as_slice(),
+                    false,
+                )
+                .unwrap();
+
+            // Replace original ZONEMD RRSIG with newly generated one
+            if let Some(rrsig) = zonemd_rrsig.pop() {
+                if let ZoneRecordData::Rrsig(rrsig) = rrsig.data() {
+                    records.replace_rrsig_for_apex_zonemd(rrsig.clone(), &apex);
+                }
+            }
         }
 
         // Output the resulting zone, with comments if enabled.
@@ -789,7 +933,7 @@ impl SignZone {
 
     fn find_apex(
         records: &SortedRecords<StoredName, StoredRecordData>,
-    ) -> Result<(FamilyName<Name<Bytes>>, Ttl), Error> {
+    ) -> Result<(FamilyName<Name<Bytes>>, Ttl, Serial), Error> {
         let soa = match records.find_soa() {
             Some(soa) => soa,
             None => {
@@ -797,18 +941,18 @@ impl SignZone {
             }
         };
 
-        let ttl = match *soa.first().data() {
+        let (ttl, serial) = match *soa.first().data() {
             ZoneRecordData::Soa(ref soa_data) => {
-                // RFC 9077 updated RFC 4034 (NSEC) and RFC 5155 (NSSE3) to
+                // RFC 9077 updated RFC 4034 (NSEC) and RFC 5155 (NSEC3) to
                 // say that the "TTL of the NSEC(3) RR that is returned MUST be
                 // the lesser of the MINIMUM field of the SOA record and the
                 // TTL of the SOA itself".
-                min(soa_data.minimum(), soa.ttl())
+                (min(soa_data.minimum(), soa.ttl()), soa_data.serial())
             }
             _ => unreachable!(),
         };
 
-        Ok((soa.family_name().cloned(), ttl))
+        Ok((soa.family_name().cloned(), ttl, serial))
     }
 
     fn bump_soa_serial(
@@ -945,6 +1089,123 @@ impl SignZone {
             "See: https://www.rfc-editor.org/rfc/rfc9276.html"
         );
     }
+
+    /// Create the ZONEMD digest for the SIMPLE scheme.
+    /// The records need to be in DNSSEC canonical ordering,
+    /// with same owner RRs sorted numerically by RTYPE.
+    ///
+    /// [RFC 8976] Section 3.3.1. The SIMPLE Scheme
+    /// ```text
+    /// 3.3.1.  The SIMPLE Scheme
+    ///
+    ///    For the SIMPLE scheme, the digest is calculated over the zone as a
+    ///    whole.  This means that a change to a single RR in the zone requires
+    ///    iterating over all RRs in the zone to recalculate the digest.  SIMPLE
+    ///    is a good choice for zones that are small and/or stable, but it is
+    ///    probably not good for zones that are large and/or dynamic.
+    ///
+    ///    Calculation of a zone digest requires RRs to be processed in a
+    ///    consistent format and ordering.  This specification uses DNSSEC's
+    ///    canonical on-the-wire RR format (without name compression) and
+    ///    ordering as specified in Sections 6.1, 6.2, and 6.3 of [RFC4034] with
+    ///    the additional provision that RRsets having the same owner name MUST
+    ///    be numerically ordered, in ascending order, by their numeric RR TYPE.
+    ///
+    /// 3.3.1.1.  SIMPLE Scheme Inclusion/Exclusion Rules
+    ///
+    ///    When iterating over records in the zone, the following inclusion/
+    ///    exclusion rules apply:
+    ///
+    ///    *  All records in the zone, including glue records, MUST be included
+    ///       unless excluded by a subsequent rule.
+    ///
+    ///    *  Occluded data ([RFC5936], Section 3.5) MUST be included.
+    ///
+    ///    *  If there are duplicate RRs with equal owner, class, type, and
+    ///       RDATA, only one instance is included ([RFC4034], Section 6.3) and
+    ///       the duplicates MUST be omitted.
+    ///
+    ///    *  The placeholder apex ZONEMD RR(s) MUST NOT be included.
+    ///
+    ///    *  If the zone is signed, DNSSEC RRs MUST be included, except:
+    ///
+    ///    *  The RRSIG covering the apex ZONEMD RRset MUST NOT be included
+    ///       because the RRSIG will be updated after all digests have been
+    ///       calculated.
+    ///
+    /// 3.3.1.2.  SIMPLE Scheme Digest Calculation
+    ///
+    ///    A zone digest using the SIMPLE scheme is calculated by concatenating
+    ///    all RRs in the zone, in the format and order described in
+    ///    Section 3.3.1 subject to the inclusion/exclusion rules described in
+    ///    Section 3.3.1.1, and then applying the chosen hash algorithm:
+    ///
+    ///    digest = hash( RR(1) | RR(2) | RR(3) | ... )
+    ///
+    ///    where "|" denotes concatenation.
+    /// ```
+    ///
+    /// [RFC 8976]: https://www.rfc-editor.org/rfc/rfc8976.html
+    /// [RFC 4034]: https://www.rfc-editor.org/rfc/rfc4034.html
+    fn create_zonemd_digest_simple(
+        apex: &FamilyName<Name<Bytes>>,
+        records: &SortedRecords<StoredName, StoredRecordData>,
+        algorithm: ZonemdAlgorithm,
+    ) -> Result<digest::Digest, Error> {
+        // TODO: optimize by using multiple digest'ers at once, instead of
+        // looping over the whole zone per digest algorithm.
+        let mut buf: Vec<u8> = Vec::new();
+
+        let mut ctx = match algorithm {
+            ZonemdAlgorithm::Sha384 => digest::Context::new(&digest::SHA384),
+            ZonemdAlgorithm::Sha512 => digest::Context::new(&digest::SHA512),
+            _ => {
+                // This should be caught by the argument parsing, but in case...
+                return Err("unsupported zonemd hash algorithm".into());
+            }
+        };
+
+        for family in records.families() {
+            if !family.is_in_zone(apex) {
+                continue;
+            }
+
+            // From RFC 8976:
+            // ```text
+            //  *  All records in the zone, including glue records, MUST be included
+            //     unless excluded by a subsequent rule.
+            //  *  Occluded data ([RFC5936], Section 3.5) MUST be included.
+            //  *  If there are duplicate RRs with equal owner, class, type, and
+            //     RDATA, only one instance is included ([RFC4034], Section 6.3) and
+            //     the duplicates MUST be omitted.
+            //  *  The placeholder apex ZONEMD RR(s) MUST NOT be included.
+            //  *  If the zone is signed, DNSSEC RRs MUST be included, except:
+            //  *  The RRSIG covering the apex ZONEMD RRset MUST NOT be included
+            //     because the RRSIG will be updated after all digests have been
+            //     calculated.
+            // ```
+            // The first three rules are currently implemented by the SortedRecords type.
+            for record in family.records() {
+                buf.clear();
+                if record.rtype() == Rtype::ZONEMD && record.owner() == apex.owner() {
+                    // Skip placeholder ZONEMD at apex
+                    continue;
+                } else if record.rtype() == Rtype::RRSIG && record.owner() == apex.owner() {
+                    // Skip RRSIG for ZONEMD at apex
+                    if let ZoneRecordData::Rrsig(rrsig) = record.data() {
+                        if rrsig.type_covered() == Rtype::ZONEMD {
+                            continue;
+                        }
+                    };
+                }
+
+                with_infallible(|| record.compose_canonical(&mut buf));
+                ctx.update(&buf);
+            }
+        }
+
+        Ok(ctx.finish())
+    }
 }
 
 fn next_owner_hash_to_name(
@@ -971,7 +1232,14 @@ enum SigningMode {
     HashOnly,
     // /// Only sign zone records, assume they are already hashed.
     // SignOnly,
+    /// Neither hash or sign zone records (e.g. when just using ZONEMD).
+    None,
 }
+
+//------------ ZonemdTuple ---------------------------------------------------
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
 
 //------------ FileOrStdout --------------------------------------------------
 
