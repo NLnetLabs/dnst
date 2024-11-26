@@ -22,7 +22,7 @@ use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData};
-use domain::sign::common::KeyPair;
+use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
     Family, FamilyName, Nsec3OptOut, Nsec3Records, RecordsIter, SortedRecords,
 };
@@ -420,49 +420,140 @@ impl SignZone {
             FileOrStdout::File(file)
         };
 
-        // Import the specified keys and check that the keys are all for the same zone.
-        let mut keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
-
         if self.key_paths.is_empty() {
             return Err("No keys to sign with. Aborting.".into());
         }
 
-        let mut first_key_owner = None;
+        // Read the zone file.
+        let mut records = self.load_zone(&env)?;
 
-        for key_path in &self.key_paths {
-            let key = Self::load_key_pair(key_path)?;
+        // Extract the SOA RR from the loaded zone.
+        let Some(soa_rr) = records.find_soa() else {
+            return Err(format!(
+                "Zone file '{}' does not contain a SOA record",
+                self.zonefile_path.display()
+            )
+            .into());
+        };
+        let ZoneRecordData::Soa(_) = soa_rr.first().data() else {
+            return Err(format!(
+                "Zone file '{}' contains an invalid SOA record",
+                self.zonefile_path.display()
+            )
+            .into());
+        };
 
-            if !self.no_require_keys_match_apex {
-                if first_key_owner.is_none() {
-                    first_key_owner.replace(key.owner().clone());
-                }
+        // Extract and validate the DNSKEY RRs from the loaded zone.
+        let mut found_public_keys = vec![];
+        for rr in records.iter() {
+            if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
+                // Create a public key object from the found DNSKEY RR.
+                let public_key =
+                    Key::from_dnskey(rr.owner().clone(), dnskey.clone()).map_err(|err| {
+                        Error::from(format!(
+                            "Zone file '{}' DNSKEY record '{dnskey}' is invalid: {err}",
+                            self.zonefile_path.display()
+                        ))
+                    })?;
 
-                for key in &keys {
-                    // Check the key name against the specified origin, if any,
-                    if let Some(origin) = &self.origin {
-                        if origin != key.owner() {
-                            return Err(format!("{}.key has different name ({}) than the specified origin ({origin})", key_path.display(), key.owner()).into());
-                        }
-                    }
+                found_public_keys.push(public_key);
+            }
+        }
 
-                    if Some(key.owner()) != first_key_owner.as_ref() {
-                        return Err(format!(
-                            "{}.key has different name ({}) to key {} ({})",
-                            key_path.display(),
-                            key.owner(),
-                            self.key_paths[0].display(),
-                            first_key_owner.unwrap()
-                        )
-                        .into());
-                    }
+        // Load the specified private keys, match them against the found
+        // public keys, failing that load a DNSKEY RR from the corresponding
+        // public key file and validate that its owner matches that of the
+        // zone apex. Unlike ldns-signzone we don't use a generated public key
+        // if these attempts fail.
+        let mut keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
+
+        'next_key_path: for key_path in &self.key_paths {
+            // Load the private key.
+            let private_key_path = Self::mk_private_key_path(key_path);
+            let private_key = Self::load_private_key(&private_key_path)?;
+
+            // Note: Our behaviour differs to that of the original
+            // ldns-signzone because we are unable at the time of writing to
+            // generate a public key from a private key. As such we cannot
+            // compare the key tag of any found DNSKEY RRs to that of the
+            // public key generated from the private key. Instead we attempt
+            // to construct a key pair from the found public key and each
+            // private key which tests that they match.
+            for public_key in &found_public_keys {
+                // Attempt to create a key pair from this public key and every
+                // private key that we have.
+                if let Ok(signing_key) = Self::mk_signing_key(&private_key, public_key.clone()) {
+                    // Match found, keep the created signing key.
+                    // TODO: Log here.
+                    // TODO: Check the key tag against the key tag in the key file name?
+                    // println!(
+                    //     "DNSKEY RR with key tag {} matches loaded private key '{}'",
+                    //     public_key.key_tag(),
+                    //     private_key_path.display()
+                    // );
+                    keys.push(signing_key);
+                    continue 'next_key_path;
                 }
             }
 
-            keys.push(key);
-        }
+            // No matching public key found, try to load the public key
+            // instead.
+            let public_key_path = Self::mk_public_key_path(key_path);
+            let public_key = Self::load_public_key(&public_key_path)?;
 
-        // Read the zone file.
-        let mut records = self.load_zone(&env, first_key_owner.as_ref())?;
+            // Verify that the owner of the public key matches the apex of the
+            // zone.
+            if public_key.owner() != soa_rr.owner() {
+                return Err(format!(
+                    "Zone apex ({}) does not match the expected apex ({})",
+                    soa_rr.owner(),
+                    public_key.owner()
+                )
+                .into());
+            }
+
+            // Attempt to crate a key pair from the loaded private and public
+            // keys.
+            let signing_key =
+                Self::mk_signing_key(&private_key, public_key.clone()).map_err(|err| {
+                    format!(
+                        "Unable to create key pair from '{}' and '{}': {}",
+                        public_key_path.display(),
+                        private_key_path.display(),
+                        err
+                    )
+                })?;
+
+            // Store the created signing key.
+            keys.push(signing_key);
+
+            // TODO: Log
+            // println!(
+            //     "Loaded public key with key tag {} from '{}' for private key '{}'",
+            //     public_key.key_tag(),
+            //     public_key_path.display(),
+            //     private_key_path.display()
+            // );
+
+            let public_key = Key::<Bytes>::new(
+                public_key.owner().clone(),
+                public_key.flags() + 1,
+                public_key.raw_public_key().clone(),
+            );
+
+            let signing_key =
+                Self::mk_signing_key(&private_key, public_key.clone()).map_err(|err| {
+                    format!(
+                        "Unable to create key pair from '{}' and '{}': {}",
+                        public_key_path.display(),
+                        private_key_path.display(),
+                        err
+                    )
+                })?;
+
+            // Store the created signing key.
+            keys.push(signing_key);
+        }
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -508,7 +599,7 @@ impl SignZone {
                     keys.as_slice(),
                     !self.do_not_add_keys_to_zone,
                 )
-                .unwrap();
+                .map_err(|_| "Signing failed")?;
             records.extend(extra_records.into_iter().map(Record::from_record));
         }
 
@@ -655,7 +746,6 @@ impl SignZone {
     fn load_zone(
         &self,
         env: &impl Env,
-        expected_apex: Option<&Name<Bytes>>,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
@@ -677,15 +767,6 @@ impl SignZone {
             match entry {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
-                    if let Some(expected_apex) = expected_apex {
-                        if record.rtype() == Rtype::SOA && record.owner() != expected_apex {
-                            return Err(format!(
-                                "Zone apex ({}) does not match the expected apex ({expected_apex})",
-                                record.owner()
-                            )
-                            .into());
-                        }
-                    }
 
                     records.insert(record).map_err(|record| {
                         format!("Invalid zone file: Duplicate record detected: {record:?}")
@@ -728,11 +809,10 @@ impl SignZone {
     fn bump_soa_serial(
         records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
     ) -> Result<(), Error> {
-        let Some(old_soa_rr) = records.find_soa() else {
-            return Err(Error::from("Error reading zonefile: missing SOA record"));
-        };
+        // SAFETY: Already checked before this point.
+        let old_soa_rr = records.find_soa().unwrap();
         let ZoneRecordData::Soa(old_soa) = old_soa_rr.first().data() else {
-            return Err(Error::from("Error reading zonefile: missing SOA record"));
+            unreachable!();
         };
 
         // Undocumented behaviour in ldns-signzone: it doesn't just set the
@@ -765,71 +845,76 @@ impl SignZone {
         Ok(())
     }
 
-    /// Given a BIND style key pair path prefix load the keys from disk.
-    ///
-    /// Expects a path that is the common prefix in BIND style of a pair of '.key'
-    /// (public) and '.private' key files, i.e. given
-    /// /path/to/K<zone_name>.+<algorithm>+<key tag> load and parse the following
-    /// files:
-    ///
-    ///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.key
-    ///   - /path/to/K<zone_name>.+<algorithm>+<key tag>.private
-    ///
-    /// However, this function is not strict about the format of the prefix, it
-    /// will attempt to load files with suffixes '.key' and '.private' irrespective
-    /// of the format of the rest of the path.
-    fn load_key_pair(key_path: &Path) -> Result<SigningKey<Bytes, KeyPair>, Error> {
-        let key_path_str = key_path.to_string_lossy();
-        let public_key_path = PathBuf::from(format!("{key_path_str}.key"));
-        let private_key_path = PathBuf::from(format!("{key_path_str}.private"));
-
-        let private_data = std::fs::read_to_string(&private_key_path).map_err(|err| {
+    fn load_private_key(key_path: &Path) -> Result<SecretKeyBytes, Error> {
+        let private_data = std::fs::read_to_string(key_path).map_err(|err| {
             format!(
                 "Unable to load private key from file '{}': {}",
-                private_key_path.display(),
+                key_path.display(),
                 err
             )
         })?;
 
-        let public_data = std::fs::read_to_string(&public_key_path).map_err(|err| {
-            format!(
-                "Unable to load public key from file '{}': {}",
-                public_key_path.display(),
-                err
-            )
-        })?;
-
+        // Note: Compared to the original ldns-signzone there is a minor
+        // regression here because at the time of writing the error returned
+        // from parsing indicates broadly the type of parsing failure but does
+        // note indicate the line number at which parsing failed.
         let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
             format!(
                 "Unable to parse BIND formatted private key file '{}': {}",
-                private_key_path.display(),
+                key_path.display(),
                 err
             )
         })?;
 
+        Ok(secret_key)
+    }
+
+    fn load_public_key(key_path: &Path) -> Result<Key<Bytes>, Error> {
+        let public_data = std::fs::read_to_string(key_path).map_err(|err| {
+            format!(
+                "Unable to load public key from file '{}': {}",
+                key_path.display(),
+                err
+            )
+        })?;
+
+        // Note: Compared to the original ldns-signzone there is a minor
+        // regression here because at the time of writing the error returned
+        // from parsing indicates broadly the type of parsing failure but does
+        // note indicate the line number at which parsing failed.
         let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
             format!(
                 "Unable to parse BIND formatted public key file '{}': {}",
-                public_key_path.display(),
+                key_path.display(),
                 err
             )
         })?;
 
-        let key_pair =
-            KeyPair::from_bytes(&secret_key, public_key_info.raw_public_key()).map_err(|err| {
-                format!(
-                    "Unable to import private key from file '{}': {}",
-                    private_key_path.display(),
-                    err
-                )
-            })?;
+        Ok(public_key_info)
+    }
 
-        let signing_key = SigningKey::new(
-            public_key_info.owner().clone(),
-            public_key_info.flags(),
-            key_pair,
-        );
+    fn mk_public_key_path(key_path: &Path) -> PathBuf {
+        if key_path.extension().and_then(|ext| ext.to_str()) == Some("key") {
+            key_path.to_path_buf()
+        } else {
+            PathBuf::from(format!("{}.key", key_path.display()))
+        }
+    }
 
+    fn mk_private_key_path(key_path: &Path) -> PathBuf {
+        if key_path.extension().and_then(|ext| ext.to_str()) == Some("private") {
+            key_path.to_path_buf()
+        } else {
+            PathBuf::from(format!("{}.private", key_path.display()))
+        }
+    }
+
+    fn mk_signing_key(
+        private_key: &SecretKeyBytes,
+        public_key: Key<Bytes>,
+    ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
+        let key_pair = KeyPair::from_bytes(private_key, public_key.raw_public_key())?;
+        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair);
         Ok(signing_key)
     }
 }
