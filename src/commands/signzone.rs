@@ -180,7 +180,7 @@ pub struct SignZone {
     /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
-        short = 'A', // Matches BIND dnssec-signzone
+        short = 'P',
         default_value_t = false,
         requires = "nsec3",
         conflicts_with = "nsec3_opt_out_flags_only"
