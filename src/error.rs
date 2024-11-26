@@ -87,9 +87,9 @@ impl Error {
         //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
         //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
         let error_marker = if term {
-            &Self::colourize(Self::RED, "ERROR:")
+            Self::colourize(Self::RED, "ERROR:")
         } else {
-            "ERROR:"
+            "ERROR:".to_string()
         };
 
         write!(err, "[{prog}] {error_marker} {error}");
