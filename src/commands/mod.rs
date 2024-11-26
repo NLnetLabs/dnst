@@ -39,11 +39,11 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
         match self {
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::SignZone(signzone) => signzone.execute(env),
+            Self::SignZone(signzone) => signzone.execute(env, is_ldns),
             Self::Help(help) => help.execute(),
         }
     }
@@ -64,7 +64,7 @@ pub trait LdnsCommand: Into<Command> {
 
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         match Self::parse_ldns(args) {
-            Ok(c) => Ok(Args::from(c.into())),
+            Ok(c) => Ok(Args::new(c.into(), true)),
             Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
     }

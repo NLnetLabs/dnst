@@ -383,7 +383,7 @@ impl SignZone {
         res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
     }
 
-    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
