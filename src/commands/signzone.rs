@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::hash::RandomState;
-use std::io::{self, BufWriter};
+use std::io::{self, BufWriter, IsTerminal};
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
@@ -422,6 +422,17 @@ impl SignZone {
 
         if self.key_paths.is_empty() {
             return Err("No keys to sign with. Aborting.".into());
+        }
+
+        // ldns-signzone only shows these warnings if verbosity < 1 but offers
+        // no way to configure the verbosity level. I assume the intent was to
+        // add support for a -q (--quiet) option or similar but that was never
+        // done.
+        match self.iterations {
+            500.. => Self::write_extreme_iterations_warning(&env),
+            100.. if is_ldns => Self::write_large_iterations_warning(&env),
+            1.. if !is_ldns => Self::write_non_zero_iterations_warning(&env),
+            _ => { /* Good, nothing to warn about */ }
         }
 
         // Read the zone file.
@@ -916,6 +927,38 @@ impl SignZone {
         let key_pair = KeyPair::from_bytes(private_key, public_key.raw_public_key())?;
         let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair);
         Ok(signing_key)
+    }
+
+    fn write_extreme_iterations_warning(env: &impl Env) {
+        Self::write_iterations_warning(
+            env,
+            "NSEC3 iterations larger than 500 may cause validating resolvers to return SERVFAIL!",
+        );
+    }
+
+    fn write_large_iterations_warning(env: &impl Env) {
+        Self::write_iterations_warning(env, "NSEC3 iterations larger than 100 may cause validating resolvers to return insecure responses!");
+    }
+
+    fn write_non_zero_iterations_warning(env: &impl Env) {
+        Self::write_iterations_warning(env, "NSEC3 iterations larger than 0 increases performance cost while providing only moderate protection!");
+    }
+
+    fn write_iterations_warning(env: &impl Env, text: &str) {
+        if std::io::stderr().is_terminal() {
+            write!(
+                env.stderr(),
+                "{}",
+                Error::colourize(Error::YELLOW, "Warning!")
+            );
+        } else {
+            write!(env.stderr(), "Warning!")
+        }
+        writeln!(env.stderr(), " {}", text);
+        writeln!(
+            env.stderr(),
+            "See: https://www.rfc-editor.org/rfc/rfc9276.html"
+        );
     }
 }
 
