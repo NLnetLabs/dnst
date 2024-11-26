@@ -11,12 +11,6 @@ pub mod fake;
 pub use real::RealEnv;
 
 pub trait Env {
-    // /// Make a network connection
-    // fn make_connection(&self);
-
-    // /// Make a new [`StubResolver`]
-    // fn make_stub_resolver(&self);
-
     /// Get an iterator over the command line arguments passed to the program
     ///
     /// Equivalent to [`std::env::args_os`]
@@ -31,9 +25,6 @@ pub trait Env {
     ///
     /// Equivalent to [`std::io::stderr`]
     fn stderr(&self) -> Stream<impl fmt::Write>;
-
-    // /// Get a reference to stdin
-    // fn stdin(&self) -> impl io::Read;
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 }
