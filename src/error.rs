@@ -81,7 +81,7 @@ impl Error {
         // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
         // sequence, 31 is the ANSI escape sequence for setting the terminal
         // foreground colour to red, and 0 resets all attributes to their
-        // defaults. 
+        // defaults.
         //
         // See:
         //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
@@ -117,7 +117,7 @@ impl Error {
         // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
         // sequence, 31 is the ANSI escape sequence for setting the terminal
         // foreground colour to red, and 0 resets all attributes to their
-        // defaults. 
+        // defaults.
         //
         // See:
         //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
