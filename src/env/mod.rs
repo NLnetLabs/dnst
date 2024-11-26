@@ -98,8 +98,8 @@ pub trait Env {
                 )
             },
             || {
-                self.fs_symlink(&target, &temp)?;
-                self.fs_rename(&temp, &link)?;
+                self.fs_symlink(target, &temp)?;
+                self.fs_rename(&temp, link)?;
                 Ok(())
             },
         )

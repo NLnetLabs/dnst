@@ -300,7 +300,7 @@ impl Keygen {
         Self::symlink(&secret_key_path, ".private", self.symlink, &env)?;
         Self::symlink(&public_key_path, ".key", self.symlink, &env)?;
         if let Some(digest_file_path) = &digest_file_path {
-            Self::symlink(&digest_file_path, ".ds", self.symlink, &env)?;
+            Self::symlink(digest_file_path, ".ds", self.symlink, &env)?;
         }
 
         // Prepare the contents to write.
