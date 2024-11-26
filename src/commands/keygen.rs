@@ -359,13 +359,10 @@ impl Keygen {
 #[cfg(test)]
 mod test {
     use domain::sign::GenerateParams;
-    use tempfile::TempDir;
+    use regex::Regex;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
-    use std::fs::File;
-    use std::io::Write;
-    use std::path::PathBuf;
 
     use super::{Keygen, SymlinkArg};
 
@@ -544,5 +541,65 @@ mod test {
         // Test 'name':
         // - Domain names can have a trailing dot.
         assert_eq!(parse(cmd.args(["-a", "ED25519", "example.org."])), base);
+    }
+
+    #[test]
+    fn simple() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let res = FakeCmd::new(["dnst", "keygen", "-a", "ED25519", "example.org"])
+            .cwd(&dir)
+            .run();
+
+        let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
+        let public_key_regex =
+            Regex::new(r"^example.org. IN DNSKEY 256 3 15 [A-Za-z0-9/+=]+").unwrap();
+        let secret_key_regex = Regex::new(
+            r"^Private-key-format: v1\.2\nAlgorithm: 15 \(ED25519\)\nPrivateKey: [A-Za-z0-9/+=]+\n$",
+        )
+        .unwrap();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stderr, "");
+
+        let name = res.stdout.trim();
+        assert!(name_regex.is_match(name));
+
+        let public_key = std::fs::read_to_string(dir.path().join(format!("{name}.key"))).unwrap();
+        assert!(public_key_regex.is_match(&public_key));
+
+        // The digest file must not be created.
+        assert!(!std::fs::exists(dir.path().join("{name}.ds")).unwrap());
+
+        let secret_key =
+            std::fs::read_to_string(dir.path().join(format!("{name}.private"))).unwrap();
+        assert!(secret_key_regex.is_match(&secret_key));
+    }
+
+    #[test]
+    fn simple_ksk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let res = FakeCmd::new(["dnst", "keygen", "-k", "-a", "ED25519", "example.org"])
+            .cwd(&dir)
+            .run();
+
+        let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
+        let public_key_regex =
+            Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
+        let digest_key_regex =
+            Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stderr, "");
+
+        let name = res.stdout.trim();
+        assert!(name_regex.is_match(name));
+
+        let public_key = std::fs::read_to_string(dir.path().join(format!("{name}.key"))).unwrap();
+        assert!(public_key_regex.is_match(&public_key));
+
+        let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
+        assert!(digest_key_regex.is_match(&digest_key));
+
+        assert!(std::fs::exists(dir.path().join(format!("{name}.private"))).unwrap());
     }
 }
