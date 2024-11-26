@@ -34,10 +34,10 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
         "key2ds" => Key2ds::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         "signzone" => SignZone::parse_ldns_args(args_iter),
-        _ => return Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
-    };
+        _ => Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
+    }?;
 
-    Ok(Some(res?))
+    Ok(Some(res))
 }
 
 /// Get the binary name from a [`Path`].
