@@ -568,7 +568,7 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         // The digest file must not be created.
-        assert!(!std::fs::exists(dir.path().join("{name}.ds")).unwrap());
+        assert!(!dir.path().join("{name}.ds").try_exists().unwrap());
 
         let secret_key =
             std::fs::read_to_string(dir.path().join(format!("{name}.private"))).unwrap();
@@ -600,6 +600,10 @@ mod test {
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
         assert!(digest_key_regex.is_match(&digest_key));
 
-        assert!(std::fs::exists(dir.path().join(format!("{name}.private"))).unwrap());
+        assert!(dir
+            .path()
+            .join(format!("{name}.private"))
+            .try_exists()
+            .unwrap());
     }
 }
