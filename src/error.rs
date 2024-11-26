@@ -39,6 +39,9 @@ impl fmt::Display for PrimaryError {
 //--- Interaction
 
 impl Error {
+    pub const RED: u8 = 31;
+    pub const YELLOW: u8 = 33;
+
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
         Self(Box::new(Information {
@@ -75,8 +78,16 @@ impl Error {
         let prog = std::env::args().next().unwrap();
         let term = std::io::stderr().is_terminal();
 
+        // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
+        // sequence, 31 is the ANSI escape sequence for setting the terminal
+        // foreground colour to red, and 0 resets all attributes to their
+        // defaults. 
+        //
+        // See:
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
         let error_marker = if term {
-            "\x1B[31mERROR:\x1B[0m"
+            &Self::colourize(Self::RED, "ERROR:")
         } else {
             "ERROR:"
         };
@@ -100,6 +111,18 @@ impl Error {
         } else {
             1
         }
+    }
+
+    pub fn colourize(colour_code: u8, text: &str) -> String {
+        // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
+        // sequence, 31 is the ANSI escape sequence for setting the terminal
+        // foreground colour to red, and 0 resets all attributes to their
+        // defaults. 
+        //
+        // See:
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
+        format!("\x1B[{colour_code}m{text}\x1B[0m")
     }
 }
 
