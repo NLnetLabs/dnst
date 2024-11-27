@@ -302,8 +302,11 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('z') => {
                     let val = parser.value()?;
-                    // FIXME: make parsing take lower case like the original
-                    zonemd.push(parse_os_with("-z", &val, SignZone::parse_zonemd_tuple)?);
+                    zonemd.push(parse_os_with(
+                        "-z",
+                        &val,
+                        SignZone::parse_zonemd_tuple_ldns,
+                    )?);
                 }
                 Arg::Short('Z') => {
                     allow_zonemd_without_signing = true;
@@ -405,6 +408,40 @@ impl SignZone {
             hash_alg = arg
                 .parse()
                 .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
+        };
+
+        Ok(ZonemdTuple(scheme, hash_alg))
+    }
+
+    fn parse_zonemd_tuple_ldns(arg: &str) -> Result<ZonemdTuple, Error> {
+        let scheme;
+        let hash_alg;
+
+        fn parse_zonemd_scheme_ldns(s: &str) -> Result<ZonemdScheme, Error> {
+            match s {
+                "simple" | "1" => Ok(ZonemdScheme::Simple),
+                _ => {
+                    return Err(format!("unknown ZONEMD scheme name or number").into());
+                }
+            }
+        }
+
+        fn parse_zonemd_hash_alg_ldns(h: &str) -> Result<ZonemdAlgorithm, Error> {
+            match h {
+                "sha384" | "1" => Ok(ZonemdAlgorithm::Sha384),
+                "sha512" | "2" => Ok(ZonemdAlgorithm::Sha512),
+                _ => {
+                    return Err(format!("unknown ZONEMD algorithm name or number").into());
+                }
+            }
+        }
+
+        if let Some((s, h)) = arg.split_once(':') {
+            scheme = parse_zonemd_scheme_ldns(s)?;
+            hash_alg = parse_zonemd_hash_alg_ldns(h)?;
+        } else {
+            scheme = ZonemdScheme::Simple;
+            hash_alg = parse_zonemd_hash_alg_ldns(arg)?;
         };
 
         Ok(ZonemdTuple(scheme, hash_alg))
