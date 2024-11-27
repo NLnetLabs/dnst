@@ -214,7 +214,7 @@ pub struct SignZone {
 
     /// The keys to sign the zone with
     // May be omitted if -Z or -H are given
-    #[arg(value_name = "key")]
+    #[arg(value_name = "key", required_unless_present_any = ["allow_zonemd_without_signing", "hash_only"])]
     key_paths: Vec<PathBuf>,
 }
 
