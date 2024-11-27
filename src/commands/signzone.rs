@@ -1720,4 +1720,54 @@ mod test {
         assert_eq!(res2.stdout, res1.stdout);
         assert_eq!(res2.stderr, "");
     }
+
+    #[test]
+    fn zonemd_and_sign() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-z",
+            "1:1",
+            "-f",
+            "-",
+            "-e",
+            "20241127162422",
+            "-i",
+            "20241127162422",
+            "zonemd1_example.org.zone",
+            "key1",
+        ])
+        .cwd(&dir)
+        .run();
+
+        dbg!(&res);
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            "example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
+            example.org.\t240\tIN\tRRSIG\tSOA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tubpDtDSKyO1QB8sItZaYgngByZmZ4nC3APfcIhR6LRKcLm2ivNra2QaSnCuMqSNULdPtynqMXtdpd0hAaDCOCQ==\n\
+            example.org.\t240\tIN\tA\t128.140.76.106\n\
+            example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tbwiPzp/CD3/vGz22da9OVWI34R1CaPqe3LSgm3UyFyQ7zxn8GrlKX5l7OHf15jSyYWgd4qGFER3XgvCj+0ZgCw==\n\
+            example.org.\t240\tIN\tNS\texample.net.\n\
+            example.org.\t240\tIN\tRRSIG\tNS\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tnhaHOrSvqfnXD9VIg1pIFhRmIdlSTxGAxEY/fWGZPJlA3iw7JGvLl0KpH5nSNPgMKArV6wqnF5sCpaZM3JFDAg==\n\
+            example.org.\t240\tIN\tNSEC\t*.example.org.\tA\tNS\tSOA\tRRSIG\tNSEC\tDNSKEY\tZONEMD\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tDacktsTAulRMlUAI+C557/PO/LczjKO42B0UahkTYKgb1OCM4vSfCRnBvzp5gGtb/92VvcdHbgExavZmvcvqAA==\n\
+            example.org.\t240\tIN\tDNSKEY\t257\t3\t15\t6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n\
+            example.org.\t240\tIN\tDNSKEY\t258\t3\t15\t6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38874 (zsk), size = 256b}\n\
+            example.org.\t240\tIN\tRRSIG\tDNSKEY\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tz8ecItPcgUElneJc/VBAmqxOUloYxC7ff5CwClZGH0/jnOrdC6P3GPRTeHVpBlUnpaMBHTWHdpn6RFXut4I7Ag==\n\
+            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\tD7309C80EA9F3EC0DF549E796E3E0DA0F99A6C3E36AAD7E039C3AC9E94834DD22D2CF73BB41C918914F315511C76A2A8\n\
+            example.org.\t240\tIN\tRRSIG\tZONEMD\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tSjPvYWFvqwX26AxwDGs4YUq56/j9mTCG8zewWNmUv2yvqGL3m+eiGHbmB/GDRDDWEXqt0GGNPP644HaW9JEbAg==\n\
+            *.example.org.\t240\tIN\tA\t1.2.3.4\n\
+            *.example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tr0y1xlc1QYWQKHLsK6UH5t7ByjcqkGNwOkHz5uJnREurhXqZJyv/ZA32ZsP9SQ+HOcWrSd+kiqCF9j7cNVAJDg==\n\
+            *.example.org.\t240\tIN\tNSEC\tdeleg.example.org.\tA\tRRSIG\tNSEC\n\
+            *.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tzS2EXRkVem5j1YBXm0miaPZk3A57Qe6gtwo/vGLtbdTcGdQeDVFGtSSHM3fYj6DRkQmb7smREhNWK9VMtffVAQ==\n\
+            deleg.example.org.\t240\tIN\tNS\texample.com.\n\
+            deleg.example.org.\t240\tIN\tNSEC\texample.org.\tNS\tRRSIG\tNSEC\n\
+            deleg.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t3\t240\t1732724662\t1732724662\t38874\texample.org.\tQkbX4pnJpN07vHu7SudHKVAn//dOScDroe0dJGKWLm3qg5xDr4/c2dpvEuJ6Wpe8HRYvorDmSKSvxgVHX3T/Ag==\n\
+            occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n"
+            );
+        assert_eq!(res.stderr, "");
+    }
 }
