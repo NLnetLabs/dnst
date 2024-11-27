@@ -250,6 +250,8 @@ dependencies = [
  "clap",
  "domain",
  "lexopt",
+ "octseq",
+ "ring",
  "tempfile",
  "test_bin",
 ]
@@ -257,7 +259,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=support-zonefile-fmt-with-padding#32fb700604d48fd3483a9aea1fa3fcfd71318379"
+source = "git+https://github.com/NLnetLabs/domain?branch=zonemd-and-signzone#8ae2fa0f89e380b478e27093e1b29019dd6f6413"
 dependencies = [
  "bytes",
  "futures-util",
