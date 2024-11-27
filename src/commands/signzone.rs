@@ -47,8 +47,8 @@ const FOUR_WEEKS: u32 = 2419200;
 
 #[derive(Clone, Debug, clap::Args)]
 #[clap(
-    after_help = "Keys must be specified by their base name (usually K<name>+<alg>+<id>), i.e. WITHOUT the .private or .key extension. Both .private and .key files are required.
-
+    after_help = "Keys must be specified by their base name (usually K<name>+<alg>+<id>), i.e. WITHOUT the .private or .key extension.
+If the public part of the key is not present in the zone, the DNSKEY RR will be read from the file called <base name>.key.
 A date can be a timestamp (seconds since the epoch), or of the form <YYYYMMdd[hhmmss]>
 "
 )]
@@ -232,7 +232,9 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
                 -p set the opt-out flag on all nsec3 rrs
 
   keys must be specified by their base name (usually K<name>+<alg>+<id>),
-  i.e. WITHOUT the .private or .key extension.
+  i.e. WITHOUT the .private extension.
+  If the public part of the key is not present in the zone, the DNSKEY RR
+  will be read from the file called <base name>.key.
   A date can be a timestamp (seconds since the epoch), or of
   the form <YYYYMMdd[hhmmss]>
 "###;
