@@ -1,7 +1,7 @@
-use std::fmt;
+use std::fmt::{self, Display, Write};
 use std::{error, io};
 
-use crate::env::Env;
+use crate::env::{Env, Stream};
 
 //------------ Error ---------------------------------------------------------
 
@@ -58,7 +58,6 @@ impl Error {
 
     /// Pretty-print this error.
     pub fn pretty_print(&self, env: impl Env) {
-        use std::io::IsTerminal;
         let mut err = env.stderr();
 
         let error = match &self.0.primary {
@@ -75,16 +74,7 @@ impl Error {
 
         // NOTE: This is a multicall binary, so argv[0] is necessary for
         // program operation.  We would fail very early if it didn't exist.
-        let prog = std::env::args().next().unwrap();
-        let term = std::io::stderr().is_terminal();
-
-        let error_marker = if term {
-            Self::colourize(Self::RED, "ERROR:")
-        } else {
-            "ERROR:".to_string()
-        };
-
-        write!(err, "[{prog}] {error_marker} {error}");
+        Self::write_error(&mut err, error);
         for context in &self.0.context {
             writeln!(err, "\n... while {context}");
         }
@@ -105,16 +95,16 @@ impl Error {
         }
     }
 
-    pub fn colourize(colour_code: u8, text: &str) -> String {
-        // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
-        // sequence, 31 is the ANSI escape sequence for setting the terminal
-        // foreground colour to red, and 0 resets all attributes to their
-        // defaults.
-        //
-        // See:
-        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
-        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
-        format!("\x1B[{colour_code}m{text}\x1B[0m")
+    pub fn write_error(writer: &mut Stream<impl Write>, text: impl Display) {
+        let prog = std::env::args().next().unwrap();
+        let marker = writer.colourize(Self::RED, "ERROR:");
+        writeln!(writer, "[{prog}] {marker} {text}");
+    }
+
+    pub fn write_warning(writer: &mut Stream<impl Write>, text: impl Display) {
+        let prog = std::env::args().next().unwrap();
+        let marker = writer.colourize(Self::YELLOW, "WARN:");
+        writeln!(writer, "[{prog}] {marker} {text}");
     }
 }
 

@@ -35,21 +35,48 @@ pub trait Env {
 /// [`std::io::Write`]. Additionally, this `write_fmt` does not return a
 /// result. This means that we can use the [`write!`] and [`writeln`] macros
 /// without handling errors.
-pub struct Stream<T: fmt::Write>(T);
+pub struct Stream<T: fmt::Write> {
+    writer: T,
+    is_terminal: bool,
+}
 
 impl<T: fmt::Write> Stream<T> {
+    pub fn new(writer: T, is_terminal: bool) -> Self {
+        Self { writer, is_terminal }
+    }
+    
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
         // This unwrap is not _really_ safe, but we are using this as stdout.
         // The `println` macro also ignores errors and `push_str` of the
         // fake stream also does not return an error. If this fails, it means
         // we can't write to stdout anymore so a graceful exit will be very
         // hard anyway.
-        self.0.write_fmt(args).unwrap();
+        self.writer.write_fmt(args).unwrap();
     }
 
     pub fn write_str(&mut self, s: &str) {
         // Same as with write_fmt...
-        self.0.write_str(s).unwrap();
+        self.writer.write_str(s).unwrap();
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.is_terminal
+    }
+    
+    pub fn colourize(&self, colour_code: u8, text: &str) -> String {
+        // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
+        // sequence, 31 is the ANSI escape sequence for setting the terminal
+        // foreground colour to red, and 0 resets all attributes to their
+        // defaults.
+        //
+        // See:
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
+        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
+        if self.is_terminal {
+            format!("\x1B[{colour_code}m{text}\x1B[0m")
+        } else {
+            text.to_string()
+        }
     }
 }
 

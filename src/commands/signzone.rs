@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::hash::RandomState;
-use std::io::{self, BufWriter, IsTerminal};
+use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
 // TODO: use a re-export from domain?
@@ -941,16 +941,7 @@ impl SignZone {
     }
 
     fn write_iterations_warning(env: &impl Env, text: &str) {
-        if std::io::stderr().is_terminal() {
-            write!(
-                env.stderr(),
-                "{}",
-                Error::colourize(Error::YELLOW, "Warning!")
-            );
-        } else {
-            write!(env.stderr(), "Warning!")
-        }
-        writeln!(env.stderr(), " {}", text);
+        Error::write_warning(&mut env.stderr(), text);
         writeln!(
             env.stderr(),
             "See: https://www.rfc-editor.org/rfc/rfc9276.html"

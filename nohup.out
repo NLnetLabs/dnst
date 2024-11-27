@@ -1,0 +1,9 @@
+[1m[31merror:[0m a value is required for '[33m-f <file>[0m' but none was supplied
+
+For more information, try '[1m--help[0m'.
+
+Loading private key from './Kcom.+013+58851.private'
+Loading public key from './Kcom.+013+58851.key'
+Loading private key from './Kcom.+013+61184.private'
+Loading public key from './Kcom.+013+61184.key'
+Loading zone from '/etc/nsd/zones/verisign/com.zone'
