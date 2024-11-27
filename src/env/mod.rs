@@ -54,14 +54,6 @@ impl<T: fmt::Write> Stream<T> {
 }
 
 impl<E: Env> Env for &E {
-    // fn make_connection(&self) {
-    //     todo!()
-    // }
-
-    // fn make_stub_resolver(&self) {
-    //     todo!()
-    // }
-
     fn args_os(&self) -> impl Iterator<Item = OsString> {
         (**self).args_os()
     }
