@@ -740,9 +740,6 @@ impl SignZone {
                     writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
                     // rrsig.comment(&mut writer, rr, ())?;
                     writer.write_str("\n")?;
-                    let ZoneRecordData::Rrsig(rrsig) = covering_rrsig_rr.data() else {
-                        unreachable!();
-                    };
                     if self.extra_comments {
                         writer.write_str(";\n")?;
                     }
