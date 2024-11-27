@@ -16,7 +16,6 @@ use domain::resolv::{
 };
 use domain::tsig::{Algorithm, Key, KeyName};
 use domain::utils::base64;
-use octseq::Array;
 use tokio::net::TcpStream;
 
 use crate::env::Env;
@@ -90,8 +89,7 @@ impl FromStr for TSigInfo {
 
         let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
 
-        let name =
-            Name::<Array<255>>::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
+        let name = KeyName::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
 
         Ok(TSigInfo {
             name,
@@ -185,7 +183,7 @@ impl Update {
             zone,
             tsig: match tsig {
                 Some((name, algorithm, key)) => Some(TSigInfo {
-                    name: Name::<Array<255>>::from_str(name)
+                    name: KeyName::from_str(name)
                         .map_err(|e| format!("TSIG name is invalid: {e}\n\n{LDNS_HELP}"))?,
                     key: base64::decode(key)
                         .map_err(|e| format!("TSIG key is invalid base64: {e}\n\n{LDNS_HELP}"))?,

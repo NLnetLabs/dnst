@@ -1,11 +1,9 @@
+use std::fmt;
+use std::{error, io};
+
 use domain::base::wire::ParseError;
 
 use crate::env::Env;
-use domain::base::wire::ParseError;
-use std::borrow::Cow;
-use std::fmt;
-use std::num::ParseIntError;
-use std::{error, io};
 
 //------------ Error ---------------------------------------------------------
 

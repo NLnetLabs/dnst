@@ -1,5 +1,4 @@
 use crate::env::Env;
-use std::path::Path;
 
 use super::commands::Command;
 use super::error::Error;
