@@ -142,9 +142,6 @@ pub struct SignZone {
     algorithm: Nsec3HashAlg,
 
     /// Number of hash iterations
-    // TODO: make the default for dnst-signzone be 0 (to match best practice)
-    // while leaving the default for ldns-signzone be 1 (to match ldns), or
-    // maybe even change the default for both to 0.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 't',
