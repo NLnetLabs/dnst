@@ -739,8 +739,7 @@ impl SignZone {
             let mut zonemd_rrsig = zonemd_rrs
                 .sign(
                     &apex,
-                    // self.expiration,
-                    Timestamp::from_str("2111111111").unwrap(),
+                    self.expiration,
                     self.inception,
                     keys.as_slice(),
                     false,
