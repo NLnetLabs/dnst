@@ -6,8 +6,6 @@ pub mod notify;
 pub mod nsec3hash;
 pub mod update;
 
-use update::Update;
-
 use clap::crate_version;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
@@ -97,13 +95,6 @@ impl Command {
                 Ok(())
             }
         }
-    }
-
-    pub fn parse_ldns_args(name: &str, args: &[String]) -> Result<Option<Self>, Error> {
-        Ok(Some(match name {
-            "ldns-update" => Self::Update(Update::parse_ldns_args(args)?),
-            _ => return Ok(None),
-        }))
     }
 }
 

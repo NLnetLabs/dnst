@@ -1,14 +1,13 @@
+use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 use std::str::FromStr;
 
-use bytes::Bytes;
 use domain::base::iana::{Class, Opcode, Rcode};
 use domain::base::{
     Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
 };
-use domain::net::client::protocol::{TcpConnect, UdpConnect};
-use domain::net::client::request::{self, RequestMessage, RequestMessageMulti, SendRequest};
-use domain::net::client::{dgram_stream, stream, tsig};
+use domain::net::client::request::{RequestMessage, SendRequest};
+use domain::net::client::{dgram, tsig};
 use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
 use domain::resolv::{
     stub::conf::{ResolvConf, ServerConf, Transport},
@@ -16,10 +15,12 @@ use domain::resolv::{
 };
 use domain::tsig::{Algorithm, Key, KeyName};
 use domain::utils::base64;
-use tokio::net::TcpStream;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::Args;
+
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 // Clap gives `Option<T>` special handling by making the argument optional.
 // This is not what we want because we require an explicit "none" value. So,
@@ -28,7 +29,7 @@ use crate::error::Error;
 // this out.
 type OptionIpAddr = Option<IpAddr>;
 
-#[derive(Clone, Debug, clap::Args)]
+#[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct Update {
     /// Domain name to update
     #[arg(value_name = "DOMAIN NAME")]
@@ -66,8 +67,14 @@ impl FromStr for TSigInfo {
             return Err("invalid TSIG string".into());
         };
 
-        let Some((mut key, mut algorithm)) = rest.split_once(':') else {
-            return Err("invalid TSIG string".into());
+        let mut key;
+        let mut algorithm;
+        if let Some((k, a)) = rest.split_once(':') {
+            key = k;
+            algorithm = a;
+        } else {
+            key = rest;
+            algorithm = "hmac-sha512";
         };
 
         // With dig TSIG keys are also specified with -y,
@@ -99,15 +106,14 @@ impl FromStr for TSigInfo {
     }
 }
 
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TSigInfo {
     name: KeyName,
     key: Vec<u8>,
     algorithm: Algorithm,
 }
 
-static LDNS_HELP: &str = "\
+const LDNS_HELP: &str = "\
 ldns-update domain [zone] ip tsig_name tsig_alg tsig_hmac
     send a dynamic update packet to <ip>
 
@@ -119,11 +125,13 @@ This command exists for compatibility purposes.
 For a more modern version of this command try `dnst update`\
 ";
 
-impl Update {
-    pub fn parse_ldns_args(args: &[String]) -> Result<Self, Error> {
-        if args.iter().any(|s| s == "-h" || s == "--help") {
-            return Err(LDNS_HELP.into());
-        }
+impl LdnsCommand for Update {
+    const NAME: &'static str = "update";
+    const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
+
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
+        let args: Vec<_> = args.into_iter().collect();
 
         // We have this signature
         // <DOMAIN> [ZONE] <IP> [TSIG_NAME TSIG_ALG TSIG_HMAC]
@@ -132,7 +140,7 @@ impl Update {
         //  2: DOMAIN ZONE IP
         //  4: DOMAIN IP TSIG_NAME TSIG_ALG TSIG_HMAC
         //  5: DOMAIN ZONE IP TSIG_NAME TSIG_ALG TSIG_HMAC
-        let (domain, zone, ip, tsig) = match args {
+        let (domain, zone, ip, tsig) = match &args[..] {
             [domain, ip] => (domain, None, ip, None),
             [domain, zone, ip] => (domain, Some(zone), ip, None),
             [domain, ip, tsig_name, tsig_key, tsig_hmac] => {
@@ -146,56 +154,45 @@ impl Update {
             ),
             _ => {
                 return if args.len() < 2 {
-                    Err(format!("Not enough arguments. ldns-update requires at least 2 arguments\n\n{LDNS_HELP}").into())
+                    Err("Not enough arguments. ldns-update requires at least 2 arguments".into())
                 } else if args.len() > 6 {
-                    Err(format!("Too many arguments. ldns-update requires at most 6 arguments\n\n{LDNS_HELP}.").into())
+                    Err("Too many arguments. ldns-update requires at most 6 arguments".into())
                 } else {
-                    Err(
-                        format!("Cannot take 4 arguments. ldns-update needs 2, 3, 5 or 6 arguments\n\n{LDNS_HELP}")
-                            .into(),
-                    )
+                    Err("Cannot take 4 arguments. ldns-update needs 2, 3, 5 or 6 arguments".into())
                 }
             }
         };
 
-        let domain = Name::from_str(domain)
-            .map_err(|_| format!("Invalid domain name: {domain}\n\n{LDNS_HELP}"))?;
+        let domain = parse_os("domain name", domain)?;
 
         let ip = if *ip != "none" {
-            Some(
-                ip.parse()
-                    .map_err(|_| format!("Invalid IP address: {ip}\n\n{LDNS_HELP}"))?,
-            )
+            Some(parse_os("IP address", ip)?)
         } else {
             None
         };
 
         let zone = match zone {
-            Some(z) => {
-                Some(Name::from_str(z).map_err(|_| format!("Invalid zone: {z}\n\n{LDNS_HELP}"))?)
-            }
+            Some(z) => Some(parse_os("zone (-z)", z)?),
             None => None,
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Update(Self {
             domain,
             ip,
             zone,
             tsig: match tsig {
                 Some((name, algorithm, key)) => Some(TSigInfo {
-                    name: KeyName::from_str(name)
-                        .map_err(|e| format!("TSIG name is invalid: {e}\n\n{LDNS_HELP}"))?,
-                    key: base64::decode(key)
-                        .map_err(|e| format!("TSIG key is invalid base64: {e}\n\n{LDNS_HELP}"))?,
-                    algorithm: Algorithm::from_str(algorithm).map_err(|_| {
-                        format!("Unsupported TSIG algorithm: {algorithm}\n\n{LDNS_HELP}")
-                    })?,
+                    name: parse_os("TSIG name", name)?,
+                    key: parse_os_with("TSIG key", key, base64::decode)?,
+                    algorithm: parse_os("TSIG algorithm", algorithm)?,
                 }),
                 None => None,
             },
-        })
+        })))
     }
+}
 
+impl Update {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(self.run(env))
@@ -400,22 +397,31 @@ impl Update {
     ) -> Result<(), Error> {
         let msg = Message::from_octets(msg).unwrap();
         let resolver = StubResolver::new();
+
+        let tsig_key = self
+            .tsig
+            .as_ref()
+            .map(|tsig| {
+                Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
+                    .map_err(|e| format!("TSIG key is invalid: {e}"))
+            })
+            .transpose()?;
+
         for name in nsnames {
             let found_ips = resolver.lookup_host(&name).await?;
             for socket in found_ips.port_iter(53) {
-                let response = match &self.tsig {
-                    Some(tsig) => {
-                        let key =
-                            Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
-                                .unwrap();
-                        let msg = RequestMessage::new(msg.clone()).unwrap();
-                        self.send_update_with_tsig(msg, key, socket).await
-                    }
-                    None => {
-                        let msg = RequestMessage::new(msg.clone()).unwrap();
-                        self.send_update_without_tsig(msg, socket).await
-                    }
+                let dgram_connection = dgram::Connection::new(env.dgram(socket));
+
+                let connection: Box<dyn SendRequest<_>> = if let Some(k) = &tsig_key {
+                    Box::new(tsig::Connection::new(k.clone(), dgram_connection))
+                } else {
+                    Box::new(dgram_connection)
                 };
+
+                let response = connection
+                    .send_request(RequestMessage::new(msg.clone()).unwrap())
+                    .get_response()
+                    .await;
 
                 let resp = match response {
                     Ok(resp) => resp,
@@ -424,6 +430,7 @@ impl Update {
                         continue;
                     }
                 };
+
                 let rcode = resp.header().rcode();
                 if rcode != Rcode::NOERROR {
                     writeln!(env.stdout(), ";; UPDATE response was {rcode}");
@@ -438,41 +445,115 @@ impl Update {
 
         Ok(())
     }
+}
 
-    async fn send_update_with_tsig(
-        &self,
-        msg: RequestMessage<Vec<u8>>,
-        key: Key,
-        socket: SocketAddr,
-    ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
-        let tcp_conn = TcpStream::connect(socket).await.unwrap();
-        let (connection, transport) =
-            stream::Connection::<_, RequestMessageMulti<Vec<u8>>>::new(tcp_conn);
+#[cfg(test)]
+mod test {
+    use domain::{tsig::Algorithm, utils::base64};
 
-        let connection = tsig::Connection::new(key, connection);
+    use crate::{commands::Command, env::fake::FakeCmd};
 
-        tokio::spawn(async move {
-            transport.run().await;
-        });
+    use super::{TSigInfo, Update};
 
-        let mut req = connection.send_request(msg);
-        req.get_response().await
+    #[track_caller]
+    fn parse(cmd: FakeCmd) -> Update {
+        let res = cmd.parse().unwrap();
+        let Command::Update(x) = res.command else {
+            panic!("Not a Key2ds!");
+        };
+        x
     }
 
-    async fn send_update_without_tsig(
-        &self,
-        msg: request::RequestMessage<Vec<u8>>,
-        socket: SocketAddr,
-    ) -> Result<Message<Bytes>, domain::net::client::request::Error> {
-        let udp_connect = UdpConnect::new(socket);
-        let tcp_connect = TcpConnect::new(socket);
-        let (connection, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "update"]);
 
-        tokio::spawn(async move {
-            transport.run().await;
-        });
+        cmd.parse().unwrap_err();
+        cmd.args(["example.test"]).parse().unwrap_err();
+        cmd.args(["--zone", "example.test"]).parse().unwrap_err();
+        cmd.args(["--zone", "example.test", "ns.example.test"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["foo.test", "bar.test", "none"])
+            .parse()
+            .unwrap_err();
 
-        let mut req = connection.send_request(msg.clone());
-        req.get_response().await
+        let base = Update {
+            domain: "foo.test".parse().unwrap(),
+            ip: None,
+            zone: None,
+            tsig: None,
+        };
+
+        let res = parse(cmd.args(["foo.test", "none"]));
+        assert_eq!(res, base);
+
+        let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
+        assert_eq!(
+            res,
+            Update {
+                ip: Some("1.1.1.1".parse().unwrap()),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["foo.test", "1.1.1.1", "--zone", "bar.test"]));
+        assert_eq!(
+            res,
+            Update {
+                ip: Some("1.1.1.1".parse().unwrap()),
+                zone: Some("bar.test".parse().unwrap()),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["foo.test", "none", "--tsig", "somekey:1234"]));
+        assert_eq!(
+            res,
+            Update {
+                tsig: Some(TSigInfo {
+                    name: "somekey".parse().unwrap(),
+                    key: base64::decode("1234").unwrap(),
+                    algorithm: Algorithm::Sha512,
+                }),
+                ..base.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-update"]);
+
+        let base = Update {
+            domain: "foo.test".parse().unwrap(),
+            ip: None,
+            zone: None,
+            tsig: None,
+        };
+
+        cmd.args(["foo.test"]).parse().unwrap_err();
+
+        let res = parse(cmd.args(["foo.test", "none"]));
+        assert_eq!(res, base.clone());
+
+        let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
+        assert_eq!(
+            res,
+            Update {
+                ip: Some("1.1.1.1".parse().unwrap()),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["foo.test", "base.test", "1.1.1.1"]));
+        assert_eq!(
+            res,
+            Update {
+                ip: Some("1.1.1.1".parse().unwrap()),
+                zone: Some("base.test".parse().unwrap()),
+                ..base.clone()
+            }
+        );
     }
 }
