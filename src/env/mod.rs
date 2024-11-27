@@ -42,9 +42,12 @@ pub struct Stream<T: fmt::Write> {
 
 impl<T: fmt::Write> Stream<T> {
     pub fn new(writer: T, is_terminal: bool) -> Self {
-        Self { writer, is_terminal }
+        Self {
+            writer,
+            is_terminal,
+        }
     }
-    
+
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
         // This unwrap is not _really_ safe, but we are using this as stdout.
         // The `println` macro also ignores errors and `push_str` of the
@@ -62,7 +65,7 @@ impl<T: fmt::Write> Stream<T> {
     pub fn is_terminal(&self) -> bool {
         self.is_terminal
     }
-    
+
     pub fn colourize(&self, colour_code: u8, text: &str) -> String {
         // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
         // sequence, 31 is the ANSI escape sequence for setting the terminal
