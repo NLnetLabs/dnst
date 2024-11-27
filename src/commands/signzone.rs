@@ -743,7 +743,7 @@ impl SignZone {
                     let ZoneRecordData::Rrsig(rrsig) = covering_rrsig_rr.data() else {
                         unreachable!();
                     };
-                    if self.extra_comments && rrsig.type_covered() == Rtype::NSEC3 {
+                    if self.extra_comments {
                         writer.write_str(";\n")?;
                     }
                 }
