@@ -1,13 +1,10 @@
-use core::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use bytes::Bytes;
-use chrono::{DateTime, Local, TimeDelta};
+use chrono::Local;
 use clap::builder::ValueParser;
 use domain::base::iana::{Class, Opcode};
 use domain::base::{Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl};
-use domain::dep::octseq::Array;
 use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
 use domain::rdata::Soa;
@@ -25,32 +22,6 @@ struct TSigInfo {
     name: KeyName,
     key: Vec<u8>,
     algorithm: Algorithm,
-}
-
-// Clippy complains about the unread fields but they are used for display
-#[allow(dead_code)]
-struct Response<Octs> {
-    msg: Message<Octs>,
-    when: DateTime<Local>,
-    server: Option<SocketAddr>,
-    time: TimeDelta,
-}
-
-impl<Octs: AsRef<[u8]>> fmt::Display for Response<Octs> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.msg.display_dig_style())?;
-        writeln!(f, ";; Query time: {} msec", self.time.num_milliseconds())?;
-        if let Some(server) = self.server {
-            writeln!(f, ";; Server: {}#{}", server.ip(), server.port())?;
-        }
-        writeln!(
-            f,
-            ";; WHEN: {}",
-            self.when.format("%a %b %d %H:%M:%S %Z %Y")
-        )?;
-        writeln!(f, ";; MSG SIZE  rcvd: {}", self.msg.as_slice().len())?;
-        Ok(())
-    }
 }
 
 impl FromStr for TSigInfo {
@@ -77,7 +48,7 @@ impl FromStr for TSigInfo {
         // but our format is: <name:key[:algo]>
         //      and dig's is: [hmac:]name:key
         //
-        // When we detect an unknown tsig algorithm in algo,
+        // When we detect an unknown TSIG algorithm in algo,
         // but a known algorithm in name, we can assume dig
         // order was used.
         //
@@ -92,8 +63,7 @@ impl FromStr for TSigInfo {
 
         let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
 
-        let name =
-            Name::<Array<255>>::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
+        let name = KeyName::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
 
         Ok(TSigInfo {
             name,
@@ -116,7 +86,7 @@ pub struct Notify {
     // source_address: (),
     //
     /// SOA version number to include
-    #[arg(short = 's')]
+    #[arg(short = 's', long = "soa")]
     soa_version: Option<u32>,
 
     /// A base64 tsig key and optional algorithm to include
@@ -138,7 +108,7 @@ pub struct Notify {
 
     /// Max number of retries
     #[arg(short = 'r', long = "retries", default_value = "15")]
-    retries: usize,
+    retries: u8,
 
     /// DNS servers to send packet to
     #[arg(required = true)]
@@ -348,85 +318,54 @@ impl Notify {
         Ok(())
     }
 
+    /// Send a notify packet to a single server and print the result
     async fn notify_host(
         &self,
         env: &impl Env,
         socket: SocketAddr,
         msg: Message<Vec<u8>>,
         server: &str,
-        tsig: &Option<Key>,
+        tsig_key: &Option<Key>,
     ) {
-        let resp = match &tsig {
-            Some(tsig) => {
-                self.notify_host_with_tsig(env, socket, msg, tsig.clone())
-                    .await
-            }
-            None => self.notify_host_without_tsig(env, socket, msg).await,
-        };
-
-        match resp {
-            Ok(resp) => {
-                writeln!(env.stdout(), "# reply from {server} at {socket}:");
-                writeln!(env.stdout(), "{resp}");
-            }
-            Err(e) => {
-                writeln!(env.stdout(), "{e}");
-            }
-        }
-    }
-
-    async fn notify_host_with_tsig(
-        &self,
-        env: impl Env,
-        socket: SocketAddr,
-        msg: Message<Vec<u8>>,
-        key: Key,
-    ) -> Result<Response<Bytes>, Error> {
         let mut config = dgram::Config::new();
-        config.set_max_retries(self.retries as u8);
-        let connection = dgram::Connection::with_config(env.dgram(socket), config);
-        let connection = tsig::Connection::new(key, connection);
+        config.set_max_retries(self.retries);
+
+        let dgram_connection = dgram::Connection::with_config(env.dgram(socket), config);
+
+        let connection: Box<dyn SendRequest<_>> = if let Some(k) = tsig_key {
+            Box::new(tsig::Connection::new(k.clone(), dgram_connection))
+        } else {
+            Box::new(dgram_connection)
+        };
 
         let req = RequestMessage::new(msg).unwrap();
         let mut req = connection.send_request(req);
 
-        let when = Local::now();
-        let msg = req.get_response().await.map_err(|e| {
-            format!("warning: reply was not received or erroneous from {socket}: {e}")
-        })?;
+        let time1 = Local::now();
+        let res = req.get_response().await;
         let time2 = Local::now();
-        Ok(Response {
-            msg,
-            when,
-            server: Some(socket),
-            time: time2 - when,
-        })
-    }
 
-    async fn notify_host_without_tsig(
-        &self,
-        env: impl Env,
-        socket: SocketAddr,
-        msg: Message<Vec<u8>>,
-    ) -> Result<Response<Bytes>, Error> {
-        let mut config = dgram::Config::new();
-        config.set_max_retries(self.retries as u8);
-        let connection = dgram::Connection::with_config(env.dgram(socket), config);
-
-        let req = RequestMessage::new(msg).unwrap();
-        let mut req = SendRequest::send_request(&connection, req);
-
-        let when = Local::now();
-        let msg = req.get_response().await.map_err(|e| {
-            format!("warning: reply was not received or erroneous from {socket}: {e}")
-        })?;
-        let time2 = Local::now();
-        Ok(Response {
-            msg,
-            when,
-            server: Some(socket),
-            time: time2 - when,
-        })
+        match res {
+            Ok(msg) => {
+                let mut out = env.stdout();
+                writeln!(out, "# reply from {server} at {socket}:");
+                writeln!(out, "{}", msg.display_dig_style());
+                writeln!(
+                    out,
+                    ";; Query time: {} msec",
+                    (time2 - time1).num_milliseconds()
+                );
+                writeln!(out, ";; Server: {}#{}", socket.ip(), socket.port());
+                writeln!(out, ";; WHEN: {}", time1.format("%a %b %d %H:%M:%S %Z %Y"));
+                writeln!(out, ";; MSG SIZE  rcvd: {}", msg.as_slice().len());
+            }
+            Err(e) => {
+                writeln!(
+                    env.stdout(),
+                    "warning: reply was not received or erroneous from: {socket}: {e}"
+                );
+            }
+        }
     }
 }
 
