@@ -22,6 +22,8 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "support-zonefi
     "zonefile",
 ] }
 lexopt = "0.3.0"
+octseq = "0.5.2"
+ring = "0.17.8"
 
 [dev-dependencies]
 test_bin = "0.4.0"
