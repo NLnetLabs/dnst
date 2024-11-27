@@ -40,7 +40,25 @@ pub struct Keygen {
     make_ksk: bool,
 
     /// Whether to create symlinks.
-    #[arg(short, long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "yes", default_value = "no")]
+    //
+    // We want to allow '-s' / '--symlink' to mean 'Symlink::Yes' for convenience.
+    // Clap supports this through 'default_missing_value', but it also requires
+    // 'num_args' and 'require_equals' to be explicitly set.
+    //
+    // In the end, this can be used as:
+    // - '-s=no' / '--symlink=no':       Symlink::No (also the default)
+    // - '-s' / '--symlink':             Symlink::Yes (convenient form)
+    // - '-s=yes' / '--symlink=yes':     Symlink::Yes
+    // - '-s=force' / '--symlink=force': Symlink::Force
+    #[arg(
+        short = 's',
+        long = "symlink",
+        value_enum,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "yes",
+        default_value = "no",
+    )]
     symlink: SymlinkArg,
 
     /// The domain name to generate a key for
