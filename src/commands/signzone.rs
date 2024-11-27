@@ -47,7 +47,7 @@ const FOUR_WEEKS: u32 = 2419200;
 
 //------------ SignZone ------------------------------------------------------
 
-#[derive(Clone, Debug, clap::Args)]
+#[derive(Clone, Debug, clap::Args, PartialEq)]
 #[clap(
     after_help = "Keys must be specified by their base name (usually K<name>+<alg>+<id>), i.e. WITHOUT the .private or .key extension.
 If the public part of the key is not present in the zone, the DNSKEY RR will be read from the file called <base name>.key.
@@ -1458,5 +1458,269 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
 {
     fn from(iter: RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>) -> Self {
         Self::FamiliesIter(iter)
+    }
+}
+
+//------------ Tests --------------------------------------------------------
+
+#[cfg(test)]
+mod test {
+    use std::fs::File;
+    use std::io::Write;
+    use std::ops::Add;
+    use std::path::PathBuf;
+
+    use domain::base::iana::Nsec3HashAlg;
+    use domain::rdata::dnssec::Timestamp;
+    use domain::rdata::nsec3::Nsec3Salt;
+    use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme, Zonemd};
+    use tempfile::TempDir;
+
+    use crate::commands::signzone::{ZonemdTuple, FOUR_WEEKS};
+    use crate::commands::Command;
+    use crate::env::fake::FakeCmd;
+
+    use super::SignZone;
+
+    #[track_caller]
+    fn parse(args: FakeCmd) -> SignZone {
+        let res = args.parse();
+        let Command::SignZone(x) = res.unwrap().command else {
+            panic!("Not a SignZone!");
+        };
+        x
+    }
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "signzone"]);
+
+        cmd.parse().unwrap_err();
+        cmd.args(["example.org.zone"]).parse().unwrap_err();
+        cmd.args(["-Z", "example.org.zone"]).parse().unwrap_err();
+        cmd.args(["-z", "simple:sha512", "example.org.zone", "key1"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-z", "sha512", "example.org.zone", "key1"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-z", "3", "example.org.zone", "key1"])
+            .parse()
+            .unwrap_err();
+        // TODO: other parse failures
+
+        let base = SignZone {
+            extra_comments: false,
+            do_not_add_keys_to_zone: false,
+            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+            out_file: None,
+            inception: Timestamp::now(),
+            origin: None,
+            set_soa_serial_to_epoch_time: false,
+            zonemd: Vec::new(),
+            allow_zonemd_without_signing: false,
+            use_nsec3: false,
+            algorithm: Nsec3HashAlg::SHA1,
+            iterations: 0,
+            salt: Nsec3Salt::empty(),
+            nsec3_opt_out_flags_only: false,
+            nsec3_opt_out: false,
+            hash_only: false,
+            no_require_keys_match_apex: false,
+            zonefile_path: PathBuf::from("example.org.zone"),
+            key_paths: Vec::from([PathBuf::from("key1")]),
+        };
+
+        // Check the defaults
+        let res = parse(cmd.args(["example.org.zone", "key1"]));
+        assert_eq!(res, base);
+
+        let res = parse(cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "key1"]));
+        assert_eq!(
+            res,
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                ..base.clone()
+            }
+        );
+
+        // TODO: Other arguments
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-signzone"]);
+
+        cmd.parse().unwrap_err();
+        cmd.args(["example.org.zone"]).parse().unwrap_err();
+        cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "key1"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["example.org.zone", "-z", "SHA512", "key1"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["example.org.zone", "-z", "3", "key1"])
+            .parse()
+            .unwrap_err();
+        // TODO: other parse failures
+
+        let base = SignZone {
+            extra_comments: false,
+            do_not_add_keys_to_zone: false,
+            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+            out_file: None,
+            inception: Timestamp::now(),
+            origin: None,
+            set_soa_serial_to_epoch_time: false,
+            zonemd: Vec::new(),
+            allow_zonemd_without_signing: false,
+            use_nsec3: false,
+            algorithm: Nsec3HashAlg::SHA1,
+            iterations: 1,
+            salt: Nsec3Salt::empty(),
+            nsec3_opt_out_flags_only: true,
+            nsec3_opt_out: false,
+            hash_only: false,
+            no_require_keys_match_apex: false,
+            zonefile_path: PathBuf::from("example.org.zone"),
+            key_paths: Vec::from([PathBuf::from("key1")]),
+        };
+
+        // Check the defaults
+        let res = parse(cmd.args(["example.org.zone", "key1"]));
+        assert_eq!(res, base);
+
+        let res = parse(cmd.args(["-Z", "example.org.zone", "key1"]));
+        assert_eq!(
+            res,
+            SignZone {
+                allow_zonemd_without_signing: true,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "key1"]));
+        assert_eq!(
+            res,
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["example.org.zone", "-z", "sha512", "key1"]));
+        assert_eq!(
+            res,
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["example.org.zone", "-z", "1", "key1"]));
+        assert_eq!(
+            res,
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha384)]),
+                ..base.clone()
+            }
+        );
+
+        // TODO: Other arguments
+    }
+
+    fn run_setup() -> TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut file = File::create(dir.path().join("key1.key")).unwrap();
+        file
+            .write_all(b"example.org. IN DNSKEY 257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}")
+            .unwrap();
+
+        let mut file = File::create(dir.path().join("key1.ds")).unwrap();
+        file
+            .write_all(b"example.org. IN DS 38873 15 2 e195b1a7d31c878993ad0095d723592a1e5ea55c90b229fc35e4c549ef406f6c")
+            .unwrap();
+
+        let mut file = File::create(dir.path().join("key1.private")).unwrap();
+        file
+            .write_all(b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: /e7bFDFF88sdC949PC2YoHX9KJ5eEak3bk/Tub2vIng=\n")
+            .unwrap();
+
+        let mut file = File::create(dir.path().join("zonemd1_example.org.zone")).unwrap();
+        file
+            .write_all("\
+                example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+                example.org.    240     IN      NS      example.net.\n\
+                ; Will be replaced when using ZONEMD option\n\
+                example.org.    240     IN      ZONEMD 1234567890 1 1 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB\n\
+                example.org.    240     IN      ZONEMD 1234567890 1 2 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABAB\n\
+                example.org.                240 IN  A  128.140.76.106\n\
+                *.example.org.              240 IN  A  1.2.3.4\n\
+                deleg.example.org.          240 IN  NS example.com.\n\
+                occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
+                ".as_bytes())
+            .unwrap();
+
+        let mut file = File::create(dir.path().join("zonemd2_example.org.zone")).unwrap();
+        file
+            .write_all("\
+                example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+                example.org.    240     IN      NS      example.net.\n\
+                example.org.                240 IN  A  128.140.76.106\n\
+                *.example.org.              240 IN  A  1.2.3.4\n\
+                deleg.example.org.          240 IN  NS example.com.\n\
+                occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
+                ".as_bytes())
+            .unwrap();
+
+        dir
+    }
+
+    #[test]
+    fn zonemd_digest_and_replacing_existing_at_apex() {
+        let dir = run_setup();
+
+        let res1 = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-Z",
+            "-z",
+            "SIMPLE:SHA384",
+            "-f",
+            "-",
+            "zonemd1_example.org.zone",
+        ])
+        .cwd(&dir)
+        .run();
+
+        assert_eq!(res1.exit_code, 0);
+        assert_eq!(
+            res1.stdout,
+            "example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
+            example.org.\t240\tIN\tA\t128.140.76.106\n\
+            example.org.\t240\tIN\tNS\texample.net.\n\
+            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\tD2D125EE8B4DDAD944FD7EE437908A5D4D5A7DB7C2F948C5A051146FC75D124666033DF7D1BA1653CF490E89F9A454F3\n\
+            *.example.org.\t240\tIN\tA\t1.2.3.4\n\
+            deleg.example.org.\t240\tIN\tNS\texample.com.\n\
+            occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n"
+        );
+        assert_eq!(res1.stderr, "");
+
+        let res2 = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-Z",
+            "-z",
+            "SIMPLE:SHA384",
+            "-f",
+            "-",
+            "zonemd2_example.org.zone",
+        ])
+        .cwd(&dir)
+        .run();
+
+        assert_eq!(res2.exit_code, 0);
+        assert_eq!(res2.stdout, res1.stdout);
+        assert_eq!(res2.stderr, "");
     }
 }
