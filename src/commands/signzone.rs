@@ -420,9 +420,7 @@ impl SignZone {
         fn parse_zonemd_scheme_ldns(s: &str) -> Result<ZonemdScheme, Error> {
             match s {
                 "simple" | "1" => Ok(ZonemdScheme::Simple),
-                _ => {
-                    return Err(format!("unknown ZONEMD scheme name or number").into());
-                }
+                _ => Err("unknown ZONEMD scheme name or number".into()),
             }
         }
 
@@ -430,9 +428,7 @@ impl SignZone {
             match h {
                 "sha384" | "1" => Ok(ZonemdAlgorithm::Sha384),
                 "sha512" | "2" => Ok(ZonemdAlgorithm::Sha512),
-                _ => {
-                    return Err(format!("unknown ZONEMD algorithm name or number").into());
-                }
+                _ => Err("unknown ZONEMD algorithm name or number".into()),
             }
         }
 
@@ -1213,7 +1209,7 @@ impl SignZone {
         zonemd: &HashSet<ZonemdTuple>,
         soa_serial: Serial,
         ttl: Ttl,
-    ) -> Result<Vec<Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>, Error> {
+    ) -> Result<Vec<Record<StoredName, StoredRecordData>>, Error> {
         let mut zonemd_rrs = Vec::new();
 
         for z in zonemd {
@@ -1246,7 +1242,7 @@ impl SignZone {
         records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
         apex: &FamilyName<Name<Bytes>>,
         keys: &Vec<SigningKey<Bytes, KeyPair>>,
-        zonemd_rrs: Vec<Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>,
+        zonemd_rrs: Vec<Record<StoredName, StoredRecordData>>,
     ) {
         // Sign only ZONEMD RRs
         let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
@@ -1254,7 +1250,7 @@ impl SignZone {
         // No need to check for keys, as SortedRecords::sign just doesn't do anything without keys.
         let mut zonemd_rrsig = zonemd_rrs
             .sign(
-                &apex,
+                apex,
                 self.expiration,
                 self.inception,
                 keys.as_slice(),
@@ -1265,7 +1261,7 @@ impl SignZone {
         // Replace original ZONEMD RRSIG with newly generated one
         if let Some(rrsig) = zonemd_rrsig.pop() {
             if let ZoneRecordData::Rrsig(rrsig) = rrsig.data() {
-                records.replace_rrsig_for_apex_zonemd(rrsig.clone(), &apex);
+                records.replace_rrsig_for_apex_zonemd(rrsig.clone(), apex);
             }
         }
     }
@@ -1473,7 +1469,7 @@ mod test {
     use domain::base::iana::Nsec3HashAlg;
     use domain::rdata::dnssec::Timestamp;
     use domain::rdata::nsec3::Nsec3Salt;
-    use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme, Zonemd};
+    use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme};
     use tempfile::TempDir;
 
     use crate::commands::signzone::{ZonemdTuple, FOUR_WEEKS};
