@@ -352,6 +352,8 @@ impl Keygen {
         #[cfg(not(unix))]
         if how.create() {
             Err("Symlinks can only be created on Unix platforms".into())
+        } else {
+            Ok(())
         }
     }
 }
