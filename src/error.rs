@@ -78,14 +78,6 @@ impl Error {
         let prog = std::env::args().next().unwrap();
         let term = std::io::stderr().is_terminal();
 
-        // 1B is the ASCII C0 ESC control code that introduces an ANSI escape
-        // sequence, 31 is the ANSI escape sequence for setting the terminal
-        // foreground colour to red, and 0 resets all attributes to their
-        // defaults.
-        //
-        // See:
-        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#C0_control_codes
-        //   - https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
         let error_marker = if term {
             Self::colourize(Self::RED, "ERROR:")
         } else {
