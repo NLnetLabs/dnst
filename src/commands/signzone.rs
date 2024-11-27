@@ -564,8 +564,9 @@ impl SignZone {
         let mut keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
 
         'next_key_path: for key_path in &self.key_paths {
+            let key_path = env.in_cwd(key_path).into_owned();
             // Load the private key.
-            let private_key_path = Self::mk_private_key_path(key_path);
+            let private_key_path = Self::mk_private_key_path(&key_path);
             let private_key = Self::load_private_key(&private_key_path)?;
 
             // Note: Our behaviour differs to that of the original
@@ -594,7 +595,7 @@ impl SignZone {
 
             // No matching public key found, try to load the public key
             // instead.
-            let public_key_path = Self::mk_public_key_path(key_path);
+            let public_key_path = Self::mk_public_key_path(&key_path);
             let public_key = Self::load_public_key(&public_key_path)?;
 
             // Verify that the owner of the public key matches the apex of the
