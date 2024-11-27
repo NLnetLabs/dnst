@@ -627,27 +627,7 @@ impl SignZone {
         let (apex, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
         if !zonemd.is_empty() {
-            // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-            let _ = records.remove_all_by_name_class_rtype(
-                apex.owner().clone(),
-                None,
-                Some(Rtype::ZONEMD),
-            );
-
-            // Insert placeholder ZONEMD at apex for
-            // correct NSEC(3) bitmap (will be replaced later).
-            let placeholder_zonemd = ZoneRecordData::Zonemd(Zonemd::new(
-                soa_serial,
-                ZonemdScheme::Reserved,
-                ZonemdAlgorithm::Reserved,
-                Bytes::default(),
-            ));
-            let _ = records.insert(Record::new(
-                apex.owner().clone(),
-                apex.class(),
-                ttl,
-                placeholder_zonemd,
-            ));
+            Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
         }
 
         // Hash the zone with NSEC or NSEC3, unless only ZONEMD is done.
@@ -705,53 +685,13 @@ impl SignZone {
                 Some(Rtype::ZONEMD),
             );
 
-            let mut zonemd_rrs = Vec::new();
-
-            for z in &zonemd {
-                // For now, only the SIMPLE scheme for ZONEMD is defined
-                if z.0 != ZonemdScheme::Simple {
-                    return Err("unsupported zonemd scheme (only SIMPLE is supported)".into());
-                }
-                let digest = Self::create_zonemd_digest_simple(&apex, &records, z.1)?;
-                // println!("ZONEMD Digest: {}", domain::utils::base16::encode_string(digest.as_ref()));
-
-                // Create actual ZONEMD RR
-                let tmp_zrr = ZoneRecordData::Zonemd(Zonemd::new(
-                    soa_serial,
-                    z.0,
-                    z.1,
-                    Bytes::copy_from_slice(digest.as_ref()),
-                ));
-                zonemd_rrs.push(Record::new(
-                    apex.owner().clone(),
-                    apex.class(),
-                    ttl,
-                    tmp_zrr,
-                ));
-            }
+            let zonemd_rrs =
+                Self::create_zonemd_digest_and_records(&records, &apex, &zonemd, soa_serial, ttl)?;
 
             // Add ZONEMD RRs to output records
             records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
 
-            // Sign only ZONEMD RRs
-            let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
-                SortedRecords::from(zonemd_rrs);
-            let mut zonemd_rrsig = zonemd_rrs
-                .sign(
-                    &apex,
-                    self.expiration,
-                    self.inception,
-                    keys.as_slice(),
-                    false,
-                )
-                .unwrap();
-
-            // Replace original ZONEMD RRSIG with newly generated one
-            if let Some(rrsig) = zonemd_rrsig.pop() {
-                if let ZoneRecordData::Rrsig(rrsig) = rrsig.data() {
-                    records.replace_rrsig_for_apex_zonemd(rrsig.clone(), &apex);
-                }
-            }
+            self.update_zonemd_rrsig(&mut records, &apex, &keys, zonemd_rrs);
         }
 
         // Output the resulting zone, with comments if enabled.
@@ -1202,6 +1142,95 @@ impl SignZone {
         }
 
         Ok(ctx.finish())
+    }
+
+    fn replace_apex_zonemd_with_placeholder(
+        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        apex: &FamilyName<Name<Bytes>>,
+        soa_serial: Serial,
+        ttl: Ttl,
+    ) {
+        // Remove existing ZONEMD RRs at apex for any class (it's class independent).
+        let _ =
+            records.remove_all_by_name_class_rtype(apex.owner().clone(), None, Some(Rtype::ZONEMD));
+
+        // Insert placeholder ZONEMD at apex for
+        // correct NSEC(3) bitmap (will be replaced later).
+        let placeholder_zonemd = ZoneRecordData::Zonemd(Zonemd::new(
+            soa_serial,
+            ZonemdScheme::Reserved,
+            ZonemdAlgorithm::Reserved,
+            Bytes::default(),
+        ));
+        let _ = records.insert(Record::new(
+            apex.owner().clone(),
+            apex.class(),
+            ttl,
+            placeholder_zonemd,
+        ));
+    }
+
+    fn create_zonemd_digest_and_records(
+        records: &SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        apex: &FamilyName<Name<Bytes>>,
+        zonemd: &HashSet<ZonemdTuple>,
+        soa_serial: Serial,
+        ttl: Ttl,
+    ) -> Result<Vec<Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>, Error> {
+        let mut zonemd_rrs = Vec::new();
+
+        for z in zonemd {
+            // For now, only the SIMPLE scheme for ZONEMD is defined
+            if z.0 != ZonemdScheme::Simple {
+                return Err("unsupported zonemd scheme (only SIMPLE is supported)".into());
+            }
+            let digest = Self::create_zonemd_digest_simple(apex, records, z.1)?;
+
+            // Create actual ZONEMD RR
+            let tmp_zrr = ZoneRecordData::Zonemd(Zonemd::new(
+                soa_serial,
+                z.0,
+                z.1,
+                Bytes::copy_from_slice(digest.as_ref()),
+            ));
+            zonemd_rrs.push(Record::new(
+                apex.owner().clone(),
+                apex.class(),
+                ttl,
+                tmp_zrr,
+            ));
+        }
+
+        Ok(zonemd_rrs)
+    }
+
+    fn update_zonemd_rrsig(
+        &self,
+        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        apex: &FamilyName<Name<Bytes>>,
+        keys: &Vec<SigningKey<Bytes, KeyPair>>,
+        zonemd_rrs: Vec<Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>,
+    ) {
+        // Sign only ZONEMD RRs
+        let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
+            SortedRecords::from(zonemd_rrs);
+        // No need to check for keys, as SortedRecords::sign just doesn't do anything without keys.
+        let mut zonemd_rrsig = zonemd_rrs
+            .sign(
+                &apex,
+                self.expiration,
+                self.inception,
+                keys.as_slice(),
+                false,
+            )
+            .unwrap();
+
+        // Replace original ZONEMD RRSIG with newly generated one
+        if let Some(rrsig) = zonemd_rrsig.pop() {
+            if let ZoneRecordData::Rrsig(rrsig) = rrsig.data() {
+                records.replace_rrsig_for_apex_zonemd(rrsig.clone(), &apex);
+            }
+        }
     }
 }
 
