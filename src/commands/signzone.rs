@@ -775,9 +775,7 @@ impl SignZone {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
 
-                    records.insert(record).map_err(|record| {
-                        format!("Invalid zone file: Duplicate record detected: {record:?}")
-                    })?;
+                    let _ = records.insert(record);
                 }
                 Entry::Include { .. } => {
                     return Err(Error::from(
