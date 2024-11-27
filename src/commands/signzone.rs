@@ -436,7 +436,7 @@ impl SignZone {
 
     pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
         // Make sure, zonemd arguments are unique
-        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone().into_iter());
+        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
 
         // Post-process arguments.
         // TODO: Can Clap do this for us?
@@ -450,16 +450,14 @@ impl SignZone {
 
         let signing_mode = if self.hash_only {
             SigningMode::HashOnly
-        } else {
-            if self.key_paths.is_empty() {
-                if self.allow_zonemd_without_signing {
-                    SigningMode::None
-                } else {
-                    return Err("Missing key argument".into());
-                }
+        } else if self.key_paths.is_empty() {
+            if self.allow_zonemd_without_signing {
+                SigningMode::None
             } else {
-                SigningMode::HashAndSign
+                return Err("Missing key argument".into());
             }
+        } else {
+            SigningMode::HashAndSign
         };
 
         let out_file = if let Some(out_file) = &self.out_file {
