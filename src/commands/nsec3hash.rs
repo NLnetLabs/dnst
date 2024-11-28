@@ -10,8 +10,9 @@ use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::Args;
 
-use super::{parse_os, parse_os_with, LdnsCommand};
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -61,7 +62,7 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 impl LdnsCommand for Nsec3Hash {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1;
         let mut salt = Nsec3Salt::empty();
@@ -103,12 +104,12 @@ impl LdnsCommand for Nsec3Hash {
             return Err("Missing domain name argument".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Nsec3Hash(Self {
             algorithm,
             iterations,
             salt,
             name,
-        })
+        })))
     }
 }
 

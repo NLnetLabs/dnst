@@ -15,8 +15,9 @@ use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::Args;
 
-use super::LdnsCommand;
+use super::{Command, LdnsCommand};
 
 #[derive(Clone, Debug, Parser, PartialEq, Eq)]
 #[command(version)]
@@ -78,7 +79,7 @@ Options:
 impl LdnsCommand for Key2ds {
     const HELP: &'static str = LDNS_HELP;
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut ignore_sep = false;
         let mut write_to_stdout = false;
         let mut algorithm = None;
@@ -110,7 +111,7 @@ impl LdnsCommand for Key2ds {
             return Err("No keyfile given".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Key2ds(Self {
             ignore_sep,
             write_to_stdout,
             algorithm,
@@ -118,7 +119,7 @@ impl LdnsCommand for Key2ds {
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
-        })
+        })))
     }
 }
 
