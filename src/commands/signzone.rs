@@ -1595,6 +1595,8 @@ mod test {
             res,
             SignZone {
                 allow_zonemd_without_signing: true,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1604,6 +1606,8 @@ mod test {
             res,
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1613,6 +1617,8 @@ mod test {
             res,
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1622,6 +1628,8 @@ mod test {
             res,
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha384)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
