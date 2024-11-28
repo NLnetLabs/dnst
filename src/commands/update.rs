@@ -9,10 +9,7 @@ use domain::base::{
 use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
 use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
-use domain::resolv::{
-    stub::conf::{ResolvConf, ServerConf, Transport},
-    StubResolver,
-};
+use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
 use domain::tsig::{Algorithm, Key, KeyName};
 use domain::utils::base64;
 
@@ -195,11 +192,11 @@ impl LdnsCommand for Update {
 impl Update {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(self.run(env))
+        runtime.block_on(self.run(&env))
     }
 
     /// Run the command as an async function
-    pub async fn run(self, env: impl Env) -> Result<(), Error> {
+    pub async fn run(self, env: &impl Env) -> Result<(), Error> {
         writeln!(
             env.stdout(),
             ";; trying UPDATE with FQDN \"{}\" and IP \"{}\"",
@@ -210,22 +207,26 @@ impl Update {
         let soa_zone;
         let soa_mname;
         if let Some(zone) = &self.zone {
-            soa_mname = self.find_mname(zone).await?;
+            soa_mname = self.find_mname(env, zone).await?;
             soa_zone = zone.clone();
         } else {
             let name = self.domain.clone();
-            (soa_zone, soa_mname) = self.find_mname_and_zone(&name).await?;
+            (soa_zone, soa_mname) = self.find_mname_and_zone(env, &name).await?;
         };
 
-        let nsnames = self.determine_nsnames(&soa_zone, &soa_mname).await?;
+        let nsnames = self.determine_nsnames(env, &soa_zone, &soa_mname).await?;
         let msg = self.create_update_message(&soa_zone);
 
         self.send_update(env, msg, nsnames).await
     }
 
     /// Find the MNAME by sending a SOA query for the zone
-    async fn find_mname(&self, zone: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
-        let resolver = StubResolver::new();
+    async fn find_mname(
+        &self,
+        env: &impl Env,
+        zone: &Name<Vec<u8>>,
+    ) -> Result<Name<Vec<u8>>, Error> {
+        let resolver = env.stub_resolver().await;
 
         let response = resolver
             .query(Question::new(&zone, Rtype::SOA, Class::IN))
@@ -248,9 +249,10 @@ impl Update {
     ///     and the MNAME from that response.
     async fn find_mname_and_zone(
         &self,
+        env: &impl Env,
         name: &Name<Vec<u8>>,
     ) -> Result<(Name<Vec<u8>>, Name<Vec<u8>>), Error> {
-        let resolver = StubResolver::new();
+        let resolver = env.stub_resolver().await;
 
         // Step 1 - first find a nameserver that should know *something*
         let response = resolver
@@ -289,7 +291,7 @@ impl Update {
         )];
         // TODO: Add the standard servers? Is that necessary or just a quirk
         // of ldns.
-        let resolver = StubResolver::from_conf(conf);
+        let resolver = env.stub_resolver_from_conf(conf).await;
 
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
@@ -297,7 +299,7 @@ impl Update {
 
         let mut authority = response.authority()?.limit_to::<Soa<_>>();
         let Some(soa) = authority.next() else {
-            return Err("no SOA record found".into());
+            return Err("no SOA record found hello".into());
         };
 
         let soa = soa?;
@@ -312,11 +314,13 @@ impl Update {
     /// The name server with the given MNAME is put at the start of the list.
     async fn determine_nsnames(
         &self,
+        env: &impl Env,
         zone: &Name<Vec<u8>>,
         mname: &Name<Vec<u8>>,
     ) -> Result<Vec<Name<Vec<u8>>>, Error> {
-        let resolver = StubResolver::new();
-        let response = resolver
+        let response = env
+            .stub_resolver()
+            .await
             .query(Question::new(&zone, Rtype::NS, Class::IN))
             .await?;
 
@@ -396,7 +400,7 @@ impl Update {
         nsnames: Vec<Name<Vec<u8>>>,
     ) -> Result<(), Error> {
         let msg = Message::from_octets(msg).unwrap();
-        let resolver = StubResolver::new();
+        let resolver = env.stub_resolver().await;
 
         let tsig_key = self
             .tsig
@@ -555,5 +559,119 @@ mod test {
                 ..base.clone()
             }
         );
+    }
+
+    #[test]
+    fn run_with_stelline() {
+        let rpl = "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            RANGE_BEGIN 0 100
+            
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+                foo.test IN SOA
+            SECTION ANSWER
+                foo.test 0 IN SOA ns.foo.test admin.foo.test 1 1 1 1 1
+            SECTION AUTHORITY
+                foo.test 0 IN SOA ns.foo.test admin.foo.test 1 1 1 1 1
+            ENTRY_END
+             
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+                zone.foo.test IN SOA
+            SECTION ANSWER
+                zone.foo.test 0 IN SOA ns.foo.test admin.foo.test 1 1 1 1 1
+            ENTRY_END
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+                zone.foo.test IN NS
+            SECTION ANSWER
+                zone.foo.test IN 0 NS ns.foo.test 
+            ENTRY_END
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+               foo.test IN NS
+            SECTION ANSWER
+                foo.test IN 0 NS ns.foo.test 
+            ENTRY_END
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+                ns.foo.test IN A
+            SECTION ANSWER
+                ns.foo.test IN 0 A 12.34.56.78
+            ENTRY_END
+
+            ENTRY_BEGIN
+            MATCH question
+            ADJUST copy_id copy_query
+            REPLY QR
+            SECTION QUESTION
+                ns.foo.test IN AAAA
+            SECTION ANSWER
+            ENTRY_END
+
+            ENTRY_BEGIN 
+            MATCH question opcode
+            ADJUST copy_id copy_query
+            OPCODE UPDATE
+            REPLY QR
+            SECTION QUESTION
+                zone.foo.test IN SOA
+            SECTION ANSWER
+            ENTRY_END
+
+            RANGE_END
+            SCENARIO_END
+        ";
+
+        let cmd = FakeCmd::new([
+            "dnst",
+            "update",
+            "foo.test",
+            "none",
+            "--zone",
+            "zone.foo.test",
+        ])
+        .stelline(rpl.as_bytes(), "update.rpl");
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            ";; trying UPDATE with FQDN \"foo.test\" and IP \"<none>\"\n"
+        );
+        assert_eq!(res.stderr, "");
+
+        let cmd = FakeCmd::new(["dnst", "update", "foo.test", "none"])
+            .stelline(rpl.as_bytes(), "update.rpl");
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            ";; trying UPDATE with FQDN \"foo.test\" and IP \"<none>\"\n"
+        );
+        assert_eq!(res.stderr, "");
     }
 }
