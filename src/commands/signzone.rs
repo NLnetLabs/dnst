@@ -836,8 +836,11 @@ impl SignZone {
                         ZoneRecordData::Nsec3(nsec3) => nsec3.comment(&mut writer, rr, nsec3_cs)?,
                         ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
                         _ => {
-                            // Nothing to do. We do not support bubble babble
+                            // Nothing to do. We do not support Bubble Babble
                             // output for DS records.
+                            //
+                            // See:
+                            // https://bohwaz.net/archives/web/Bubble_Babble.html
                         }
                     }
                     writer.write_str("\n")?;
