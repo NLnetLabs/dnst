@@ -370,6 +370,7 @@ impl Keygen {
 
         #[cfg(not(unix))]
         if how.create() {
+            let _ = (target, link, env);
             Err("Symlinks can only be created on Unix platforms".into())
         } else {
             Ok(())
