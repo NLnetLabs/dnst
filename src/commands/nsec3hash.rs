@@ -60,7 +60,9 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 ";
 
 impl LdnsCommand for Nsec3Hash {
+    const NAME: &'static str = "nsec3-hash";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
