@@ -267,7 +267,7 @@ impl LdnsCommand for SignZone {
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1u16;
         let mut salt = Nsec3Salt::<Bytes>::empty();
-        let mut nsec3_opt_out = false;
+        let mut nsec3_opt_out_flags_only = false;
         let mut key_paths = Vec::<PathBuf>::new();
         let mut zonefile = Option::<PathBuf>::None;
 
@@ -332,7 +332,7 @@ impl LdnsCommand for SignZone {
                     salt = parse_os("-s", &val)?;
                 }
                 Arg::Short('p') => {
-                    nsec3_opt_out = true;
+                    nsec3_opt_out_flags_only = true;
                 }
                 Arg::Value(val) => {
                     if zonefile.is_none() {
@@ -379,10 +379,8 @@ impl LdnsCommand for SignZone {
             algorithm,
             iterations,
             salt,
-            nsec3_opt_out_flags_only: true,
-            // TODO: is mixed up with flags_only? The commend on clap args says
-            // nsec3_opt_out is not originally supported, but flags_only is
-            nsec3_opt_out,
+            nsec3_opt_out_flags_only,
+            nsec3_opt_out: false,
             hash_only: false,
             zonefile_path,
             key_paths,
