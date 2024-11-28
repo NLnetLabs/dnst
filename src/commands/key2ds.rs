@@ -77,7 +77,9 @@ Options:
 ";
 
 impl LdnsCommand for Key2ds {
+    const NAME: &'static str = "key2ds";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut ignore_sep = false;
@@ -100,6 +102,7 @@ impl LdnsCommand for Key2ds {
                     }
                     keyfile = Some(val);
                 }
+                Arg::Short('v') => return Ok(Self::report_version()),
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())

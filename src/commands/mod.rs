@@ -6,6 +6,8 @@ pub mod nsec3hash;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
+use clap::crate_version;
+
 use crate::env::Env;
 use crate::Args;
 
@@ -27,6 +29,13 @@ pub enum Command {
 
     /// Show the manual pages
     Help(self::help::Help),
+
+    /// Report a string to stdout
+    ///
+    /// This is used for printing version information and some other
+    /// information.
+    #[command(skip)]
+    Report(String),
 }
 
 impl Command {
@@ -35,6 +44,10 @@ impl Command {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Help(help) => help.execute(),
+            Self::Report(s) => {
+                writeln!(env.stdout(), "{s}");
+                Ok(())
+            }
         }
     }
 }
@@ -48,7 +61,9 @@ impl Command {
 /// return an error in case of a parsing failure. The help string provided
 /// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
 pub trait LdnsCommand {
+    const NAME: &'static str;
     const HELP: &'static str;
+    const COMPATIBLE_VERSION: &'static str;
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error>;
 
@@ -57,6 +72,16 @@ pub trait LdnsCommand {
             Ok(c) => Ok(c),
             Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
         }
+    }
+
+    fn report_version() -> Args {
+        let s = format!(
+            "ldns-{} provided by dnst v{} (compatible with ldns v{})",
+            Self::NAME,
+            crate_version!(),
+            Self::COMPATIBLE_VERSION,
+        );
+        Args::from(Command::Report(s))
     }
 }
 
