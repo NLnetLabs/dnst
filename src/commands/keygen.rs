@@ -165,8 +165,10 @@ impl LdnsCommand for Keygen {
                 }
 
                 Arg::Short('r') => {
-                    // NOTE: '-r' can be repeated; we don't use it, so the order doesn't matter.
-                    let _ = parser.value()?;
+                    // We don't support '-r', people could rely on it for deterministic output.
+                    return Err(format!(
+                        "a custom source of randomness (-r) is not supported"
+                    ));
                 }
 
                 Arg::Short('s') => {
