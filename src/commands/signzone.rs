@@ -1576,7 +1576,7 @@ mod test {
             algorithm: Nsec3HashAlg::SHA1,
             iterations: 1,
             salt: Nsec3Salt::empty(),
-            nsec3_opt_out_flags_only: true,
+            nsec3_opt_out_flags_only: false,
             nsec3_opt_out: false,
             hash_only: false,
             no_require_keys_match_apex: false,
