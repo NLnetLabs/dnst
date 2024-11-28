@@ -728,31 +728,6 @@ impl SignZone {
             self.update_zonemd_rrsig(&mut records, &apex, &keys, zonemd_rrs);
         }
 
-        // Output the resulting zone, with comments if enabled.
-        if self.extra_comments {
-            writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.owner()))?;
-        }
-
-        if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
-            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
-            if let Some(record) = records.iter().find(|r| {
-                if let ZoneRecordData::Rrsig(rrsig) = r.data() {
-                    rrsig.type_covered() == Rtype::SOA
-                } else {
-                    false
-                }
-            }) {
-                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
-            }
-            if self.extra_comments {
-                writer.write_str(";\n")?;
-            }
-        }
-
-        let hashes_ref = hashes.as_ref();
-        let apex = &apex;
-        let nsec3_cs = Nsec3CommentState { hashes_ref, apex };
-
         // The signed RRs are in DNSSEC canonical order by owner name. For
         // compatibility with ldns-signzone, re-order them to be in canonical
         // order by unhashed owner name and so that hashed names come after
@@ -765,9 +740,9 @@ impl SignZone {
         // creating a new Vec, it only contains references to the original
         // data so it's indiividual are not the records themselves.
         let mut families;
-        let family_iter: AnyFamiliesIter = if self.extra_comments && hashes_ref.is_some() {
+        let family_iter: AnyFamiliesIter = if self.extra_comments && hashes.is_some() {
             families = records.families().collect::<Vec<_>>();
-            let Some(hashes) = hashes_ref else {
+            let Some(hashes) = hashes.as_ref() else {
                 unreachable!();
             };
             families.sort_unstable_by(|a, b| {
@@ -801,13 +776,39 @@ impl SignZone {
             records.families().into()
         };
 
+        // Output the resulting zone, with comments if enabled.
+        if self.extra_comments {
+            writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.owner()))?;
+        }
+
+        if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
+            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+            if let Some(record) = records.iter().find(|r| {
+                if let ZoneRecordData::Rrsig(rrsig) = r.data() {
+                    rrsig.type_covered() == Rtype::SOA
+                } else {
+                    false
+                }
+            }) {
+                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+            }
+            if self.extra_comments {
+                writer.write_str(";\n")?;
+            }
+        }
+
+        let nsec3_cs = Nsec3CommentState {
+            hashes: hashes.as_ref(),
+            apex: &apex,
+        };
+
         for family in family_iter {
-            if let Some(hashes_ref) = hashes_ref {
+            if let Some(hashes) = hashes.as_ref() {
                 // If this is family contains an NSEC3 RR and the number of
                 // RRs in the RRSET of the unhashed owner name is zero, then
                 // the NSEC3 was generated for an empty non-terminal.
                 if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
-                    if let Some(unhashed_name) = hashes_ref.get(family.owner()) {
+                    if let Some(unhashed_name) = hashes.get(family.owner()) {
                         if !records
                             .families()
                             .any(|family| family.owner() == unhashed_name)
@@ -822,26 +823,22 @@ impl SignZone {
                 }
             }
 
-            for rrset in family.rrsets() {
-                if rrset.rtype() == Rtype::SOA {
-                    // This is output separately above as the very first RRset.
-                    continue;
-                }
-
-                if rrset.rtype() == Rtype::RRSIG {
-                    // We output RRSIGs only after the RRset that they cover.
-                    continue;
-                }
-
-                // For each non-RRSIG RRSET RR of a given type.
+            // The SOA is output separately above as the very first RRset so
+            // we skip that, and we skip RRSIGs as they are output only after
+            // the RRset that they cover.
+            for rrset in family
+                .rrsets()
+                .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
+            {
                 for rr in rrset.iter() {
                     writer.write_fmt(format_args!("{}", rr.display_zonefile(false, true)))?;
                     match rr.data() {
-                        ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
-                            nsec3.comment(&mut writer, rr, nsec3_cs)?
-                        }
+                        ZoneRecordData::Nsec3(nsec3) => nsec3.comment(&mut writer, rr, nsec3_cs)?,
                         ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
-                        _ => { /* Nothing to do */ }
+                        _ => {
+                            // Nothing to do. We do not support bubble babble
+                            // output for DS records.
+                        }
                     }
                     writer.write_str("\n")?;
                 }
@@ -853,7 +850,6 @@ impl SignZone {
                     .find_map(|this_rrset| this_rrset.iter().find(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                 {
                     writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
-                    // rrsig.comment(&mut writer, rr, ())?;
                     writer.write_str("\n")?;
                     if self.extra_comments {
                         writer.write_str(";\n")?;
@@ -1332,6 +1328,10 @@ impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
 
 //------------ Commented -----------------------------------------------------
 
+/// Support for RTYPE specific zonefile comment generation.
+///
+/// Intended to be used to enable behaviour to be matched to that of the LDNS
+/// `ldns_rr2buffer_str_fmt()` function.
 trait Commented<T> {
     fn comment<W: fmt::Write>(
         &self,
@@ -1341,9 +1341,29 @@ trait Commented<T> {
     ) -> Result<(), fmt::Error>;
 }
 
+impl Commented<()> for Dnskey<Bytes> {
+    fn comment<W: fmt::Write>(
+        &self,
+        writer: &mut W,
+        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        _metadata: (),
+    ) -> Result<(), fmt::Error> {
+        writer.write_fmt(format_args!(" ;{{id = {}", self.key_tag()))?;
+        if self.is_secure_entry_point() {
+            writer.write_str(" (ksk)")?;
+        } else if self.is_zone_key() {
+            writer.write_str(" (zsk)")?;
+        }
+        let owner = record.owner().clone();
+        let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
+        let key_size = key.key_size();
+        writer.write_fmt(format_args!(", size = {key_size}b}}"))
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Nsec3CommentState<'a> {
-    hashes_ref: Option<&'a HashMap<Name<Bytes>, Name<Bytes>, RandomState>>,
+    hashes: Option<&'a HashMap<Name<Bytes>, Name<Bytes>, RandomState>>,
     apex: &'a FamilyName<Name<Bytes>>,
 }
 
@@ -1354,7 +1374,7 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
         record: &'a Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
         state: Nsec3CommentState<'b>,
     ) -> Result<(), fmt::Error> {
-        if let Some(hashes) = state.hashes_ref {
+        if let Some(hashes) = state.hashes {
             // TODO: For ldns-signzone backward compatibilty we output
             // "  ;{... <domain>.}" but I find the spacing ugly and
             // would prefer for dnst to output " ; {... <domain>. }"
@@ -1387,26 +1407,6 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
             writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
         }
         Ok(())
-    }
-}
-
-impl Commented<()> for Dnskey<Bytes> {
-    fn comment<W: fmt::Write>(
-        &self,
-        writer: &mut W,
-        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
-        _metadata: (),
-    ) -> Result<(), fmt::Error> {
-        writer.write_fmt(format_args!(" ;{{id = {}", self.key_tag()))?;
-        if self.is_secure_entry_point() {
-            writer.write_str(" (ksk)")?;
-        } else if self.is_zone_key() {
-            writer.write_str(" (zsk)")?;
-        }
-        let owner = record.owner().clone();
-        let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
-        let key_size = key.key_size();
-        writer.write_fmt(format_args!(", size = {key_size}b}}"))
     }
 }
 
