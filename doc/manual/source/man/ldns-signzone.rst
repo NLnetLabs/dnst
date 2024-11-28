@@ -62,6 +62,23 @@ Options
 
       Set SOA serial to the number of seconds since Jan 1st 1970.
 
+.. option:: -z <[SCHEME:]HASH>
+
+      Add a ZONEMD resource record. Accepts both mnemonics and numbers.
+      This option can be provided more than once to add multiple ZONEMD RRs.
+      However, only one per scheme-hash tuple will be added.
+
+      | HASH supports ``sha384`` (1) and ``sha512`` (2).
+      | SCHEME supports ``simple`` (1), the default.
+
+.. option:: -Z
+
+      Allow adding ZONEMD RRs without signing the zone. With this option, the
+      <KEY>... argument becomes optional and determines whether to sign the
+      zone.
+
+.. TODO: document -A and -U when implemented
+
 .. option:: -n
 
       Use NSEC3 instead of NSEC. If specified, you can use extra options (see
