@@ -13,6 +13,7 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
+use crate::util;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
@@ -166,9 +167,7 @@ impl LdnsCommand for Keygen {
 
                 Arg::Short('r') => {
                     // We don't support '-r', people could rely on it for deterministic output.
-                    return Err(format!(
-                        "a custom source of randomness (-r) is not supported"
-                    ));
+                    return Err("a custom source of randomness (-r) is not supported".into());
                 }
 
                 Arg::Short('s') => {
@@ -310,11 +309,11 @@ impl Keygen {
         let public_key_path = format!("{base}.key");
         let digest_file_path = self.make_ksk.then(|| format!("{base}.ds"));
 
-        let mut secret_key_file = env.fs_create_new(&secret_key_path)?;
-        let mut public_key_file = env.fs_create_new(&public_key_path)?;
+        let mut secret_key_file = util::create_new_file(&env, &secret_key_path)?;
+        let mut public_key_file = util::create_new_file(&env, &public_key_path)?;
         let mut digest_file = digest_file_path
             .as_ref()
-            .map(|digest_file_path| env.fs_create_new(digest_file_path))
+            .map(|digest_file_path| util::create_new_file(&env, digest_file_path))
             .transpose()?;
 
         Self::symlink(&secret_key_path, ".private", self.symlink, &env)?;
@@ -365,8 +364,8 @@ impl Keygen {
         #[cfg(unix)]
         match how {
             SymlinkArg::No => Ok(()),
-            SymlinkArg::Yes => env.fs_symlink(target, link),
-            SymlinkArg::Force => env.fs_symlink_force(target, link),
+            SymlinkArg::Yes => util::symlink(env, target, link),
+            SymlinkArg::Force => util::symlink_force(env, target, link),
         }
 
         #[cfg(not(unix))]

@@ -13,6 +13,7 @@ pub mod commands;
 pub mod env;
 pub mod error;
 pub mod parse;
+pub mod util;
 
 pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
     args: I,
