@@ -149,7 +149,7 @@ impl LdnsCommand for Keygen {
                             "ED448" | "16" => Some(SecAlg::ED448),
 
                             _ => {
-                                return Err(format!("Invalid value {s:?} for algorithm (-a)"));
+                                return Err("unknown algorithm mnemonic or number");
                             }
                         })
                     })?;
