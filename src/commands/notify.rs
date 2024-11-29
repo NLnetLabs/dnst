@@ -2,77 +2,21 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use chrono::Local;
-use clap::builder::ValueParser;
 use domain::base::iana::{Class, Opcode};
 use domain::base::{Message, MessageBuilder, Name, Question, Record, Rtype, Serial, Ttl};
 use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
 use domain::rdata::Soa;
-use domain::tsig::{Algorithm, Key, KeyName};
-use domain::utils::{base16, base64};
+use domain::tsig::Key;
+use domain::utils::base16;
 use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::parse::TSigInfo;
 use crate::Args;
 
 use super::{parse_os, Command, LdnsCommand};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TSigInfo {
-    name: KeyName,
-    key: Vec<u8>,
-    algorithm: Algorithm,
-}
-
-impl FromStr for TSigInfo {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let Some((mut name, rest)) = s.split_once(':') else {
-            return Err("should contain at least one `:`".into());
-        };
-
-        let mut key;
-        let mut algorithm;
-        if let Some((k, a)) = rest.split_once(':') {
-            key = k;
-            algorithm = a;
-        } else {
-            key = rest;
-            // This is different from ldns's default of
-            // hmac-md5.sig-alg.reg.int but we don't support that algorithm.
-            algorithm = "hmac-sha512";
-        }
-
-        // With dig TSIG keys are also specified with -y,
-        // but our format is: <name:key[:algo]>
-        //      and dig's is: [hmac:]name:key
-        //
-        // When we detect an unknown TSIG algorithm in algo,
-        // but a known algorithm in name, we can assume dig
-        // order was used.
-        //
-        // We can correct this by checking whether the name contains a valid
-        // algorithm while the algorithm doesn't.
-        if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
-            (name, key, algorithm) = (key, algorithm, name);
-        }
-
-        let algorithm = Algorithm::from_str(algorithm)
-            .map_err(|_| format!("Unsupported TSIG algorithm: {algorithm}"))?;
-
-        let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
-
-        let name = KeyName::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
-
-        Ok(TSigInfo {
-            name,
-            key,
-            algorithm,
-        })
-    }
-}
 
 #[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct Notify {
@@ -91,12 +35,7 @@ pub struct Notify {
     soa_version: Option<u32>,
 
     /// A base64 tsig key and optional algorithm to include
-    #[arg(
-        short = 'y',
-        long = "tsig",
-        value_parser = ValueParser::new(TSigInfo::from_str),
-        value_name = "name:key[:algo]",
-    )]
+    #[arg(short = 'y', long = "tsig", value_name = "name:key[:algo]")]
     tsig: Option<TSigInfo>,
 
     /// Port to use to send the packet
@@ -445,7 +384,7 @@ mod tests {
                     tsig: Some(TSigInfo {
                         name: "somekey".parse().unwrap(),
                         key: base64::decode("1234").unwrap(),
-                        algorithm: Algorithm::Sha512,
+                        algorithm: Algorithm::Sha256,
                     }),
                     ..base.clone()
                 }
@@ -512,7 +451,7 @@ mod tests {
                 tsig: Some(TSigInfo {
                     name: "somekey".parse().unwrap(),
                     key: base64::decode("1234").unwrap(),
-                    algorithm: Algorithm::Sha512,
+                    algorithm: Algorithm::Sha256,
                 }),
                 ..base.clone()
             }

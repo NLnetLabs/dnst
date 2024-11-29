@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
-use std::str::FromStr;
 
 use domain::base::iana::{Class, Opcode, Rcode};
 use domain::base::{
@@ -10,11 +9,12 @@ use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
 use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
 use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
-use domain::tsig::{Algorithm, Key, KeyName};
+use domain::tsig::Key;
 use domain::utils::base64;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::parse::TSigInfo;
 use crate::Args;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
@@ -42,7 +42,7 @@ pub struct Update {
     zone: Option<Name<Vec<u8>>>,
 
     /// TSIG credentials for the UPDATE packet
-    #[arg(long = "tsig", value_name = "name:key[:algo]")]
+    #[arg(short = 'y', long = "tsig", value_name = "name:key[:algo]")]
     tsig: Option<TSigInfo>,
 }
 
@@ -53,61 +53,6 @@ fn optional_ip(s: &str) -> Result<Option<IpAddr>, Error> {
         let ip = s.parse().map_err(|_| format!("Invalid IP address: {s}"))?;
         Ok(Some(ip))
     }
-}
-
-impl FromStr for TSigInfo {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // TODO: better error messages
-        let Some((mut name, rest)) = s.split_once(':') else {
-            return Err("should contain at least one `:`".into());
-        };
-
-        let mut key;
-        let mut algorithm;
-        if let Some((k, a)) = rest.split_once(':') {
-            key = k;
-            algorithm = a;
-        } else {
-            key = rest;
-            algorithm = "hmac-sha512";
-        };
-
-        // With dig TSIG keys are also specified with -y,
-        // but our format is: <name:key[:algo]>
-        //      and dig's is: [hmac:]name:key
-        //
-        // When we detect an unknown TSIG algorithm in algo,
-        // but a known algorithm in name, we can assume dig
-        // order was used.
-        //
-        // We can correct this by checking whether the name contains a valid
-        // algorithm while the algorithm doesn't.
-        if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
-            (name, key, algorithm) = (key, algorithm, name);
-        }
-
-        let algorithm = Algorithm::from_str(algorithm)
-            .map_err(|_| format!("Unsupported TSIG algorithm: {algorithm}"))?;
-
-        let key = base64::decode(key).map_err(|e| format!("TSIG key is invalid base64: {e}"))?;
-
-        let name = KeyName::from_str(name).map_err(|e| format!("TSIG name is invalid: {e}"))?;
-
-        Ok(TSigInfo {
-            name,
-            key,
-            algorithm,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TSigInfo {
-    name: KeyName,
-    key: Vec<u8>,
-    algorithm: Algorithm,
 }
 
 const LDNS_HELP: &str = "\
@@ -515,7 +460,7 @@ mod test {
                 tsig: Some(TSigInfo {
                     name: "somekey".parse().unwrap(),
                     key: base64::decode("1234").unwrap(),
-                    algorithm: Algorithm::Sha512,
+                    algorithm: Algorithm::Sha256,
                 }),
                 ..base.clone()
             }
