@@ -61,7 +61,7 @@ impl FromStr for TSigInfo {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // TODO: better error messages
         let Some((mut name, rest)) = s.split_once(':') else {
-            return Err("invalid TSIG string".into());
+            return Err("should contain at least one `:`".into());
         };
 
         let mut key;
