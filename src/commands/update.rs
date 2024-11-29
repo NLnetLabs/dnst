@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use domain::base::iana::{Class, Opcode, Rcode};
@@ -274,19 +274,16 @@ impl Update {
         let soa_mname: Name<Vec<u8>> = soa?.data().mname().to_name();
 
         // Step 2 - find SOA MNAME IP address, add to resolver
-        let response = resolver
-            .query(Question::new(&soa_mname, Rtype::A, Class::IN))
-            .await?;
+        let response = resolver.lookup_host(&soa_mname).await?;
 
-        let Some(a) = response.answer()?.limit_to::<A>().next() else {
+        let Some(ipaddr) = response.iter().next() else {
             return Err("no A record found".into());
         };
-        let ipaddr = a?.data().addr();
 
         // Step 3 - Redo SOA query, sending to SOA MNAME directly.
         let mut conf = ResolvConf::new();
         conf.servers = vec![ServerConf::new(
-            SocketAddr::V4(SocketAddrV4::new(ipaddr, 53)),
+            SocketAddr::new(ipaddr, 53),
             Transport::UdpTcp,
         )];
         // TODO: Add the standard servers? Is that necessary or just a quirk
