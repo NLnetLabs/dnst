@@ -75,15 +75,15 @@ impl FromStr for TSigInfo {
         };
 
         // With dig TSIG keys are also specified with -y,
-        // but out format is: -y <name:key[:algo]>
-        //      and dig's is: -y [hmac:]name:key
+        // but our format is: <name:key[:algo]>
+        //      and dig's is: [hmac:]name:key
         //
-        // When we detect an unknown tsig algorithm in algo,
-        // but a known algorithm in name, we cane assume dig
+        // When we detect an unknown TSIG algorithm in algo,
+        // but a known algorithm in name, we can assume dig
         // order was used.
         //
         // We can correct this by checking whether the name contains a valid
-        // algorithm while the name doesn't.
+        // algorithm while the algorithm doesn't.
         if Algorithm::from_str(algorithm).is_err() && Algorithm::from_str(name).is_ok() {
             (name, key, algorithm) = (key, algorithm, name);
         }
@@ -169,7 +169,7 @@ impl LdnsCommand for Update {
         };
 
         let zone = match zone {
-            Some(z) => Some(parse_os("zone (-z)", z)?),
+            Some(z) => Some(parse_os("zone", z)?),
             None => None,
         };
 
@@ -243,9 +243,9 @@ impl Update {
     /// Find the MNAME and zone
     ///
     /// This is achieved in 3 steps:
-    ///  1. Get the MNAME with an SOA query for the domain name
+    ///  1. Get the MNAME with a SOA query for the domain name
     ///  2. Get the A record for the MNAME
-    ///  3. Send an SOA query to that IP address and use use the owner as zone
+    ///  3. Send a SOA query to that IP address and use the owner as zone
     ///     and the MNAME from that response.
     async fn find_mname_and_zone(
         &self,
@@ -299,7 +299,7 @@ impl Update {
 
         let mut authority = response.authority()?.limit_to::<Soa<_>>();
         let Some(soa) = authority.next() else {
-            return Err("no SOA record found hello".into());
+            return Err("no SOA record found".into());
         };
 
         let soa = soa?;
@@ -330,8 +330,8 @@ impl Update {
             .map(|ns| Ok(ns?.data().nsdname().to_name::<Vec<u8>>()))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        // The mname should be tried first according to RFC2136 4.3
-        // so we put that nsname first in the list.
+        // The MNAME should be tried first according to RFC2136 4.3
+        // so we put that NSNAME first in the list.
         if let Some(mname_idx) = nsnames.iter().position(|name| name == mname) {
             nsnames.swap(0, mname_idx);
         }
@@ -463,7 +463,7 @@ mod test {
     fn parse(cmd: FakeCmd) -> Update {
         let res = cmd.parse().unwrap();
         let Command::Update(x) = res.command else {
-            panic!("Not a Key2ds!");
+            panic!("Not an Update!");
         };
         x
     }
