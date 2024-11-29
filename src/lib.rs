@@ -4,7 +4,7 @@ use std::path::Path;
 use clap::Parser;
 use commands::{key2ds::Key2ds, notify::Notify, nsec3hash::Nsec3Hash, LdnsCommand};
 use env::Env;
-use error::{Error, Exit};
+use error::Error;
 
 pub use self::args::Args;
 
@@ -14,9 +14,8 @@ pub mod env;
 pub mod error;
 
 pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
-    env: impl Env,
     args: I,
-) -> Result<Option<Args>, Exit> {
+) -> Result<Option<Args>, Error> {
     let mut args_iter = args.into_iter();
     let binary_path = args_iter.next().ok_or("Missing binary name")?;
 
@@ -29,9 +28,9 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
     };
 
     let res = match binary_name {
-        "key2ds" => Key2ds::parse_ldns_args(env, args_iter),
-        "notify" => Notify::parse_ldns_args(env, args_iter),
-        "nsec3-hash" => Nsec3Hash::parse_ldns_args(env, args_iter),
+        "key2ds" => Key2ds::parse_ldns_args(args_iter),
+        "notify" => Notify::parse_ldns_args(args_iter),
+        "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         _ => return Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
     };
 
@@ -72,8 +71,8 @@ pub fn extract_binary_name(path: &Path) -> Result<&str, Error> {
     }
 }
 
-fn parse_args(env: impl Env) -> Result<Args, Exit> {
-    if let Some(args) = try_ldns_compatibility(&env, env.args_os())? {
+fn parse_args(env: impl Env) -> Result<Args, Error> {
+    if let Some(args) = try_ldns_compatibility(env.args_os())? {
         return Ok(args);
     }
     let args = Args::try_parse_from(env.args_os())?;
@@ -81,10 +80,10 @@ fn parse_args(env: impl Env) -> Result<Args, Exit> {
 }
 
 pub fn run(env: impl Env) -> u8 {
-    let res = parse_args(&env).and_then(|args| Ok(args.execute(&env)?));
+    let res = parse_args(&env).and_then(|args| args.execute(&env));
     match res {
-        Ok(()) | Err(Exit::Success) => 0,
-        Err(Exit::Error(err)) => {
+        Ok(()) => 0,
+        Err(err) => {
             err.pretty_print(&env);
             err.exit_code()
         }

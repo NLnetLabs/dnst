@@ -2,18 +2,6 @@ use crate::env::Env;
 use std::fmt;
 use std::{error, io};
 
-#[derive(Debug)]
-pub enum Exit {
-    Success,
-    Error(Error),
-}
-
-impl<T: Into<Error>> From<T> for Exit {
-    fn from(value: T) -> Self {
-        Exit::Error(value.into())
-    }
-}
-
 //------------ Error ---------------------------------------------------------
 
 /// A program error.

@@ -9,9 +9,10 @@ use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
 use crate::env::Env;
-use crate::error::{Error, Exit};
+use crate::error::Error;
+use crate::Args;
 
-use super::{parse_os, parse_os_with, LdnsCommand};
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -63,7 +64,7 @@ impl LdnsCommand for Nsec3Hash {
     const HELP: &'static str = LDNS_HELP;
     const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(_env: impl Env, args: I) -> Result<Self, Exit> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1;
         let mut salt = Nsec3Salt::empty();
@@ -105,12 +106,12 @@ impl LdnsCommand for Nsec3Hash {
             return Err("Missing domain name argument".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Nsec3Hash(Self {
             algorithm,
             iterations,
             salt,
             name,
-        })
+        })))
     }
 }
 
@@ -252,7 +253,7 @@ mod tests {
         use core::str;
 
         use crate::env::fake::FakeCmd;
-        use crate::error::Exit;
+        use crate::error::Error;
         use crate::Args;
 
         #[test]
@@ -314,7 +315,7 @@ mod tests {
 
         //------------ Helper functions ------------------------------------------
 
-        fn parse_cmd_line(args: &[&str]) -> Result<Args, Exit> {
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
             FakeCmd::new(["dnst", "nsec3-hash"]).args(args).parse()
         }
 
@@ -330,7 +331,7 @@ mod tests {
         use core::str;
 
         use crate::env::fake::FakeCmd;
-        use crate::error::Exit;
+        use crate::error::Error;
         use crate::Args;
 
         #[test]
@@ -389,7 +390,7 @@ mod tests {
 
         //------------ Helper functions ------------------------------------------
 
-        fn parse_cmd_line(args: &[&str]) -> Result<Args, Exit> {
+        fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
             FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 

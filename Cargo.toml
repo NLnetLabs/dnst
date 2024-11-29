@@ -12,7 +12,7 @@ path = "src/bin/ldns.rs"
 [dependencies]
 bytes = "1.8.0"
 chrono = "0.4.38"
-clap = { version = "4.3.4", features = ["derive", "cargo"] }
+clap = { version = "4.3.4", features = ["cargo", "derive"] }
 domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
     "zonefile",
     "bytes",

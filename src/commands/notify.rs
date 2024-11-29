@@ -13,9 +13,10 @@ use domain::utils::{base16, base64};
 use lexopt::Arg;
 
 use crate::env::Env;
-use crate::error::{Error, Exit};
+use crate::error::Error;
+use crate::Args;
 
-use super::{parse_os, LdnsCommand};
+use super::{parse_os, Command, LdnsCommand};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TSigInfo {
@@ -139,10 +140,7 @@ impl LdnsCommand for Notify {
     const HELP: &'static str = LDNS_HELP;
     const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(
-        env: impl Env,
-        args: I,
-    ) -> Result<Self, Exit> {
+    fn parse_ldns<I: IntoIterator<Item = std::ffi::OsString>>(args: I) -> Result<Args, Error> {
         let mut zone = None;
         let mut soa_version = None;
         let mut tsig = None;
@@ -177,8 +175,8 @@ impl LdnsCommand for Notify {
                     let val = parser.value()?;
                     retries = parse_os("retries (-r)", &val)?;
                 }
-                Arg::Short('h') => Self::print_help(&env)?,
-                Arg::Short('v') => Self::print_version(&env)?,
+                Arg::Short('h') => return Ok(Self::report_help()),
+                Arg::Short('v') => return Ok(Self::report_version()),
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())
@@ -197,7 +195,7 @@ impl LdnsCommand for Notify {
             return Err("Missing servers".into());
         }
 
-        Ok(Notify {
+        Ok(Args::from(Command::Notify(Notify {
             zone,
             soa_version,
             tsig,
@@ -205,7 +203,7 @@ impl LdnsCommand for Notify {
             debug,
             retries,
             servers,
-        })
+        })))
     }
 }
 
@@ -525,8 +523,8 @@ mod tests {
     fn version() {
         let res = FakeCmd::new(["ldns-notify", "-v"]).run();
         assert_eq!(res.exit_code, 0);
-        assert!(res.stdout.contains("ldns-notify provided by dnst version"));
-        assert!(res.stdout.contains("(compatible with ldns version 1.8.4)"));
+        assert!(res.stdout.contains("ldns-notify provided by dnst v"));
+        assert!(res.stdout.contains("(compatible with ldns v1.8.4)"));
     }
 
     fn entries_for_name(name: &str, v4: &[Ipv4Addr], v6: &[Ipv6Addr]) -> String {
