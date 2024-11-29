@@ -7,9 +7,7 @@ pub mod signzone;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
-use key2ds::Key2ds;
-use nsec3hash::Nsec3Hash;
-use signzone::SignZone;
+use clap::crate_version;
 
 use crate::env::Env;
 use crate::Args;
@@ -36,15 +34,26 @@ pub enum Command {
 
     /// Show the manual pages
     Help(self::help::Help),
+
+    /// Report a string to stdout
+    ///
+    /// This is used for printing version information and some other
+    /// information.
+    #[command(skip)]
+    Report(String),
 }
 
 impl Command {
-    pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::SignZone(signzone) => signzone.execute(env, is_ldns),
+            Self::SignZone(signzone) => signzone.execute(env),
             Self::Help(help) => help.execute(),
+            Self::Report(s) => {
+                writeln!(env.stdout(), "{s}");
+                Ok(())
+            }
         }
     }
 }
@@ -57,34 +66,25 @@ impl Command {
 /// The [`LdnsCommand::parse_ldns`] function should parse arguments and
 /// return an error in case of a parsing failure. The help string provided
 /// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
-pub trait LdnsCommand: Into<Command> {
+pub trait LdnsCommand {
+    const NAME: &'static str;
     const HELP: &'static str;
+    const COMPATIBLE_VERSION: &'static str;
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error>;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error>;
 
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        match Self::parse_ldns(args) {
-            Ok(c) => Ok(Args::new(c.into(), true)),
-            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
-        }
+        Self::parse_ldns(args).map_err(|e| format!("Error: {e}\n\n{}", Self::HELP).into())
     }
-}
 
-impl From<Key2ds> for Command {
-    fn from(val: Key2ds) -> Self {
-        Command::Key2ds(val)
-    }
-}
-
-impl From<Nsec3Hash> for Command {
-    fn from(val: Nsec3Hash) -> Self {
-        Command::Nsec3Hash(val)
-    }
-}
-
-impl From<SignZone> for Command {
-    fn from(val: SignZone) -> Self {
-        Command::SignZone(val)
+    fn report_version() -> Args {
+        let s = format!(
+            "ldns-{} provided by dnst v{} (compatible with ldns v{})",
+            Self::NAME,
+            crate_version!(),
+            Self::COMPATIBLE_VERSION,
+        );
+        Args::from(Command::Report(s))
     }
 }
 

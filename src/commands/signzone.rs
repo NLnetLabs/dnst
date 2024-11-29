@@ -15,13 +15,13 @@ use std::path::{Path, PathBuf};
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
+use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme, Zonemd};
-use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData};
+use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData, Zonemd};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
     Family, FamilyName, Nsec3OptOut, Nsec3Records, RecordsIter, SortedRecords,
@@ -37,9 +37,10 @@ use ring::digest;
 
 use crate::env::{Env, Stream};
 use crate::error::Error;
+use crate::Args;
 
 use super::nsec3hash::Nsec3Hash;
-use super::{parse_os, parse_os_with, LdnsCommand};
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 //------------ Constants -----------------------------------------------------
 
@@ -216,6 +217,13 @@ pub struct SignZone {
     // May be omitted if -Z or -H are given
     #[arg(value_name = "key", required_unless_present_any = ["allow_zonemd_without_signing", "hash_only"])]
     key_paths: Vec<PathBuf>,
+
+    // -----------------------------------------------------------------------
+    // Non-command line argument fields:
+    // -----------------------------------------------------------------------
+    /// Whether or not we were invoked as `ldns-signzone`.
+    #[arg(skip)]
+    invoked_as_ldns: bool,
 }
 
 const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
@@ -251,9 +259,11 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
 "###;
 
 impl LdnsCommand for SignZone {
+    const NAME: &'static str = "signzone";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut extra_comments = false;
         let mut do_not_add_keys_to_zone = false;
         let mut expiration = Timestamp::now().into_int().add(FOUR_WEEKS).into();
@@ -365,7 +375,7 @@ impl LdnsCommand for SignZone {
             return Err("Missing key argument".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::SignZone(Self {
             extra_comments,
             do_not_add_keys_to_zone,
             expiration,
@@ -385,7 +395,8 @@ impl LdnsCommand for SignZone {
             zonefile_path,
             key_paths,
             no_require_keys_match_apex: false,
-        })
+            invoked_as_ldns: true,
+        })))
     }
 }
 
@@ -402,7 +413,7 @@ impl SignZone {
                 .parse()
                 .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
         } else {
-            scheme = ZonemdScheme::Simple;
+            scheme = ZonemdScheme::SIMPLE;
             hash_alg = arg
                 .parse()
                 .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
@@ -417,15 +428,15 @@ impl SignZone {
 
         fn parse_zonemd_scheme_ldns(s: &str) -> Result<ZonemdScheme, Error> {
             match s {
-                "simple" | "1" => Ok(ZonemdScheme::Simple),
+                "simple" | "1" => Ok(ZonemdScheme::SIMPLE),
                 _ => Err("unknown ZONEMD scheme name or number".into()),
             }
         }
 
-        fn parse_zonemd_hash_alg_ldns(h: &str) -> Result<ZonemdAlgorithm, Error> {
+        fn parse_zonemd_hash_alg_ldns(h: &str) -> Result<ZonemdAlg, Error> {
             match h {
-                "sha384" | "1" => Ok(ZonemdAlgorithm::Sha384),
-                "sha512" | "2" => Ok(ZonemdAlgorithm::Sha512),
+                "sha384" | "1" => Ok(ZonemdAlg::SHA384),
+                "sha512" | "2" => Ok(ZonemdAlg::SHA512),
                 _ => Err("unknown ZONEMD algorithm name or number".into()),
             }
         }
@@ -434,7 +445,7 @@ impl SignZone {
             scheme = parse_zonemd_scheme_ldns(s)?;
             hash_alg = parse_zonemd_hash_alg_ldns(h)?;
         } else {
-            scheme = ZonemdScheme::Simple;
+            scheme = ZonemdScheme::SIMPLE;
             hash_alg = parse_zonemd_hash_alg_ldns(arg)?;
         };
 
@@ -465,7 +476,7 @@ impl SignZone {
         res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
     }
 
-    pub fn execute(self, env: impl Env, is_ldns: bool) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         // Make sure, zonemd arguments are unique
         let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
 
@@ -513,8 +524,8 @@ impl SignZone {
         // done.
         match self.iterations {
             500.. => Self::write_extreme_iterations_warning(&env),
-            100.. if is_ldns => Self::write_large_iterations_warning(&env),
-            1.. if !is_ldns => Self::write_non_zero_iterations_warning(&env),
+            100.. if self.invoked_as_ldns => Self::write_large_iterations_warning(&env),
+            1.. if !self.invoked_as_ldns => Self::write_non_zero_iterations_warning(&env),
             _ => { /* Good, nothing to warn about */ }
         }
 
@@ -1118,15 +1129,15 @@ impl SignZone {
     fn create_zonemd_digest_simple(
         apex: &FamilyName<Name<Bytes>>,
         records: &SortedRecords<StoredName, StoredRecordData>,
-        algorithm: ZonemdAlgorithm,
+        algorithm: ZonemdAlg,
     ) -> Result<digest::Digest, Error> {
         // TODO: optimize by using multiple digest'ers at once, instead of
         // looping over the whole zone per digest algorithm.
         let mut buf: Vec<u8> = Vec::new();
 
         let mut ctx = match algorithm {
-            ZonemdAlgorithm::Sha384 => digest::Context::new(&digest::SHA384),
-            ZonemdAlgorithm::Sha512 => digest::Context::new(&digest::SHA512),
+            ZonemdAlg::SHA384 => digest::Context::new(&digest::SHA384),
+            ZonemdAlg::SHA512 => digest::Context::new(&digest::SHA512),
             _ => {
                 // This should be caught by the argument parsing, but in case...
                 return Err("unsupported zonemd hash algorithm".into());
@@ -1189,8 +1200,8 @@ impl SignZone {
         // correct NSEC(3) bitmap (will be replaced later).
         let placeholder_zonemd = ZoneRecordData::Zonemd(Zonemd::new(
             soa_serial,
-            ZonemdScheme::Reserved,
-            ZonemdAlgorithm::Reserved,
+            ZonemdScheme::from_int(0),
+            ZonemdAlg::from_int(0),
             Bytes::default(),
         ));
         let _ = records.insert(Record::new(
@@ -1212,7 +1223,7 @@ impl SignZone {
 
         for z in zonemd {
             // For now, only the SIMPLE scheme for ZONEMD is defined
-            if z.0 != ZonemdScheme::Simple {
+            if z.0 != ZonemdScheme::SIMPLE {
                 return Err("unsupported zonemd scheme (only SIMPLE is supported)".into());
             }
             let digest = Self::create_zonemd_digest_simple(apex, records, z.1)?;
@@ -1296,7 +1307,7 @@ enum SigningMode {
 //------------ ZonemdTuple ---------------------------------------------------
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
+struct ZonemdTuple(ZonemdScheme, ZonemdAlg);
 
 //------------ FileOrStdout --------------------------------------------------
 
@@ -1468,10 +1479,9 @@ mod test {
     use std::ops::Add;
     use std::path::PathBuf;
 
-    use domain::base::iana::Nsec3HashAlg;
+    use domain::base::iana::{Nsec3HashAlg, ZonemdAlg, ZonemdScheme};
     use domain::rdata::dnssec::Timestamp;
     use domain::rdata::nsec3::Nsec3Salt;
-    use domain::rdata::zonemd::{Algorithm as ZonemdAlgorithm, Scheme as ZonemdScheme};
     use tempfile::TempDir;
 
     use crate::commands::signzone::{ZonemdTuple, FOUR_WEEKS};
@@ -1527,6 +1537,7 @@ mod test {
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("key1")]),
+            invoked_as_ldns: false,
         };
 
         // Check the defaults
@@ -1537,7 +1548,7 @@ mod test {
         assert_eq!(
             res,
             SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
                 ..base.clone()
             }
         );
@@ -1582,6 +1593,7 @@ mod test {
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("key1")]),
+            invoked_as_ldns: true,
         };
 
         // Check the defaults
@@ -1603,7 +1615,7 @@ mod test {
         assert_eq!(
             res,
             SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
@@ -1614,7 +1626,7 @@ mod test {
         assert_eq!(
             res,
             SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha512)]),
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
@@ -1625,7 +1637,7 @@ mod test {
         assert_eq!(
             res,
             SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::Simple, ZonemdAlgorithm::Sha384)]),
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA384)]),
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
