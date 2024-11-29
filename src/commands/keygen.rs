@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
-use clap::{builder::ValueParser, Args, ValueEnum};
+use clap::{builder::ValueParser, ValueEnum};
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
@@ -13,11 +13,11 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::util;
+use crate::{util, Args};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
-#[derive(Clone, Debug, PartialEq, Eq, Args)]
+#[derive(Clone, Debug, PartialEq, Eq, clap::Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
     ///
@@ -110,9 +110,11 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
 ";
 
 impl LdnsCommand for Keygen {
+    const NAME: &'static str = "keygen";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = None;
         let mut make_ksk = false;
         let mut bits = 2048;
@@ -219,12 +221,13 @@ impl LdnsCommand for Keygen {
             return Err("Missing domain name argument".into());
         };
 
-        Ok(Self {
+        Ok(Command::Keygen(Self {
             algorithm,
             make_ksk,
             symlink,
             name,
         })
+        .into())
     }
 }
 

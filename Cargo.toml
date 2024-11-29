@@ -16,7 +16,7 @@ openssl = ["domain/openssl"]
 ring    = ["domain/ring"]
 
 [dependencies]
-clap = { version = "4.3.4", features = ["derive"] }
+clap = { version = "4.3.4", features = ["cargo", "derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
     "bytes",
     "zonefile",
