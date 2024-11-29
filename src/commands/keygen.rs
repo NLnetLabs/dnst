@@ -27,6 +27,7 @@ pub struct Keygen {
     /// - ECDSAP384SHA384:    An ECDSA P-384 SHA-384 key (algorithm 14)
     /// - ED25519:            An Ed25519 key (algorithm 15)
     /// - ED448:              An Ed448 key (algorithm 16)
+    #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
         long = "algorithm",

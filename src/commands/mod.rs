@@ -39,6 +39,7 @@ pub enum Command {
     /// <tag> is the 16-bit tag of the key, zero-padded to 5 digits.
     ///
     /// Upon completion, 'K<name>+<alg>+<tag>' will be printed.
+    #[allow(rustdoc::invalid_html_tags)]
     #[command(name = "keygen", verbatim_doc_comment)]
     Keygen(self::keygen::Keygen),
 
