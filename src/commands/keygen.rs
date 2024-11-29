@@ -65,7 +65,7 @@ pub struct Keygen {
     symlink: SymlinkArg,
 
     /// The domain name to generate a key for
-    #[arg(value_name = "domain name", value_parser = ValueParser::new(parse_name))]
+    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
