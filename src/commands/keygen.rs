@@ -109,6 +109,15 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
   The base name (K<name>+<alg>+<id>) will be printed to stdout
 ";
 
+const LDNS_ALGS_HELP: &str = "\
+Supported algorithms:
+- RSASHA256 (8)
+- ECDSAP256SHA256 (13)
+- ECDSAP384SHA384 (14)
+- ED25519 (15)
+- ED448 (16)\
+";
+
 impl LdnsCommand for Keygen {
     const NAME: &'static str = "keygen";
     const HELP: &'static str = LDNS_HELP;
@@ -131,19 +140,14 @@ impl LdnsCommand for Keygen {
                         return Err("cannot specify algorithm (-a) more than once".into());
                     }
 
-                    algorithm = parse_os_with("algorithm (-a)", &parser.value()?, |s| {
-                        Ok(match s {
-                            "list" => {
-                                // TODO: Mock stdout and process exit?
-                                println!("Possible algorithms:");
-                                println!("  - RSASHA256 (8)");
-                                println!("  - ECDSAP256SHA256 (13)");
-                                println!("  - ECDSAP384SHA384 (14)");
-                                println!("  - ED25519 (15)");
-                                println!("  - ED448 (16)");
-                                std::process::exit(0);
-                            }
+                    let value = parser.value()?;
 
+                    if value == "list" {
+                        return Ok(Args::from(Command::Report(LDNS_ALGS_HELP.into())));
+                    }
+
+                    algorithm = parse_os_with("algorithm (-a)", &value, |s| {
+                        Ok(match s {
                             "RSASHA256" | "8" => Some(SecAlg::RSASHA256),
                             "ECDSAP256SHA256" | "13" => Some(SecAlg::ECDSAP256SHA256),
                             "ECDSAP384SHA384" | "14" => Some(SecAlg::ECDSAP384SHA384),
@@ -182,7 +186,10 @@ impl LdnsCommand for Keygen {
                     force_symlinks = true;
                 }
 
-                // TODO: '-v' version argument?
+                Arg::Short('v') => {
+                    return Ok(Self::report_version());
+                }
+
                 Arg::Value(value) => {
                     if name.is_some() {
                         return Err("cannot specify multiple domain names".into());
