@@ -51,11 +51,11 @@ impl Env for FakeEnv {
     }
 
     fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(self.stdout.clone())
+        Stream::new(self.stdout.clone(), false)
     }
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(self.stderr.clone())
+        Stream::new(self.stderr.clone(), false)
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
