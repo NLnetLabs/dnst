@@ -1,8 +1,10 @@
 //! A utility module for common operations.
 
-use std::{fs::File, path::Path};
+use std::fs::File;
+use std::path::Path;
 
-use crate::{env::Env, error::Result};
+use crate::env::Env;
+use crate::error::Result;
 
 /// Create and open a file.
 pub fn create_new_file(env: &impl Env, path: impl AsRef<Path>) -> Result<File> {

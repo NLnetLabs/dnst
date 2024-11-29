@@ -2,7 +2,8 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
-use clap::{builder::ValueParser, ValueEnum};
+use clap::builder::ValueParser;
+use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
