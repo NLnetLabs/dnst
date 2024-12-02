@@ -2,18 +2,19 @@
 pub mod help;
 pub mod key2ds;
 pub mod keygen;
+pub mod notify;
 pub mod nsec3hash;
 
+use clap::crate_version;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
-
-use clap::crate_version;
 
 use crate::env::Env;
 use crate::Args;
 
 use super::error::Error;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
     /// Generate a new key pair for a given domain name
@@ -47,6 +48,14 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Send a NOTIFY packet to DNS servers
+    ///
+    /// This tells them that an updated zone is available at the primaries. It can perform TSIG
+    /// signatures and it can add a SOA serial number of the updated zone. If a server already has
+    /// that serial number it will disregard the message.
+    #[command(name = "notify")]
+    Notify(self::notify::Notify),
+
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
     /// The following file will be created for each key:
@@ -72,6 +81,7 @@ impl Command {
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Key2ds(key2ds) => key2ds.execute(env),
+            Self::Notify(notify) => notify.execute(env),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
@@ -99,8 +109,12 @@ pub trait LdnsCommand {
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         match Self::parse_ldns(args) {
             Ok(c) => Ok(c),
-            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
+            Err(e) => Err(format!("{e}\n\n{}", Self::HELP).into()),
         }
+    }
+
+    fn report_help() -> Args {
+        Args::from(Command::Report(Self::HELP.into()))
     }
 
     fn report_version() -> Args {

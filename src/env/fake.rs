@@ -1,11 +1,20 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::{fmt, io};
 
-use crate::{error::Error, parse_args, run, Args};
+use domain::net::client::dgram;
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
+use domain::resolv::stub::conf::ResolvConf;
+use domain::resolv::StubResolver;
+use domain::stelline::client::CurrStepValue;
+use domain::stelline::dgram::Dgram;
+use domain::stelline::parse_stelline::{self, Stelline};
+
+use crate::error::Error;
+use crate::{parse_args, run, Args};
 
 use super::Env;
 use super::Stream;
@@ -19,6 +28,7 @@ pub struct FakeCmd {
     /// The command to run, including `argv[0]`
     cmd: Vec<OsString>,
     cwd: Option<PathBuf>,
+    stelline: Option<Stelline>,
 }
 
 /// The result of running a [`FakeCmd`]
@@ -41,8 +51,8 @@ pub struct FakeEnv {
 
     /// The mocked stderr
     pub stderr: FakeStream,
-    // pub stelline: Option<Stelline>,
-    // pub curr_step_value: Option<Arc<CurrStepValue>>,
+
+    pub stelline: Option<(Stelline, Arc<CurrStepValue>)>,
 }
 
 impl Env for FakeEnv {
@@ -64,6 +74,37 @@ impl Env for FakeEnv {
             None => path.as_ref().into(),
         }
     }
+
+    fn dgram(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
+        if let Some((stelline, step)) = &self.stelline {
+            Dgram::new(stelline.clone(), step.clone())
+        } else {
+            panic!("Tried making a stelline connection without setting up stelline")
+        }
+    }
+
+    async fn stub_resolver_from_conf(&self, mut config: ResolvConf) -> StubResolver {
+        let Some((stelline, step)) = &self.stelline else {
+            panic!("Tried making a stelline connection without setting up stelline")
+        };
+
+        config.servers = vec![];
+        let resolver = StubResolver::from_conf(config);
+        resolver
+            .add_connection(Box::new(dgram::Connection::new(Dgram::new(
+                stelline.clone(),
+                step.clone(),
+            ))))
+            .await;
+        resolver
+    }
 }
 
 impl FakeCmd {
@@ -74,12 +115,20 @@ impl FakeCmd {
         Self {
             cmd: cmd.into_iter().map(Into::into).collect(),
             cwd: None,
+            stelline: None,
         }
     }
 
     pub fn cwd(&self, path: impl AsRef<Path>) -> Self {
         Self {
             cwd: Some(path.as_ref().to_path_buf()),
+            ..self.clone()
+        }
+    }
+
+    pub fn stelline(&self, file: impl fmt::Debug + io::Read, name: impl ToString) -> Self {
+        Self {
+            stelline: Some(parse_stelline::parse_file(file, name)),
             ..self.clone()
         }
     }
@@ -100,10 +149,15 @@ impl FakeCmd {
 
     /// Parse the arguments of this [`FakeCmd`] and return the result
     pub fn parse(&self) -> Result<Args, Error> {
+        debug_assert!(
+            self.stelline.is_none(),
+            "We shouldn't need Stelline for argument parsing"
+        );
         let env = FakeEnv {
             cmd: self.clone(),
             stdout: Default::default(),
             stderr: Default::default(),
+            stelline: None,
         };
         parse_args(env)
     }
@@ -114,6 +168,10 @@ impl FakeCmd {
             cmd: self.clone(),
             stdout: Default::default(),
             stderr: Default::default(),
+            stelline: self
+                .stelline
+                .clone()
+                .map(|s| (s, Arc::new(CurrStepValue::new()))),
         };
 
         let exit_code = run(&env);

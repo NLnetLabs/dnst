@@ -190,6 +190,7 @@ mod tests {
                 cmd: FakeCmd::new(["unused"]),
                 stdout: FakeStream::default(),
                 stderr: FakeStream::default(),
+                stelline: None,
             };
 
             // We don't test all permutations as that would take too long (~20 seconds)

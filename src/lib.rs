@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use clap::Parser;
-use commands::{key2ds::Key2ds, keygen::Keygen, nsec3hash::Nsec3Hash, LdnsCommand};
+use commands::{key2ds::Key2ds, keygen::Keygen, notify::Notify, nsec3hash::Nsec3Hash, LdnsCommand};
 use env::Env;
 use error::Error;
 
@@ -31,6 +31,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
 
     let res = match binary_name {
         "key2ds" => Key2ds::parse_ldns_args(args_iter),
+        "notify" => Notify::parse_ldns_args(args_iter),
         "keygen" => Keygen::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         _ => return Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),

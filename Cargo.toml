@@ -3,6 +3,7 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 default-run = "dnst"
+rust-version = "1.79"
 
 [[bin]]
 name = "ldns"
@@ -13,20 +14,35 @@ default = ["openssl", "ring"]
 
 # Cryptographic backends
 openssl = ["domain/openssl"]
-ring    = ["domain/ring"]
+ring = ["domain/ring"]
 
 [dependencies]
+bytes = "1.8.0"
+chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
     "bytes",
-    "zonefile",
+    "net",
+    "resolv",
+    "tsig",
+    "unstable-client-transport",
     "unstable-sign",
     "unstable-validate",
     "unstable-validator",
+    "zonefile",
 ] }
 lexopt = "0.3.0"
+tokio = "1.40.0"
+
+# This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
+# still uses it. And sharded-slab is used by tracing-subscriber, which is
+# used by domain, which is used by us.
+_unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 
 [dev-dependencies]
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
+domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
+    "unstable-stelline",
+] }
