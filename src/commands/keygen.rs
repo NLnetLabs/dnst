@@ -32,7 +32,7 @@ pub struct Keygen {
     #[arg(
         short = 'a',
         long = "algorithm",
-        value_name = "ALGORITHM",
+        value_name = "algorithm",
         value_parser = ValueParser::new(Keygen::parse_algorithm),
         verbatim_doc_comment,
     )]
@@ -57,6 +57,7 @@ pub struct Keygen {
         short = 's',
         long = "symlink",
         value_enum,
+        value_name = "how",
         num_args = 0..=1,
         require_equals = true,
         default_missing_value = "yes",
@@ -65,7 +66,7 @@ pub struct Keygen {
     symlink: SymlinkArg,
 
     /// The domain name to generate a key for
-    #[arg(value_name = "DOMAIN_NAME", value_parser = ValueParser::new(parse_name))]
+    #[arg(value_name = "domain", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
