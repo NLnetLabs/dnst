@@ -435,14 +435,14 @@ impl SignZone {
         let hash_alg;
 
         fn parse_zonemd_scheme_ldns(s: &str) -> Result<ZonemdScheme, Error> {
-            match s {
+            match s.to_lowercase().as_str() {
                 "simple" | "1" => Ok(ZonemdScheme::SIMPLE),
                 _ => Err("unknown ZONEMD scheme name or number".into()),
             }
         }
 
         fn parse_zonemd_hash_alg_ldns(h: &str) -> Result<ZonemdAlg, Error> {
-            match h {
+            match h.to_lowercase().as_str() {
                 "sha384" | "1" => Ok(ZonemdAlg::SHA384),
                 "sha512" | "2" => Ok(ZonemdAlg::SHA512),
                 _ => Err("unknown ZONEMD algorithm name or number".into()),
