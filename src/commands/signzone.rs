@@ -1536,10 +1536,10 @@ mod test {
         cmd.args(["-Z", "example.org.zone"]).parse().unwrap_err();
         cmd.args(["-z", "simple:sha512", "example.org.zone", "key1"])
             .parse()
-            .unwrap_err();
+            .unwrap();
         cmd.args(["-z", "sha512", "example.org.zone", "key1"])
             .parse()
-            .unwrap_err();
+            .unwrap();
         cmd.args(["-z", "3", "example.org.zone", "key1"])
             .parse()
             .unwrap_err();
@@ -1592,10 +1592,10 @@ mod test {
         cmd.args(["example.org.zone"]).parse().unwrap_err();
         cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "key1"])
             .parse()
-            .unwrap_err();
+            .unwrap();
         cmd.args(["example.org.zone", "-z", "SHA512", "key1"])
             .parse()
-            .unwrap_err();
+            .unwrap();
         cmd.args(["example.org.zone", "-z", "3", "key1"])
             .parse()
             .unwrap_err();
