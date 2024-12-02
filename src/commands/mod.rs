@@ -4,6 +4,7 @@ pub mod key2ds;
 pub mod keygen;
 pub mod notify;
 pub mod nsec3hash;
+pub mod update;
 
 use clap::crate_version;
 use std::ffi::{OsStr, OsString};
@@ -64,6 +65,10 @@ pub enum Command {
     #[command(name = "key2ds")]
     Key2ds(key2ds::Key2ds),
 
+    /// Send an UPDATE packet
+    #[command(name = "update")]
+    Update(self::update::Update),
+
     /// Show the manual pages
     Help(self::help::Help),
 
@@ -82,6 +87,7 @@ impl Command {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Notify(notify) => notify.execute(env),
+            Self::Update(update) => update.execute(env),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");

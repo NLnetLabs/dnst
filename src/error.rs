@@ -1,6 +1,9 @@
-use crate::env::Env;
 use std::fmt;
 use std::{error, io};
+
+use domain::base::wire::ParseError;
+
+use crate::env::Env;
 
 //------------ Error ---------------------------------------------------------
 
@@ -118,6 +121,12 @@ impl From<String> for Error {
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
         Self::new(&error.to_string())
     }
 }
