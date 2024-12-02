@@ -109,7 +109,7 @@ pub trait LdnsCommand {
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         match Self::parse_ldns(args) {
             Ok(c) => Ok(c),
-            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
+            Err(e) => Err(format!("{e}\n\n{}", Self::HELP).into()),
         }
     }
 

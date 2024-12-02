@@ -122,7 +122,7 @@ Ldns notify utility
 
  Supported options:
         -z zone         The zone
-        -I <address>    source address to query from
+        -I <address>    source address to query from (currently unsupported)
         -s version      SOA version number to include
         -y <name:key[:algo]>    specify named base64 tsig key, and optional an
                         algorithm (defaults to hmac-md5.sig-alg.reg.int)
@@ -132,7 +132,7 @@ Ldns notify utility
         -r num          max number of retries (15)
         -h              Print this help information
 
-Report bugs to <dns-team@nlnetlabs.nl>\
+Report bugs to <dns-team@nlnetlabs.nl>
 ";
 
 impl LdnsCommand for Notify {
@@ -157,7 +157,7 @@ impl LdnsCommand for Notify {
                     let val = parser.value()?;
                     zone = Some(parse_os("zone (-z)", &val)?);
                 }
-                Arg::Short('I') => todo!(),
+                Arg::Short('I') => return Err("The -I option is currently unsupported".into()),
                 Arg::Short('s') => {
                     let val = parser.value()?;
                     soa_version = Some(parse_os("soa version (-s)", &val)?);
