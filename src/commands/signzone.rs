@@ -1700,6 +1700,19 @@ mod test {
                 ".as_bytes())
             .unwrap();
 
+        let mut file = File::create(dir.path().join("nsec3_optout1_example.org.zone")).unwrap();
+        file
+            .write_all("\
+                example.org.                          240 IN SOA example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+                example.org.                          240 IN NS  example.net.\n\
+                example.org.                          240 IN A   128.140.76.106\n\
+                insecure-deleg.example.org.           240 IN NS  example.com.\n\
+                occluded.insecure-deleg.example.org.  240 IN A   1.2.3.4\n\
+                secure-deleg.example.org.             240 IN NS  example.com.\n\
+                secure-deleg.example.org.             240 IN DS  3120 15 2 0675d8c4a90ecd25492e4c4c6583afcef7c3b910b7a39162803058e6e7393a19\n\
+                ".as_bytes())
+            .unwrap();
+
         dir
     }
 
@@ -1798,6 +1811,52 @@ mod test {
             deleg.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t3\t240\t1732724662\t1732724662\t38874\texample.org.\tQkbX4pnJpN07vHu7SudHKVAn//dOScDroe0dJGKWLm3qg5xDr4/c2dpvEuJ6Wpe8HRYvorDmSKSvxgVHX3T/Ag==\n\
             occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n"
             );
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    // Test NSEC3 optout behaviour with signing
+    fn ldns_nsec3_optout() {
+        // TODO: maybe make these strings a regex match of some kind for better flexibility with
+        // layout changes that don't affect the zonefile semantics?
+        let dir = run_setup();
+
+        // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone key1 | grep NSEC3
+        let ldns_dnst_output_stripped: &str = "\
+            example.org.\t240\tIN\tNSEC3PARAM\t1\t0\t1\t-\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC3PARAM\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tdOrhLIWhrQm2OunlTWrSsELkx1kKYo4jTkF5pEwrvZxjhUI9DBKdkloaVsTKcdrmffidC5pE9GoY9ckaoHpGCA==\n\
+            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\tK71KU6AICR5JPDJOE9J7CDNLK6D5C3UE\tA\tNS\tSOA\tRRSIG\tDNSKEY\tNSEC3PARAM\n\
+            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tz4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
+            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\tOJICMHRI4VP8PO7H2KVEJ99SKLQNJ5P2\tNS\n\
+            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tHUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
+            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\t93U63BG57PPJ6649AL2N31L92IEDKJD6\tNS\tDS\tRRSIG\n\
+            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tNG/8jk3UHht1ZYNEjUZ4swaEHea1amF4l3jZ893oARi95oxtPVLKoinVbBbfVuoanicOgeZxUPpKWHMBR12XDA==\n\
+            ";
+
+        let res = FakeCmd::new([
+            "ldns-signzone",
+            "-np",
+            "-f-",
+            "-e",
+            "20241127162422",
+            "-i",
+            "20241127162422",
+            "nsec3_optout1_example.org.zone",
+            "key1",
+        ])
+        .cwd(&dir)
+        .run();
+
+        dbg!(&res);
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout
+                .lines()
+                .filter(|s| s.contains("NSEC3"))
+                .map(|s| format!("{}\n", s))
+                .collect::<String>(),
+            ldns_dnst_output_stripped
+        );
         assert_eq!(res.stderr, "");
     }
 }
