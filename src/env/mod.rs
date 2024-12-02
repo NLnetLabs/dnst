@@ -32,6 +32,7 @@ pub trait Env {
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
 
+    /// Make relative paths absolute.
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 
     fn dgram(

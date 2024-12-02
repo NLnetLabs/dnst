@@ -219,3 +219,11 @@ impl<T> Context for Result<T> {
         self.map_err(|err| err.context(&(context)()))
     }
 }
+
+/// Execute the given operation under the given context.
+pub fn in_context<R>(
+    context: impl FnOnce() -> String,
+    function: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    (function)().with_context(context)
+}
