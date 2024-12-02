@@ -8,11 +8,25 @@ default-run = "dnst"
 name = "ldns"
 path = "src/bin/ldns.rs"
 
+[features]
+default = ["openssl", "ring"]
+
+# Cryptographic backends
+openssl = ["domain/openssl"]
+ring    = ["domain/ring"]
+
 [dependencies]
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { version = "0.10.3", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = ["unstable-validator", "zonefile"] }
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
+    "bytes",
+    "zonefile",
+    "unstable-sign",
+    "unstable-validate",
+    "unstable-validator",
+] }
 lexopt = "0.3.0"
 
 [dev-dependencies]
 test_bin = "0.4.0"
 tempfile = "3.14.0"
+regex = "1.11.1"

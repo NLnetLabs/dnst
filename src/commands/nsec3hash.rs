@@ -3,13 +3,14 @@ use std::str::FromStr;
 
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::name::{self, Name};
+use domain::base::name::Name;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::parse::parse_name;
 use crate::Args;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
@@ -47,7 +48,7 @@ pub struct Nsec3Hash {
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
@@ -116,10 +117,6 @@ impl LdnsCommand for Nsec3Hash {
 }
 
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, name::FromStrError> {
-        Name::from_str(&arg.to_lowercase())
-    }
-
     // Note: This function is only necessary until
     // https://github.com/NLnetLabs/domain/pull/431 is merged.
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
