@@ -1775,27 +1775,28 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
-            example.org.\t240\tIN\tRRSIG\tSOA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tubpDtDSKyO1QB8sItZaYgngByZmZ4nC3APfcIhR6LRKcLm2ivNra2QaSnCuMqSNULdPtynqMXtdpd0hAaDCOCQ==\n\
+            "\
+            example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
+            example.org.\t240\tIN\tRRSIG\tSOA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\t2Jp7z/VMHlUvZoXApvsolX78ZzH9BmI8jznVHjagpmjOto/tAb1bL7AaTcOG2Ihk+uSSvDmIExaax0dbtL8CAg==\n\
             example.org.\t240\tIN\tA\t128.140.76.106\n\
-            example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tbwiPzp/CD3/vGz22da9OVWI34R1CaPqe3LSgm3UyFyQ7zxn8GrlKX5l7OHf15jSyYWgd4qGFER3XgvCj+0ZgCw==\n\
+            example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tdVrR1Ay58L3cDaRIial45keWp/X8roeirciEqJqVZcqWO4AkSaILqDYIpfNRf3i9WvDzio0BLZT5K4r2krmyCA==\n\
             example.org.\t240\tIN\tNS\texample.net.\n\
-            example.org.\t240\tIN\tRRSIG\tNS\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tnhaHOrSvqfnXD9VIg1pIFhRmIdlSTxGAxEY/fWGZPJlA3iw7JGvLl0KpH5nSNPgMKArV6wqnF5sCpaZM3JFDAg==\n\
+            example.org.\t240\tIN\tRRSIG\tNS\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tJJDRuXMuv9yiJAFN+15/7DBbaBHepA20QxLruqrjSJZsgzRcPb1UTyGozlsq9BdCq3oxZm8lea5DcIi2tyGVDQ==\n\
             example.org.\t240\tIN\tNSEC\t*.example.org.\tA\tNS\tSOA\tRRSIG\tNSEC\tDNSKEY\tZONEMD\n\
-            example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tDacktsTAulRMlUAI+C557/PO/LczjKO42B0UahkTYKgb1OCM4vSfCRnBvzp5gGtb/92VvcdHbgExavZmvcvqAA==\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tbL1aldkxI/a0P9Oo3FUJfGspDchBs8B476AnKS4O5g43KZ5Oy+Xvb5UimyzFQ2f5gXL47cdt8EMmuy2iRhUpBg==\n\
             example.org.\t240\tIN\tDNSKEY\t257\t3\t15\t6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n\
-            example.org.\t240\tIN\tDNSKEY\t258\t3\t15\t6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38874 (zsk), size = 256b}\n\
-            example.org.\t240\tIN\tRRSIG\tDNSKEY\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tz8ecItPcgUElneJc/VBAmqxOUloYxC7ff5CwClZGH0/jnOrdC6P3GPRTeHVpBlUnpaMBHTWHdpn6RFXut4I7Ag==\n\
-            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\tD7309C80EA9F3EC0DF549E796E3E0DA0F99A6C3E36AAD7E039C3AC9E94834DD22D2CF73BB41C918914F315511C76A2A8\n\
-            example.org.\t240\tIN\tRRSIG\tZONEMD\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tSjPvYWFvqwX26AxwDGs4YUq56/j9mTCG8zewWNmUv2yvqGL3m+eiGHbmB/GDRDDWEXqt0GGNPP644HaW9JEbAg==\n\
+            example.org.\t240\tIN\tRRSIG\tDNSKEY\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tUPk13WDbN2MLjSwgV82084DrNUdJFmS9bthBw52X0rfiBMAvrQJJhSYbq72G5j11SFp2DnUyml8stScKJyMlCQ==\n\
+            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\t97FCF584F87A42EA94F7C0DE25F3BA581A48D5FC4C5F1DD0FB275B9634EFE68A268606B6AB92A5D95062AB563B58196A\n\
+            example.org.\t240\tIN\tRRSIG\tZONEMD\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tf2VO/ROXqwgZdQNmTcu3Cc6zYbsFNRwiJsdYcfX1e+mdgIBt8PFsa5OOUy7VJHZnFD4/5Gq6n/6/FkWF/5iNDg==\n\
             *.example.org.\t240\tIN\tA\t1.2.3.4\n\
-            *.example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tr0y1xlc1QYWQKHLsK6UH5t7ByjcqkGNwOkHz5uJnREurhXqZJyv/ZA32ZsP9SQ+HOcWrSd+kiqCF9j7cNVAJDg==\n\
+            *.example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\t1eLPyREltQqUClcAuT4SkqdWXL8D4C3K0mnotLv8d1x6kh/ARcac9l99ulLwtxvmJb+61+zv4vFgX35Yqbm1BA==\n\
             *.example.org.\t240\tIN\tNSEC\tdeleg.example.org.\tA\tRRSIG\tNSEC\n\
-            *.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38874\texample.org.\tzS2EXRkVem5j1YBXm0miaPZk3A57Qe6gtwo/vGLtbdTcGdQeDVFGtSSHM3fYj6DRkQmb7smREhNWK9VMtffVAQ==\n\
+            *.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tFgRwrOd36au9ijKnx3AxsyN5Ar4mwt4AALTye3/IqravMHa2pTTP8h0Z2GXgu3YPmP3RXpPTwza5960KwE8YCQ==\n\
             deleg.example.org.\t240\tIN\tNS\texample.com.\n\
             deleg.example.org.\t240\tIN\tNSEC\texample.org.\tNS\tRRSIG\tNSEC\n\
-            deleg.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t3\t240\t1732724662\t1732724662\t38874\texample.org.\tQkbX4pnJpN07vHu7SudHKVAn//dOScDroe0dJGKWLm3qg5xDr4/c2dpvEuJ6Wpe8HRYvorDmSKSvxgVHX3T/Ag==\n\
-            occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n"
+            deleg.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tm/j7UOa1SvFw0rz5pBXVWS62gX328rxveNeD+Gd7husNcvbYhW2rLLYfTCG6LNvUP4fG2rJ45OhY3g3Trx2iBQ==\n\
+            occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n\
+            "
             );
         assert_eq!(res.stderr, "");
     }
