@@ -414,20 +414,40 @@ impl SignZone {
         let hash_alg;
 
         if let Some((s, h)) = arg.split_once(':') {
-            scheme = s
-                .parse()
-                .map_err(|e| format!("Error while parsing zonemd scheme: {e}"))?;
-            hash_alg = h
-                .parse()
-                .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
+            scheme = if let Ok(num) = s.parse() {
+                Self::num_to_zonemd_scheme(num)
+            } else {
+                ZonemdScheme::from_mnemonic(s.as_bytes()).ok_or("unknown ZONEMD scheme mnemonic")
+            }?;
+            hash_alg = h;
         } else {
             scheme = ZonemdScheme::SIMPLE;
             hash_alg = arg
-                .parse()
-                .map_err(|e| format!("Error while parsing zonemd hash algorithm: {e}"))?;
         };
 
+        let hash_alg = if let Ok(num) = hash_alg.parse() {
+            Self::num_to_zonemd_alg(num)
+        } else {
+            ZonemdAlg::from_mnemonic(hash_alg.as_bytes()).ok_or("unknown ZONEMD algorithm mnemonic")
+        }?;
+
         Ok(ZonemdTuple(scheme, hash_alg))
+    }
+
+    pub fn num_to_zonemd_alg(num: u8) -> Result<ZonemdAlg, &'static str> {
+        let alg = ZonemdAlg::from_int(num);
+        match alg.to_mnemonic() {
+            Some(_) => Ok(alg),
+            None => Err("unknown ZONEMD algorithm number"),
+        }
+    }
+
+    pub fn num_to_zonemd_scheme(num: u8) -> Result<ZonemdScheme, &'static str> {
+        let alg = ZonemdScheme::from_int(num);
+        match alg.to_mnemonic() {
+            Some(_) => Ok(alg),
+            None => Err("unknown ZONEMD scheme number"),
+        }
     }
 
     fn parse_zonemd_tuple_ldns(arg: &str) -> Result<ZonemdTuple, Error> {
