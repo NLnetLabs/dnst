@@ -293,7 +293,11 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('e') => {
                     let val = parser.value()?;
-                    expiration = parse_os_with("-e", &val, SignZone::parse_timestamp)?;
+                    // LDNS treats 0 as unset.
+                    let val_as_num = usize::from_str(val.to_str().unwrap_or_default());
+                    if val_as_num.is_err() || val_as_num.unwrap() > 0 {
+                        expiration = parse_os_with("-e", &val, SignZone::parse_timestamp)?;
+                    }
                 }
                 Arg::Short('f') => {
                     let val = parser.value()?;
@@ -301,7 +305,11 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('i') => {
                     let val = parser.value()?;
-                    inception = parse_os_with("-i", &val, SignZone::parse_timestamp)?;
+                    // LDNS treats 0 as unset.
+                    let val_as_num = usize::from_str(val.to_str().unwrap_or_default());
+                    if val_as_num.is_err() || val_as_num.unwrap() > 0 {
+                        inception = parse_os_with("-e", &val, SignZone::parse_timestamp)?;
+                    }
                 }
                 Arg::Short('o') => {
                     let val = parser.value()?;
