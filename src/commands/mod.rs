@@ -17,7 +17,6 @@ use super::error::Error;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
-#[allow(clippy::large_enum_variant)]
 pub enum Command {
     /// Generate a new key pair for a given domain name
     ///
