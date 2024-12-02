@@ -239,9 +239,16 @@ impl Update {
             .query(Question::new(&name, Rtype::SOA, Class::IN))
             .await?;
 
-        let mut authority = response.authority()?.limit_to::<Soa<_>>();
-        let Some(soa) = authority.next() else {
-            return Err("no SOA record found".into());
+        // We look in both the answer and authority sections.
+        // The answer section is used if the domain name is the zone apex,
+        // otherwise the SOA is in the authority section.
+        let mut sections = response
+            .answer()?
+            .limit_to_in::<Soa<_>>()
+            .chain(response.authority()?.limit_to_in::<Soa<_>>());
+
+        let Some(soa) = sections.next() else {
+            return Err("no SOA found".into());
         };
 
         let soa = soa?;
