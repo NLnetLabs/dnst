@@ -668,25 +668,6 @@ impl SignZone {
             //     public_key_path.display(),
             //     private_key_path.display()
             // );
-
-            let public_key = Key::<Bytes>::new(
-                public_key.owner().clone(),
-                public_key.flags() + 1,
-                public_key.raw_public_key().clone(),
-            );
-
-            let signing_key =
-                Self::mk_signing_key(&private_key, public_key.clone()).map_err(|err| {
-                    format!(
-                        "Unable to create key pair from '{}' and '{}': {}",
-                        public_key_path.display(),
-                        private_key_path.display(),
-                        err
-                    )
-                })?;
-
-            // Store the created signing key.
-            keys.push(signing_key);
         }
 
         // Change the SOA serial.
