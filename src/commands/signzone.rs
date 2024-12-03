@@ -853,7 +853,7 @@ impl SignZone {
         }
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
-            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false)))?;
             if let Some(record) = records.iter().find(|r| {
                 if let ZoneRecordData::Rrsig(rrsig) = r.data() {
                     rrsig.type_covered() == Rtype::SOA
@@ -861,7 +861,7 @@ impl SignZone {
                     false
                 }
             }) {
-                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false, true)))?;
+                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false)))?;
             }
             if self.extra_comments {
                 writer.write_str(";\n")?;
@@ -902,7 +902,7 @@ impl SignZone {
                 .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
             {
                 for rr in rrset.iter() {
-                    writer.write_fmt(format_args!("{}", rr.display_zonefile(false, true)))?;
+                    writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
                     match rr.data() {
                         ZoneRecordData::Nsec3(nsec3) => nsec3.comment(&mut writer, rr, nsec3_cs)?,
                         ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
@@ -924,7 +924,7 @@ impl SignZone {
                     .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                 {
                     for covering_rrsig_rr in covering_rrsigs {
-                        writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
+                        writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
                         writer.write_str("\n")?;
                         if self.extra_comments {
                             writer.write_str(";\n")?;

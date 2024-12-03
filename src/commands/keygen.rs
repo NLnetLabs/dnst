@@ -342,7 +342,7 @@ impl Keygen {
             format!(
                 "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(false, true)
+                digest.display_zonefile(false)
             )
         });
 
