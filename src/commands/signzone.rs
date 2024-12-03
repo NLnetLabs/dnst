@@ -1479,7 +1479,7 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
     }
 }
 
-//------------ Tests --------------------------------------------------------
+//------------ Tests ---------------------------------------------------------
 
 #[cfg(test)]
 mod test {
@@ -1515,13 +1515,7 @@ mod test {
         cmd.parse().unwrap_err();
         cmd.args(["example.org.zone"]).parse().unwrap_err();
         cmd.args(["-Z", "example.org.zone"]).parse().unwrap_err();
-        cmd.args(["-z", "simple:sha512", "example.org.zone", "key1"])
-            .parse()
-            .unwrap();
-        cmd.args(["-z", "sha512", "example.org.zone", "key1"])
-            .parse()
-            .unwrap();
-        cmd.args(["-z", "3", "example.org.zone", "key1"])
+        cmd.args(["-z", "3", "example.org.zone", "anykey"])
             .parse()
             .unwrap_err();
         // TODO: other parse failures
@@ -1545,17 +1539,32 @@ mod test {
             hash_only: false,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
-            key_paths: Vec::from([PathBuf::from("key1")]),
+            key_paths: Vec::from([PathBuf::from("anykey")]),
             invoked_as_ldns: false,
         };
 
-        // Check the defaults
-        let res = parse(cmd.args(["example.org.zone", "key1"]));
-        assert_eq!(res, base);
 
-        let res = parse(cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "key1"]));
+        // Check the defaults
+        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
+
         assert_eq!(
-            res,
+            parse(cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                ..base.clone()
+            }
+        );
+
+        assert_eq!(
+            parse(cmd.args(["example.org.zone", "-z", "simple:sha512", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                ..base.clone()
+            }
+        );
+
+        assert_eq!(
+            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
                 ..base.clone()
@@ -1571,13 +1580,13 @@ mod test {
 
         cmd.parse().unwrap_err();
         cmd.args(["example.org.zone"]).parse().unwrap_err();
-        cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "key1"])
+        cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "anykey"])
             .parse()
             .unwrap();
-        cmd.args(["example.org.zone", "-z", "SHA512", "key1"])
+        cmd.args(["example.org.zone", "-z", "SHA512", "anykey"])
             .parse()
             .unwrap();
-        cmd.args(["example.org.zone", "-z", "3", "key1"])
+        cmd.args(["example.org.zone", "-z", "3", "anykey"])
             .parse()
             .unwrap_err();
         // TODO: other parse failures
@@ -1601,15 +1610,15 @@ mod test {
             hash_only: false,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
-            key_paths: Vec::from([PathBuf::from("key1")]),
+            key_paths: Vec::from([PathBuf::from("anykey")]),
             invoked_as_ldns: true,
         };
 
         // Check the defaults
-        let res = parse(cmd.args(["example.org.zone", "key1"]));
+        let res = parse(cmd.args(["example.org.zone", "anykey"]));
         assert_eq!(res, base);
 
-        let res = parse(cmd.args(["-Z", "example.org.zone", "key1"]));
+        let res = parse(cmd.args(["-Z", "example.org.zone", "anykey"]));
         assert_eq!(
             res,
             SignZone {
@@ -1620,7 +1629,7 @@ mod test {
             }
         );
 
-        let res = parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "key1"]));
+        let res = parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"]));
         assert_eq!(
             res,
             SignZone {
@@ -1631,7 +1640,7 @@ mod test {
             }
         );
 
-        let res = parse(cmd.args(["example.org.zone", "-z", "sha512", "key1"]));
+        let res = parse(cmd.args(["example.org.zone", "-z", "sha512", "anykey"]));
         assert_eq!(
             res,
             SignZone {
@@ -1642,7 +1651,7 @@ mod test {
             }
         );
 
-        let res = parse(cmd.args(["example.org.zone", "-z", "1", "key1"]));
+        let res = parse(cmd.args(["example.org.zone", "-z", "1", "anykey"]));
         assert_eq!(
             res,
             SignZone {
@@ -1664,9 +1673,12 @@ mod test {
     fn run_setup() -> TempDir {
         let dir = tempfile::TempDir::new().unwrap();
 
-        create_file_with_content(&dir, "key1.key", b"example.org. IN DNSKEY 257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n");
-        create_file_with_content(&dir, "key1.ds", b"example.org. IN DS 38873 15 2 e195b1a7d31c878993ad0095d723592a1e5ea55c90b229fc35e4c549ef406f6c\n");
-        create_file_with_content(&dir, "key1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: /e7bFDFF88sdC949PC2YoHX9KJ5eEak3bk/Tub2vIng=\n");
+        create_file_with_content(&dir, "ksk1.key", b"example.org. IN DNSKEY 257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n");
+        create_file_with_content(&dir, "ksk1.ds", b"example.org. IN DS 38873 15 2 e195b1a7d31c878993ad0095d723592a1e5ea55c90b229fc35e4c549ef406f6c\n");
+        create_file_with_content(&dir, "ksk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: /e7bFDFF88sdC949PC2YoHX9KJ5eEak3bk/Tub2vIng=\n");
+
+        create_file_with_content(&dir, "zsk1.key", b"example.org. IN DNSKEY 256 3 15 fPzhX3Tq/w3ncwsWYIRsK8rHLNtkVv1O3kXYAMdBQUk= ;{id = 44471 (zsk), size = 256b}");
+        create_file_with_content(&dir, "zsk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: mc2xW8JiES5Ub6UPP2xoHT0KyD6Lvi6fnjugjnRzBJU=");
 
         create_file_with_content(&dir, "zonemd1_example.org.zone", b"\
                 example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
@@ -1674,15 +1686,6 @@ mod test {
                 ; Will be replaced when using ZONEMD option\n\
                 example.org.    240     IN      ZONEMD 1234567890 1 1 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB\n\
                 example.org.    240     IN      ZONEMD 1234567890 1 2 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABAB\n\
-                example.org.                240 IN  A  128.140.76.106\n\
-                *.example.org.              240 IN  A  1.2.3.4\n\
-                deleg.example.org.          240 IN  NS example.com.\n\
-                occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
-                ");
-
-        create_file_with_content(&dir, "zonemd2_example.org.zone", b"\
-                example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
-                example.org.    240     IN      NS      example.net.\n\
                 example.org.                240 IN  A  128.140.76.106\n\
                 *.example.org.              240 IN  A  1.2.3.4\n\
                 deleg.example.org.          240 IN  NS example.com.\n\
@@ -1775,7 +1778,7 @@ mod test {
             "SIMPLE:SHA384",
             "-f",
             "-",
-            "zonemd2_example.org.zone",
+            "zonemd1_example.org.zone",
         ])
         .cwd(&dir)
         .run();
@@ -1801,7 +1804,7 @@ mod test {
             "-i",
             "20241127162422",
             "zonemd1_example.org.zone",
-            "key1",
+            "ksk1",
         ])
         .cwd(&dir)
         .run();
@@ -1843,7 +1846,7 @@ mod test {
         // layout changes that don't affect the zonefile semantics?
         let dir = run_setup();
 
-        // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone key1 | grep NSEC3
+        // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
             example.org.\t240\tIN\tNSEC3PARAM\t1\t0\t1\t-\n\
             example.org.\t240\tIN\tRRSIG\tNSEC3PARAM\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tdOrhLIWhrQm2OunlTWrSsELkx1kKYo4jTkF5pEwrvZxjhUI9DBKdkloaVsTKcdrmffidC5pE9GoY9ckaoHpGCA==\n\
@@ -1864,7 +1867,7 @@ mod test {
             "-i",
             "20241127162422",
             "nsec3_optout1_example.org.zone",
-            "key1",
+            "ksk1",
         ])
         .cwd(&dir)
         .run();
