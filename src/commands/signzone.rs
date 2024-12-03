@@ -16,6 +16,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
+use domain::base::iana::SecAlg;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
@@ -24,7 +25,8 @@ use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData, Zonemd};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
-    Family, FamilyName, Nsec3OptOut, Nsec3Records, RecordsIter, SortedRecords,
+    DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose, Nsec3OptOut, Nsec3Records,
+    RecordsIter, Signer, SigningKeyUsageStrategy, SortedRecords, Sorter,
 };
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::validate::Key;
@@ -133,13 +135,14 @@ pub struct SignZone {
     #[arg(short = 'Z', requires = "zonemd")]
     allow_zonemd_without_signing: bool,
 
-    // Sign DNSKEY with all keys instead of minimal
-    //#[arg(short = 'A', default_value_t = false)]
-    // TODO: sign_dnskey_with_all_keys: bool,
+    // Sign DNSKEYs with all keys instead of minimal
+    #[arg(short = 'A', default_value_t = false)]
+    sign_dnskeys_with_all_keys: bool,
 
     // Sign with every unique algorithm in the provided keys
-    //#[arg(short = 'U', default_value_t = false)]
-    // TODO: sign_with_every_unique_algorithm: bool,
+    #[arg(short = 'U', default_value_t = false)]
+    sign_with_every_unique_algorithm: bool,
+
     /// Use NSEC3 instead of NSEC
     #[arg(short = 'n', default_value_t = false, group = "nsec3")]
     use_nsec3: bool,
@@ -273,6 +276,8 @@ impl LdnsCommand for SignZone {
         let mut set_soa_serial_to_epoch_time = false;
         let mut zonemd = Vec::new();
         let mut allow_zonemd_without_signing = false;
+        let mut sign_dnskeys_with_all_keys = false;
+        let mut sign_with_every_unique_algorithm = false;
         let mut use_nsec3 = false;
         let mut algorithm = Nsec3HashAlg::SHA1;
         let mut iterations = 1u16;
@@ -328,6 +333,12 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('Z') => {
                     allow_zonemd_without_signing = true;
+                }
+                Arg::Short('A') => {
+                    sign_dnskeys_with_all_keys = true;
+                }
+                Arg::Short('U') => {
+                    sign_with_every_unique_algorithm = true;
                 }
                 Arg::Short('v') => {
                     return Ok(Self::report_version());
@@ -391,6 +402,8 @@ impl LdnsCommand for SignZone {
             set_soa_serial_to_epoch_time,
             zonemd,
             allow_zonemd_without_signing,
+            sign_dnskeys_with_all_keys,
+            sign_with_every_unique_algorithm,
             use_nsec3,
             algorithm,
             iterations,
@@ -503,9 +516,6 @@ impl SignZone {
     }
 
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        // Make sure, zonemd arguments are unique
-        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
-
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
@@ -536,7 +546,7 @@ impl SignZone {
                 .map_err(|err| format!("Cannot write to {out_file}: {err}"))?
         };
 
-        let mut writer = if out_file.as_os_str() == "-" {
+        let writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
             let file = File::create(env.in_cwd(&out_file))?;
@@ -556,7 +566,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let mut records = self.load_zone(&env)?;
+        let records = self.load_zone(&env)?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -596,7 +606,7 @@ impl SignZone {
         // public key file and validate that its owner matches that of the
         // zone apex. Unlike ldns-signzone we don't use a generated public key
         // if these attempts fail.
-        let mut keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
+        let mut signing_keys: Vec<DnssecSigningKey<Bytes, KeyPair>> = vec![];
 
         'next_key_path: for key_path in &self.key_paths {
             let key_path = env.in_cwd(key_path).into_owned();
@@ -614,7 +624,7 @@ impl SignZone {
             for public_key in &found_public_keys {
                 // Attempt to create a key pair from this public key and every
                 // private key that we have.
-                if let Ok(signing_key) = Self::mk_signing_key(&private_key, public_key.clone()) {
+                if let Ok(signing_key) = self.mk_signing_key(&private_key, public_key.clone()) {
                     // Match found, keep the created signing key.
                     // TODO: Log here.
                     // TODO: Check the key tag against the key tag in the key file name?
@@ -623,7 +633,7 @@ impl SignZone {
                     //     public_key.key_tag(),
                     //     private_key_path.display()
                     // );
-                    keys.push(signing_key);
+                    signing_keys.push(DnssecSigningKey::inferred(signing_key));
                     continue 'next_key_path;
                 }
             }
@@ -646,8 +656,9 @@ impl SignZone {
 
             // Attempt to crate a key pair from the loaded private and public
             // keys.
-            let signing_key =
-                Self::mk_signing_key(&private_key, public_key.clone()).map_err(|err| {
+            let signing_key = self
+                .mk_signing_key(&private_key, public_key.clone())
+                .map_err(|err| {
                     format!(
                         "Unable to create key pair from '{}' and '{}': {}",
                         public_key_path.display(),
@@ -657,7 +668,7 @@ impl SignZone {
                 })?;
 
             // Store the created signing key.
-            keys.push(signing_key);
+            signing_keys.push(DnssecSigningKey::inferred(signing_key));
 
             // TODO: Log
             // println!(
@@ -667,6 +678,51 @@ impl SignZone {
             //     private_key_path.display()
             // );
         }
+
+        if self.sign_dnskeys_with_all_keys {
+            let signer = Signer::<Bytes, KeyPair, AllKeyStrat>::new();
+            self.go_further(
+                signer,
+                records,
+                signing_mode,
+                opt_out,
+                &signing_keys,
+                writer,
+            )
+        } else if self.sign_with_every_unique_algorithm {
+            let signer = Signer::<Bytes, KeyPair, AllUniqStrat>::new();
+            self.go_further(
+                signer,
+                records,
+                signing_mode,
+                opt_out,
+                &signing_keys,
+                writer,
+            )
+        } else {
+            let signer = Signer::<Bytes, KeyPair>::new();
+            self.go_further(
+                signer,
+                records,
+                signing_mode,
+                opt_out,
+                &signing_keys,
+                writer,
+            )
+        }
+    }
+
+    fn go_further<Strat: SigningKeyUsageStrategy<Bytes, KeyPair>>(
+        &self,
+        signer: Signer<Bytes, KeyPair, Strat>,
+        mut records: SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        signing_mode: SigningMode,
+        opt_out: Nsec3OptOut,
+        signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        mut writer: FileOrStdout<BufWriter<File>, impl Write>,
+    ) -> Result<(), Error> {
+        // Make sure, zonemd arguments are unique
+        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -715,12 +771,11 @@ impl SignZone {
 
         // Sign the zone unless disabled.
         if signing_mode == SigningMode::HashAndSign {
-            let extra_records = records
+            let extra_records = signer
                 .sign(
                     &apex,
-                    self.expiration,
-                    self.inception,
-                    keys.as_slice(),
+                    records.families(),
+                    signing_keys,
                     !self.do_not_add_keys_to_zone,
                 )
                 .map_err(|_| "Signing failed")?;
@@ -741,7 +796,7 @@ impl SignZone {
             // Add ZONEMD RRs to output records
             records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
 
-            self.update_zonemd_rrsig(&mut records, &apex, &keys, zonemd_rrs);
+            self.update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
         }
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
@@ -862,16 +917,18 @@ impl SignZone {
                     writer.write_str("\n")?;
                 }
 
-                // Now attempt to print the RRSIG that covers the RTYPE of this RRSET.
-                if let Some(covering_rrsig_rr) = family
+                // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
+                for covering_rrsigs in family
                     .rrsets()
                     .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
-                    .find_map(|this_rrset| this_rrset.iter().find(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
+                    .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                 {
-                    writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
-                    writer.write_str("\n")?;
-                    if self.extra_comments {
-                        writer.write_str(";\n")?;
+                    for covering_rrsig_rr in covering_rrsigs {
+                        writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false, true)))?;
+                        writer.write_str("\n")?;
+                        if self.extra_comments {
+                            writer.write_str(";\n")?;
+                        }
                     }
                 }
             }
@@ -1045,11 +1102,13 @@ impl SignZone {
     }
 
     fn mk_signing_key(
+        &self,
         private_key: &SecretKeyBytes,
         public_key: Key<Bytes>,
     ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
         let key_pair = KeyPair::from_bytes(private_key, public_key.raw_public_key())?;
-        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair);
+        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair)
+            .with_validity(self.inception, self.expiration);
         Ok(signing_key)
     }
 
@@ -1253,25 +1312,23 @@ impl SignZone {
         Ok(zonemd_rrs)
     }
 
-    fn update_zonemd_rrsig(
+    fn update_zonemd_rrsig<KeyStrat, Sort>(
         &self,
-        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        signer: &Signer<Bytes, KeyPair, KeyStrat, Sort>,
+        records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>, Sort>,
         apex: &FamilyName<Name<Bytes>>,
-        keys: &Vec<SigningKey<Bytes, KeyPair>>,
+        keys: &[DnssecSigningKey<Bytes, KeyPair>],
         zonemd_rrs: Vec<Record<StoredName, StoredRecordData>>,
-    ) {
+    ) where
+        KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
+        Sort: Sorter,
+    {
         // Sign only ZONEMD RRs
         let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
             SortedRecords::from(zonemd_rrs);
         // No need to check for keys, as SortedRecords::sign just doesn't do anything without keys.
-        let mut zonemd_rrsig = zonemd_rrs
-            .sign(
-                apex,
-                self.expiration,
-                self.inception,
-                keys.as_slice(),
-                false,
-            )
+        let mut zonemd_rrsig = signer
+            .sign(apex, zonemd_rrs.families(), keys, false)
             .unwrap();
 
         // Replace original ZONEMD RRSIG with newly generated one
@@ -1477,6 +1534,46 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
     }
 }
 
+struct AllKeyStrat;
+
+impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
+    const NAME: &'static str = "All keys (KSK and ZSK) key usage strategy";
+
+    fn new() -> Self {
+        Self
+    }
+
+    fn filter_ksks(&mut self, candidate_key: &DnssecSigningKey<Bytes, KeyPair>) -> bool {
+        matches!(
+            candidate_key.purpose(),
+            IntendedKeyPurpose::KSK | IntendedKeyPurpose::ZSK | IntendedKeyPurpose::CSK
+        )
+    }
+}
+
+#[derive(Default)]
+struct AllUniqStrat {
+    seen_algs: HashSet<SecAlg>,
+}
+
+impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
+    const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK) key usage strategy";
+
+    fn new() -> Self {
+        Default::default()
+    }
+
+    fn filter_ksks(&mut self, candidate_key: &DnssecSigningKey<Bytes, KeyPair>) -> bool {
+        let new_alg = self.seen_algs.insert(candidate_key.key().algorithm());
+        match candidate_key.purpose() {
+            IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
+            IntendedKeyPurpose::ZSK => new_alg,
+            _ => false,
+        }
+    }
+}
+
+
 //------------ Tests ---------------------------------------------------------
 
 // TODO: Maybe resolve the Timestamp issue differently? When running the tests
@@ -1561,7 +1658,9 @@ mod test {
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
+            sign_dnskeys_with_all_keys: false,
             use_nsec3: false,
+            sign_with_every_unique_algorithm: false,
             algorithm: Nsec3HashAlg::SHA1,
             iterations: 0,
             salt: Nsec3Salt::empty(),
@@ -1741,6 +1840,8 @@ mod test {
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
+            sign_dnskeys_with_all_keys: false,
+            sign_with_every_unique_algorithm: false,
             use_nsec3: false,
             algorithm: Nsec3HashAlg::SHA1,
             iterations: 1,
