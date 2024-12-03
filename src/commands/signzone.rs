@@ -330,9 +330,7 @@ impl LdnsCommand for SignZone {
                     allow_zonemd_without_signing = true;
                 }
                 Arg::Short('v') => {
-                    let version = clap::crate_version!();
-                    println!("zone signer version {version} (dnst version {version})");
-                    std::process::exit(0);
+                    return Ok(Self::report_version());
                 }
                 Arg::Short('n') => {
                     use_nsec3 = true;
