@@ -1,5 +1,9 @@
-use std::fmt::{self, Display, Write};
+use core::fmt::{Display, Write};
+
+use std::fmt;
 use std::{error, io};
+
+use domain::base::wire::ParseError;
 
 use crate::env::{Env, Stream};
 
@@ -134,6 +138,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
 impl From<lexopt::Error> for Error {
     fn from(value: lexopt::Error) -> Self {
         value.to_string().into()
@@ -230,4 +240,12 @@ impl<T> Context for Result<T> {
     fn with_context(self, context: impl FnOnce() -> String) -> Self {
         self.map_err(|err| err.context(&(context)()))
     }
+}
+
+/// Execute the given operation under the given context.
+pub fn in_context<R>(
+    context: impl FnOnce() -> String,
+    function: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    (function)().with_context(context)
 }

@@ -3,8 +3,11 @@ use std::path::Path;
 
 use clap::Parser;
 use commands::key2ds::Key2ds;
+use commands::keygen::Keygen;
+use commands::notify::Notify;
 use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
+use commands::update::Update;
 use commands::LdnsCommand;
 use env::Env;
 use error::Error;
@@ -15,6 +18,8 @@ pub mod args;
 pub mod commands;
 pub mod env;
 pub mod error;
+pub mod parse;
+pub mod util;
 
 pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
     args: I,
@@ -32,8 +37,11 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
 
     let res = match binary_name {
         "key2ds" => Key2ds::parse_ldns_args(args_iter),
+        "notify" => Notify::parse_ldns_args(args_iter),
+        "keygen" => Keygen::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         "signzone" => SignZone::parse_ldns_args(args_iter),
+        "update" => Update::parse_ldns_args(args_iter),
         _ => Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
     }?;
 
