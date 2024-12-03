@@ -1702,6 +1702,41 @@ mod test {
         dir
     }
 
+    /// Filter a string slice for lines containing at least one of the provided patterns.
+    fn filter_lines_containing_any(src: &str, patterns: &[&str]) -> String {
+        if patterns.is_empty() {
+            // For consistency with str::contains() and filter_lines_containing_all()
+            String::from(src)
+        } else {
+            src.lines()
+                .filter(|s| {
+                    for p in patterns {
+                        if s.contains(p) {
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .map(|s| format!("{}\n", s))
+                .collect::<String>()
+        }
+    }
+
+    /// Filter a string slice for lines containing all provided patterns.
+    fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
+        src.lines()
+            .filter(|s| {
+                for p in patterns {
+                    if !s.contains(p) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|s| format!("{}\n", s))
+            .collect::<String>()
+    }
+
     #[test]
     fn zonemd_digest_and_replacing_existing_at_apex() {
         let dir = run_setup();
@@ -1837,11 +1872,7 @@ mod test {
         dbg!(&res);
         assert_eq!(res.exit_code, 0);
         assert_eq!(
-            res.stdout
-                .lines()
-                .filter(|s| s.contains("NSEC3"))
-                .map(|s| format!("{}\n", s))
-                .collect::<String>(),
+            filter_lines_containing_all(&res.stdout, &["NSEC3"]),
             ldns_dnst_output_stripped
         );
         assert_eq!(res.stderr, "");
