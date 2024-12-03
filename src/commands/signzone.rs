@@ -1479,6 +1479,14 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
 
 //------------ Tests ---------------------------------------------------------
 
+// TODO: Maybe resolve the Timestamp issue differently? When running the tests
+// and the base struct get's constructed at say time "12:30:29" and the command
+// parsing for an assertion get's executed at "12:30:30", then the timestamps
+// don't match and the tests fails. This creates a flaky test without actual
+// errors in the code. Right now it is solved by recreating the expiration and
+// inception fields during the assertion. However, this means we need to
+// remember adding that for every assertion.
+
 #[cfg(test)]
 mod test {
     use std::fs::File;
@@ -1569,9 +1577,9 @@ mod test {
         // Check the defaults
         assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
 
-        // The switches (missing -A and -U)
+        // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["example.org.zone", "-bdunpM", "anykey"])),
+            parse(cmd.args(["-bdunpM", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
@@ -1579,30 +1587,38 @@ mod test {
                 use_nsec3: true,
                 nsec3_opt_out_flags_only: true,
                 no_require_keys_match_apex: true,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.zone", "-H"])),
+            parse(cmd.args(["-H", "example.org.zone"])),
             SignZone {
                 hash_only: true,
                 key_paths: Vec::new(),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
 
         // ZONEMD arguments
         assert_eq!(
-            parse(cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "anykey"])),
+            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.zone", "-z", "simple:sha512", "anykey"])),
+            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1610,6 +1626,8 @@ mod test {
             parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1617,18 +1635,207 @@ mod test {
         // NSEC3 arguments
         assert_eq!(
             parse(cmd.args([
-                "example.org.zone",
                 "-n",
                 "-s",
                 "BABABA",
                 "-t",
                 "15",
+                "example.org.zone",
                 "anykey"
             ])),
             SignZone {
                 use_nsec3: true,
                 salt: Nsec3Salt::from_str("BABABA").unwrap(),
                 iterations: 15,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+
+        // Timestamps
+        assert_eq!(
+            parse(cmd.args([
+                "-i",
+                "20240101020202",
+                "-e",
+                "20240101050505",
+                "example.org.zone",
+                "anykey"
+            ])),
+            SignZone {
+                expiration: Timestamp::from_str("20240101050505").unwrap(),
+                inception: Timestamp::from_str("20240101020202").unwrap(),
+                ..base.clone()
+            }
+        );
+
+        // Output file
+        assert_eq!(
+            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
+            SignZone {
+                out_file: Some(PathBuf::from("-")),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
+            SignZone {
+                out_file: Some(PathBuf::from("output")),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+
+        // Origin
+        assert_eq!(
+            parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
+            SignZone {
+                origin: Some(Name::from_str("origin.test.").unwrap()),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn ldns_parse_failures() {
+        let cmd = FakeCmd::new(["ldns-signzone"]);
+
+        cmd.parse().unwrap_err();
+        // Missing keys
+        cmd.args(["example.org.zone"]).parse().unwrap_err();
+
+        // Invalid ZONEMD arguments
+        cmd.args(["-z", "3", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-z", "0:0", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+
+        // Invalid NSEC3 arguments
+        cmd.args(["-na", "MD5", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-ns", "NOBASE64", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+    }
+
+    #[test]
+    fn ldns_parse_successes() {
+        let cmd = FakeCmd::new(["ldns-signzone"]);
+
+        let base = SignZone {
+            extra_comments: false,
+            do_not_add_keys_to_zone: false,
+            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+            out_file: None,
+            inception: Timestamp::now(),
+            origin: None,
+            set_soa_serial_to_epoch_time: false,
+            zonemd: Vec::new(),
+            allow_zonemd_without_signing: false,
+            use_nsec3: false,
+            algorithm: Nsec3HashAlg::SHA1,
+            iterations: 1,
+            salt: Nsec3Salt::empty(),
+            nsec3_opt_out_flags_only: false,
+            nsec3_opt_out: false,
+            hash_only: false,
+            no_require_keys_match_apex: false,
+            zonefile_path: PathBuf::from("example.org.zone"),
+            key_paths: Vec::from([PathBuf::from("anykey")]),
+            invoked_as_ldns: true,
+        };
+
+        // Check the defaults
+        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
+
+        // The switches (TODO: missing -A and -U)
+        assert_eq!(
+            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
+            SignZone {
+                extra_comments: true,
+                do_not_add_keys_to_zone: true,
+                set_soa_serial_to_epoch_time: true,
+                use_nsec3: true,
+                nsec3_opt_out_flags_only: true,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+
+        // ZONEMD arguments
+        assert_eq!(
+            parse(cmd.args(["-Z", "example.org.zone", "anykey"])),
+            SignZone {
+                allow_zonemd_without_signing: true,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-z", "1", "example.org.zone", "anykey"])),
+            SignZone {
+                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA384)]),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
+                ..base.clone()
+            }
+        );
+
+        // NSEC3 arguments
+        assert_eq!(
+            parse(cmd.args([
+                "-n",
+                "-s",
+                "BABABA",
+                "-t",
+                "15",
+                "example.org.zone",
+                "anykey"
+            ])),
+            SignZone {
+                use_nsec3: true,
+                salt: Nsec3Salt::from_str("BABABA").unwrap(),
+                iterations: 15,
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1655,6 +1862,8 @@ mod test {
             parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1662,6 +1871,8 @@ mod test {
             parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
+                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+                inception: Timestamp::now(),
                 ..base.clone()
             }
         );
@@ -1671,100 +1882,17 @@ mod test {
             parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
             SignZone {
                 origin: Some(Name::from_str("origin.test.").unwrap()),
-                ..base.clone()
-            }
-        );
-    }
-
-    #[test]
-    fn ldns_parse() {
-        let cmd = FakeCmd::new(["ldns-signzone"]);
-
-        cmd.parse().unwrap_err();
-        cmd.args(["example.org.zone"]).parse().unwrap_err();
-        cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "anykey"])
-            .parse()
-            .unwrap();
-        cmd.args(["example.org.zone", "-z", "SHA512", "anykey"])
-            .parse()
-            .unwrap();
-        cmd.args(["example.org.zone", "-z", "3", "anykey"])
-            .parse()
-            .unwrap_err();
-        // TODO: other parse failures
-
-        let base = SignZone {
-            extra_comments: false,
-            do_not_add_keys_to_zone: false,
-            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-            out_file: None,
-            inception: Timestamp::now(),
-            origin: None,
-            set_soa_serial_to_epoch_time: false,
-            zonemd: Vec::new(),
-            allow_zonemd_without_signing: false,
-            use_nsec3: false,
-            algorithm: Nsec3HashAlg::SHA1,
-            iterations: 1,
-            salt: Nsec3Salt::empty(),
-            nsec3_opt_out_flags_only: false,
-            nsec3_opt_out: false,
-            hash_only: false,
-            no_require_keys_match_apex: false,
-            zonefile_path: PathBuf::from("example.org.zone"),
-            key_paths: Vec::from([PathBuf::from("anykey")]),
-            invoked_as_ldns: true,
-        };
-
-        // Check the defaults
-        let res = parse(cmd.args(["example.org.zone", "anykey"]));
-        assert_eq!(res, base);
-
-        let res = parse(cmd.args(["-Z", "example.org.zone", "anykey"]));
-        assert_eq!(
-            res,
-            SignZone {
-                allow_zonemd_without_signing: true,
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
             }
         );
 
-        let res = parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"]));
-        assert_eq!(
-            res,
-            SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
-                ..base.clone()
-            }
-        );
-
-        let res = parse(cmd.args(["example.org.zone", "-z", "sha512", "anykey"]));
-        assert_eq!(
-            res,
-            SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
-                ..base.clone()
-            }
-        );
-
-        let res = parse(cmd.args(["example.org.zone", "-z", "1", "anykey"]));
-        assert_eq!(
-            res,
-            SignZone {
-                zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA384)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
-                ..base.clone()
-            }
-        );
-
-        // TODO: Other arguments
+        // Version
+        assert!(matches!(
+            cmd.args(["-v"]).parse().unwrap().command,
+            Command::Report(_)
+        ));
     }
 
     fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
@@ -1911,7 +2039,6 @@ mod test {
         .cwd(&dir)
         .run();
 
-        dbg!(&res);
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
@@ -1974,7 +2101,6 @@ mod test {
         .cwd(&dir)
         .run();
 
-        dbg!(&res);
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             filter_lines_containing_all(&res.stdout, &["NSEC3"]),
