@@ -1487,8 +1487,10 @@ mod test {
     use std::io::Write;
     use std::ops::Add;
     use std::path::PathBuf;
+    use std::str::FromStr;
 
     use domain::base::iana::{Nsec3HashAlg, ZonemdAlg, ZonemdScheme};
+    use domain::base::Name;
     use domain::rdata::dnssec::Timestamp;
     use domain::rdata::nsec3::Nsec3Salt;
     use tempfile::TempDir;
@@ -1501,24 +1503,47 @@ mod test {
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
-        let res = args.parse();
-        let Command::SignZone(x) = res.unwrap().command else {
+        let res = args.parse().unwrap();
+        let Command::SignZone(x) = res.command else {
             panic!("Not a SignZone!");
         };
         x
     }
 
     #[test]
-    fn dnst_parse() {
+    fn dnst_parse_failures() {
         let cmd = FakeCmd::new(["dnst", "signzone"]);
 
         cmd.parse().unwrap_err();
+        // Missing keys
         cmd.args(["example.org.zone"]).parse().unwrap_err();
+        // Missing ZONEMD arguments
         cmd.args(["-Z", "example.org.zone"]).parse().unwrap_err();
+
+        // Invalid ZONEMD arguments
         cmd.args(["-z", "3", "example.org.zone", "anykey"])
             .parse()
             .unwrap_err();
-        // TODO: other parse failures
+        cmd.args(["-z", "0:0", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+
+        // Invalid NSEC3 arguments
+        cmd.args(["-na", "MD5", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["-ns", "NOBASE64", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+        // Conflicting NSEC3 optout options
+        cmd.args(["-nPp", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
+    }
+
+    #[test]
+    fn dnst_parse_successes() {
+        let cmd = FakeCmd::new(["dnst", "signzone"]);
 
         let base = SignZone {
             extra_comments: false,
@@ -1543,10 +1568,32 @@ mod test {
             invoked_as_ldns: false,
         };
 
-
         // Check the defaults
         assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
 
+        // The switches (missing -A and -U)
+        assert_eq!(
+            parse(cmd.args(["example.org.zone", "-bdunpM", "anykey"])),
+            SignZone {
+                extra_comments: true,
+                do_not_add_keys_to_zone: true,
+                set_soa_serial_to_epoch_time: true,
+                use_nsec3: true,
+                nsec3_opt_out_flags_only: true,
+                no_require_keys_match_apex: true,
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["example.org.zone", "-H"])),
+            SignZone {
+                hash_only: true,
+                key_paths: Vec::new(),
+                ..base.clone()
+            }
+        );
+
+        // ZONEMD arguments
         assert_eq!(
             parse(cmd.args(["example.org.zone", "-z", "SIMPLE:SHA512", "anykey"])),
             SignZone {
@@ -1554,7 +1601,6 @@ mod test {
                 ..base.clone()
             }
         );
-
         assert_eq!(
             parse(cmd.args(["example.org.zone", "-z", "simple:sha512", "anykey"])),
             SignZone {
@@ -1562,7 +1608,6 @@ mod test {
                 ..base.clone()
             }
         );
-
         assert_eq!(
             parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
@@ -1571,7 +1616,66 @@ mod test {
             }
         );
 
-        // TODO: Other arguments
+        // NSEC3 arguments
+        assert_eq!(
+            parse(cmd.args([
+                "example.org.zone",
+                "-n",
+                "-s",
+                "BABABA",
+                "-t",
+                "15",
+                "anykey"
+            ])),
+            SignZone {
+                use_nsec3: true,
+                salt: Nsec3Salt::from_str("BABABA").unwrap(),
+                iterations: 15,
+                ..base.clone()
+            }
+        );
+
+        // Timestamps
+        assert_eq!(
+            parse(cmd.args([
+                "example.org.zone",
+                "-i",
+                "20240101020202",
+                "-e",
+                "20240101050505",
+                "anykey"
+            ])),
+            SignZone {
+                expiration: Timestamp::from_str("20240101050505").unwrap(),
+                inception: Timestamp::from_str("20240101020202").unwrap(),
+                ..base.clone()
+            }
+        );
+
+        // Output file
+        assert_eq!(
+            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
+            SignZone {
+                out_file: Some(PathBuf::from("-")),
+                ..base.clone()
+            }
+        );
+        assert_eq!(
+            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
+            SignZone {
+                out_file: Some(PathBuf::from("output")),
+                ..base.clone()
+            }
+        );
+
+        // Origin
+        assert_eq!(
+            parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
+            SignZone {
+                origin: Some(Name::from_str("origin.test.").unwrap()),
+                ..base.clone()
+            }
+        );
     }
 
     #[test]
@@ -1840,7 +1944,7 @@ mod test {
     }
 
     #[test]
-    // Test NSEC3 optout behaviour with signing
+    /// Test NSEC3 optout behaviour with signing
     fn ldns_nsec3_optout() {
         // TODO: maybe make these strings a regex match of some kind for better flexibility with
         // layout changes that don't affect the zonefile semantics?
