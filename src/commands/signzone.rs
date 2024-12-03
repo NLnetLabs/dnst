@@ -1573,7 +1573,6 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     }
 }
 
-
 //------------ Tests ---------------------------------------------------------
 
 // TODO: Maybe resolve the Timestamp issue differently? When running the tests
@@ -2037,11 +2036,13 @@ mod test {
     }
 
     /// Filter a string slice for lines containing at least one of the provided patterns.
+    #[allow(dead_code)]
     fn filter_lines_containing_any(src: &str, patterns: &[&str]) -> String {
         if patterns.is_empty() {
             // For consistency with str::contains() and filter_lines_containing_all()
             String::from(src)
         } else {
+            use std::fmt::Write;
             src.lines()
                 .filter(|s| {
                     for p in patterns {
@@ -2051,13 +2052,16 @@ mod test {
                     }
                     false
                 })
-                .map(|s| format!("{}\n", s))
-                .collect::<String>()
+                .fold(String::new(), |mut output, s| {
+                    let _ = writeln!(output, "{}", s);
+                    output
+                })
         }
     }
 
     /// Filter a string slice for lines containing all provided patterns.
     fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
+        use std::fmt::Write;
         src.lines()
             .filter(|s| {
                 for p in patterns {
@@ -2067,8 +2071,10 @@ mod test {
                 }
                 true
             })
-            .map(|s| format!("{}\n", s))
-            .collect::<String>()
+            .fold(String::new(), |mut output, s| {
+                let _ = writeln!(output, "{}\n", s);
+                output
+            })
     }
 
     #[test]
