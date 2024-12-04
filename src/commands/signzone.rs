@@ -2042,8 +2042,7 @@ mod test {
             // For consistency with str::contains() and filter_lines_containing_all()
             String::from(src)
         } else {
-            use std::fmt::Write;
-            src.lines()
+            src.split_inclusive('\n')
                 .filter(|s| {
                     for p in patterns {
                         if s.contains(p) {
@@ -2052,17 +2051,13 @@ mod test {
                     }
                     false
                 })
-                .fold(String::new(), |mut output, s| {
-                    let _ = writeln!(output, "{}", s);
-                    output
-                })
+                .collect()
         }
     }
 
     /// Filter a string slice for lines containing all provided patterns.
     fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
-        use std::fmt::Write;
-        src.lines()
+        src.split_inclusive('\n')
             .filter(|s| {
                 for p in patterns {
                     if !s.contains(p) {
@@ -2071,10 +2066,7 @@ mod test {
                 }
                 true
             })
-            .fold(String::new(), |mut output, s| {
-                let _ = writeln!(output, "{}", s);
-                output
-            })
+            .collect()
     }
 
     #[test]
