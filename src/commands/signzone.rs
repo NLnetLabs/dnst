@@ -2072,7 +2072,7 @@ mod test {
                 true
             })
             .fold(String::new(), |mut output, s| {
-                let _ = writeln!(output, "{}\n", s);
+                let _ = writeln!(output, "{}", s);
                 output
             })
     }
