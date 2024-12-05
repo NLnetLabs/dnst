@@ -2,8 +2,7 @@ mod common;
 
 use common::assert_org_ldns_cmd_eq_new_ldns_cmd;
 
-const LDNS_NSEC3_CMD: &str = "ldns-nsec3-hash";
-const DNST_NSEC3_SUBCMD: &str = "nsec3-hash";
+const LDNS_CMD: &str = "ldns-nsec3-hash";
 const TEST_ZONE_NAME: &str = "nlnetlabs.nl";
 
 #[ignore = "should only be run if ldns command line tools are installed"]
@@ -12,46 +11,39 @@ fn nsec3_hash() {
     // Note: ldns-nsec3-hash defaults NSEC3 iterations to 1, while dnst
     // nsec-hash defaults NSEC3 iterations to 0.
     assert_org_ldns_cmd_eq_new_ldns_cmd(
-        &[LDNS_NSEC3_CMD, TEST_ZONE_NAME],
-        &[DNST_NSEC3_SUBCMD, "--iterations", "1", TEST_ZONE_NAME],
+        &[LDNS_CMD, TEST_ZONE_NAME],
+        &[LDNS_CMD, "-t", "1", TEST_ZONE_NAME],
         true,
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
-        &[LDNS_NSEC3_CMD, TEST_ZONE_NAME, "-t", "0"],
-        &[DNST_NSEC3_SUBCMD, TEST_ZONE_NAME],
+        &[LDNS_CMD, TEST_ZONE_NAME, "-t", "0"],
+        &[LDNS_CMD, TEST_ZONE_NAME],
         true,
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
-        &[LDNS_NSEC3_CMD, "-a", "1", TEST_ZONE_NAME],
+        &[LDNS_CMD, "-a", "1", TEST_ZONE_NAME],
         &[
-            DNST_NSEC3_SUBCMD,
-            "--iterations",
+            LDNS_CMD,
+            "-t",
             "1",
-            "--algorithm",
+            "-a",
             "1",
             TEST_ZONE_NAME,
         ],
         true,
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
-        &[LDNS_NSEC3_CMD, "-s", "", TEST_ZONE_NAME],
-        &[
-            DNST_NSEC3_SUBCMD,
-            "--iterations",
-            "1",
-            "--salt",
-            "",
-            TEST_ZONE_NAME,
-        ],
+        &[LDNS_CMD, "-s", "", TEST_ZONE_NAME],
+        &[LDNS_CMD, "-t", "1", "-s", "", TEST_ZONE_NAME],
         true,
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
-        &[LDNS_NSEC3_CMD, "-s", "DEADBEEF", TEST_ZONE_NAME],
+        &[LDNS_CMD, "-s", "DEADBEEF", TEST_ZONE_NAME],
         &[
-            DNST_NSEC3_SUBCMD,
-            "--iterations",
+            LDNS_CMD,
+            "-t",
             "1",
-            "--salt",
+            "-s",
             "DEADBEEF",
             TEST_ZONE_NAME,
         ],
@@ -60,18 +52,8 @@ fn nsec3_hash() {
 
     for iterations in 0..10 {
         assert_org_ldns_cmd_eq_new_ldns_cmd(
-            &[
-                LDNS_NSEC3_CMD,
-                "-t",
-                &iterations.to_string(),
-                TEST_ZONE_NAME,
-            ],
-            &[
-                DNST_NSEC3_SUBCMD,
-                "-i",
-                &iterations.to_string(),
-                TEST_ZONE_NAME,
-            ],
+            &[LDNS_CMD, "-t", &iterations.to_string(), TEST_ZONE_NAME],
+            &[LDNS_CMD, "-t", &iterations.to_string(), TEST_ZONE_NAME],
             true,
         );
     }

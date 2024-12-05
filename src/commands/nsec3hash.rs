@@ -67,7 +67,7 @@ impl LdnsCommand for Nsec3Hash {
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
-        let mut iterations = 1;
+        let mut iterations = 0;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
 
