@@ -1586,21 +1586,25 @@ struct UseZskIfNoKskStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
     const NAME: &'static str = "Use ZSKs as KSKs if no KSKs key usage strategy";
 
-    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
-        let ksks = DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys);
+    fn select_dnskey_signing_keys(
+        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+    ) -> HashSet<usize> {
+        let ksks = DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys);
 
         if ksks.is_empty() {
-            DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys)
+            DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys)
         } else {
             ksks
         }
     }
 
-    fn select_zsks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
-        let zsks = DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys);
+    fn select_non_dnskey_signing_keys(
+        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+    ) -> HashSet<usize> {
+        let zsks = DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys);
 
         if zsks.is_empty() {
-            DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys)
+            DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys)
         } else {
             zsks
         }
@@ -1612,9 +1616,11 @@ struct AllKeyStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     const NAME: &'static str = "All keys (KSK and ZSK) key usage strategy";
 
-    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
-        let mut keys = DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys);
-        keys.extend(DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys));
+    fn select_dnskey_signing_keys(
+        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+    ) -> HashSet<usize> {
+        let mut keys = DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys);
+        keys.extend(DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys));
         keys
     }
 }
@@ -1625,7 +1631,9 @@ struct AllUniqStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK) key usage strategy";
 
-    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
+    fn select_dnskey_signing_keys(
+        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+    ) -> HashSet<usize> {
         let mut seen_algs = HashSet::new();
         candidate_keys
             .iter()
