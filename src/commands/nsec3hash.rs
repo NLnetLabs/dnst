@@ -391,6 +391,7 @@ mod tests {
             FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 
+        #[track_caller]
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
             let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
             assert_eq!(result.exit_code, 0);
