@@ -22,14 +22,7 @@ fn nsec3_hash() {
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
         &[LDNS_CMD, "-a", "1", TEST_ZONE_NAME],
-        &[
-            LDNS_CMD,
-            "-t",
-            "1",
-            "-a",
-            "1",
-            TEST_ZONE_NAME,
-        ],
+        &[LDNS_CMD, "-t", "1", "-a", "1", TEST_ZONE_NAME],
         true,
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
@@ -39,14 +32,7 @@ fn nsec3_hash() {
     );
     assert_org_ldns_cmd_eq_new_ldns_cmd(
         &[LDNS_CMD, "-s", "DEADBEEF", TEST_ZONE_NAME],
-        &[
-            LDNS_CMD,
-            "-t",
-            "1",
-            "-s",
-            "DEADBEEF",
-            TEST_ZONE_NAME,
-        ],
+        &[LDNS_CMD, "-t", "1", "-s", "DEADBEEF", TEST_ZONE_NAME],
         true,
     );
 
