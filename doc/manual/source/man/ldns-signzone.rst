@@ -21,8 +21,10 @@ Arguments
 
 .. option:: <ZONEFILE>
 
-      The zonefile to sign. Any existing NSEC(3) and/or RRSIG resource records
-      will be skipped when loaded the file.
+      The zonefile to sign.
+
+      Note: Unlike the original LDNS, any existing NSEC(3) and/or RRSIG
+      resource records will be skipped when loaded the file.
 
 .. option:: <KEY>...
 
