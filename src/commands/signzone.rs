@@ -960,21 +960,6 @@ impl SignZone {
                             ))?;
                         }
                     }
-
-                    // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
-                    for covering_rrsigs in family
-                        .rrsets()
-                        .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
-                        .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
-                    {
-                        for covering_rrsig_rr in covering_rrsigs {
-                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(DISPLAY_KIND)))?;
-                            writer.write_str("\n")?;
-                            if self.extra_comments {
-                                writer.write_str(";\n")?;
-                            }
-                        }
-                    }
                 }
             }
         }
