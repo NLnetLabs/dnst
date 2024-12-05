@@ -16,7 +16,6 @@ use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
-use domain::base::iana::SecAlg;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
@@ -25,8 +24,8 @@ use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData, Zonemd};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
-    DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose, Nsec3OptOut, Nsec3Records,
-    RecordsIter, Signer, SigningKeyUsageStrategy, SortedRecords, Sorter,
+    DefaultSigningKeyUsageStrategy, DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose,
+    Nsec3OptOut, Nsec3Records, RecordsIter, Signer, SigningKeyUsageStrategy, SortedRecords, Sorter,
 };
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::validate::Key;
@@ -700,7 +699,7 @@ impl SignZone {
                 writer,
             )
         } else {
-            let signer = Signer::<Bytes, KeyPair>::new();
+            let signer = Signer::<Bytes, KeyPair, UseZskIfNoKskStrat>::new();
             self.go_further(
                 signer,
                 records,
@@ -874,22 +873,26 @@ impl SignZone {
         };
 
         for family in family_iter {
-            if let Some(hashes) = hashes.as_ref() {
-                // If this is family contains an NSEC3 RR and the number of
-                // RRs in the RRSET of the unhashed owner name is zero, then
-                // the NSEC3 was generated for an empty non-terminal.
-                if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
-                    if let Some(unhashed_name) = hashes.get(family.owner()) {
-                        if !records
-                            .families()
-                            .any(|family| family.owner() == unhashed_name)
-                        {
-                            writer.write_fmt(format_args!(
-                                ";; Empty nonterminal: {unhashed_name}\n"
-                            ))?;
+            if self.extra_comments {
+                if let Some(hashes) = hashes.as_ref() {
+                    // If this is family contains an NSEC3 RR and the number
+                    // of RRs in the RRSET of the unhashed owner name is zero,
+                    // then the NSEC3 was generated for an empty non-terminal.
+                    if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
+                        if let Some(unhashed_name) = hashes.get(family.owner()) {
+                            if !records
+                                .families()
+                                .any(|family| family.owner() == unhashed_name)
+                            {
+                                writer.write_fmt(format_args!(
+                                    ";; Empty nonterminal: {unhashed_name}\n"
+                                ))?;
+                            }
+                        } else {
+                            // ??? Every hashed name must correspond to an
+                            // unhashed name?
+                            unreachable!();
                         }
-                    } else {
-                        // ??? Every hashed name must correspond to an unhashed name?
                     }
                 }
             }
@@ -897,37 +900,75 @@ impl SignZone {
             // The SOA is output separately above as the very first RRset so
             // we skip that, and we skip RRSIGs as they are output only after
             // the RRset that they cover.
-            for rrset in family
-                .rrsets()
-                .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
-            {
-                for rr in rrset.iter() {
-                    writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
-                    match rr.data() {
-                        ZoneRecordData::Nsec3(nsec3) => nsec3.comment(&mut writer, rr, nsec3_cs)?,
-                        ZoneRecordData::Dnskey(dnskey) => dnskey.comment(&mut writer, rr, ())?,
-                        _ => {
-                            // Nothing to do. We do not support Bubble Babble
-                            // output for DS records.
-                            //
-                            // See:
-                            // https://bohwaz.net/archives/web/Bubble_Babble.html
+            if self.extra_comments {
+                for rrset in family
+                    .rrsets()
+                    .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
+                {
+                    for rr in rrset.iter() {
+                        writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
+                        match rr.data() {
+                            ZoneRecordData::Nsec3(nsec3) => {
+                                nsec3.comment(&mut writer, rr, nsec3_cs)?
+                            }
+                            ZoneRecordData::Dnskey(dnskey) => {
+                                dnskey.comment(&mut writer, rr, ())?
+                            }
+                            _ => {
+                                // Nothing to do. We do not support Bubble Babble
+                                // output for DS records.
+                                //
+                                // See:
+                                // https://bohwaz.net/archives/web/Bubble_Babble.html
+                            }
+                        }
+                        writer.write_str("\n")?;
+                    }
+
+                    // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
+                    for covering_rrsigs in family
+                        .rrsets()
+                        .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
+                        .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
+                    {
+                        for covering_rrsig_rr in covering_rrsigs {
+                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
+                            writer.write_str("\n")?;
+                            if self.extra_comments {
+                                writer.write_str(";\n")?;
+                            }
                         }
                     }
-                    writer.write_str("\n")?;
                 }
+            } else {
+                for rrset in family.rrsets().filter(|rrset| rrset.rtype() != Rtype::SOA) {
+                    for rr in rrset.iter() {
+                        // Only output the key tag comment if running as LDNS.
+                        // When running as DNST we assume without `-b` that speed
+                        // is wanted, not human readable comments.
+                        if self.invoked_as_ldns {
+                            writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
+                            if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
+                                dnskey.comment(&mut writer, rr, ())?
+                            }
+                            writer.write_str("\n")?;
+                        } else {
+                            writer.write_fmt(format_args!("{}\n", rr.display_zonefile(false)))?;
+                        }
+                    }
 
-                // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
-                for covering_rrsigs in family
-                    .rrsets()
-                    .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
-                    .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
-                {
-                    for covering_rrsig_rr in covering_rrsigs {
-                        writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
-                        writer.write_str("\n")?;
-                        if self.extra_comments {
-                            writer.write_str(";\n")?;
+                    // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
+                    for covering_rrsigs in family
+                        .rrsets()
+                        .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
+                        .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
+                    {
+                        for covering_rrsig_rr in covering_rrsigs {
+                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
+                            writer.write_str("\n")?;
+                            if self.extra_comments {
+                                writer.write_str(";\n")?;
+                            }
                         }
                     }
                 }
@@ -1540,42 +1581,55 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
     }
 }
 
+struct UseZskIfNoKskStrat;
+
+impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
+    const NAME: &'static str = "Use ZSKs as KSKs if no KSKs key usage strategy";
+
+    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
+        let ksks = DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys);
+
+        if ksks.is_empty() {
+            DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys)
+        } else {
+            ksks
+        }
+    }
+}
+
 struct AllKeyStrat;
 
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     const NAME: &'static str = "All keys (KSK and ZSK) key usage strategy";
 
-    fn new() -> Self {
-        Self
-    }
-
-    fn filter_ksks(&mut self, candidate_key: &DnssecSigningKey<Bytes, KeyPair>) -> bool {
-        matches!(
-            candidate_key.purpose(),
-            IntendedKeyPurpose::KSK | IntendedKeyPurpose::ZSK | IntendedKeyPurpose::CSK
-        )
+    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
+        let mut keys = DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys);
+        keys.extend(DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys));
+        keys
     }
 }
 
 #[derive(Default)]
-struct AllUniqStrat {
-    seen_algs: HashSet<SecAlg>,
-}
+struct AllUniqStrat;
 
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK) key usage strategy";
 
-    fn new() -> Self {
-        Default::default()
-    }
-
-    fn filter_ksks(&mut self, candidate_key: &DnssecSigningKey<Bytes, KeyPair>) -> bool {
-        let new_alg = self.seen_algs.insert(candidate_key.key().algorithm());
-        match candidate_key.purpose() {
-            IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
-            IntendedKeyPurpose::ZSK => new_alg,
-            _ => false,
-        }
+    fn select_ksks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
+        let mut seen_algs = HashSet::new();
+        candidate_keys
+            .iter()
+            .enumerate()
+            .filter_map(|(i, k)| {
+                let new_alg = seen_algs.insert(k.key().algorithm());
+                match k.purpose() {
+                    IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
+                    IntendedKeyPurpose::ZSK => new_alg,
+                    _ => false,
+                }
+                .then_some(i)
+            })
+            .collect::<HashSet<_>>()
     }
 }
 
