@@ -41,7 +41,7 @@ fn signzone() {
     );
 
     let verify_output = Command::new("ldns-verify-zone")
-        .args(&[&dnst_out_path])
+        .args([&dnst_out_path])
         .output()
         .unwrap();
 
