@@ -38,7 +38,7 @@ use ring::digest;
 
 use crate::env::{Env, Stream};
 use crate::error::Error;
-use crate::Args;
+use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
@@ -852,7 +852,7 @@ impl SignZone {
         }
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
-            writer.write_fmt(format_args!("{}\n", record.display_zonefile(false)))?;
+            writer.write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
             if let Some(record) = records.iter().find(|r| {
                 if let ZoneRecordData::Rrsig(rrsig) = r.data() {
                     rrsig.type_covered() == Rtype::SOA
@@ -860,7 +860,7 @@ impl SignZone {
                     false
                 }
             }) {
-                writer.write_fmt(format_args!("{}\n", record.display_zonefile(false)))?;
+                writer.write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
             }
             if self.extra_comments {
                 writer.write_str(";\n")?;
@@ -906,7 +906,7 @@ impl SignZone {
                     .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
                 {
                     for rr in rrset.iter() {
-                        writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
+                        writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))?;
                         match rr.data() {
                             ZoneRecordData::Nsec3(nsec3) => {
                                 nsec3.comment(&mut writer, rr, nsec3_cs)?
@@ -932,7 +932,7 @@ impl SignZone {
                         .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                     {
                         for covering_rrsig_rr in covering_rrsigs {
-                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
+                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(DISPLAY_KIND)))?;
                             writer.write_str("\n")?;
                             if self.extra_comments {
                                 writer.write_str(";\n")?;
@@ -947,13 +947,17 @@ impl SignZone {
                         // When running as DNST we assume without `-b` that speed
                         // is wanted, not human readable comments.
                         if self.invoked_as_ldns {
-                            writer.write_fmt(format_args!("{}", rr.display_zonefile(false)))?;
+                            writer
+                                .write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))?;
                             if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
                                 dnskey.comment(&mut writer, rr, ())?
                             }
                             writer.write_str("\n")?;
                         } else {
-                            writer.write_fmt(format_args!("{}\n", rr.display_zonefile(false)))?;
+                            writer.write_fmt(format_args!(
+                                "{}\n",
+                                rr.display_zonefile(DISPLAY_KIND)
+                            ))?;
                         }
                     }
 
@@ -964,7 +968,7 @@ impl SignZone {
                         .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                     {
                         for covering_rrsig_rr in covering_rrsigs {
-                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(false)))?;
+                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(DISPLAY_KIND)))?;
                             writer.write_str("\n")?;
                             if self.extra_comments {
                                 writer.write_str(";\n")?;
