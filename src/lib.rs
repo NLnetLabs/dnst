@@ -11,6 +11,8 @@ use commands::LdnsCommand;
 use env::Env;
 use error::Error;
 
+use domain::base::zonefile_fmt::DisplayKind;
+
 pub use self::args::Args;
 
 pub mod args;
@@ -19,6 +21,10 @@ pub mod env;
 pub mod error;
 pub mod parse;
 pub mod util;
+
+/// Define the way that we output zonefile records once for consistent use
+/// everywhere.
+pub const DISPLAY_KIND: DisplayKind = DisplayKind::Tabbed;
 
 pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
     args: I,
