@@ -1595,6 +1595,16 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
             ksks
         }
     }
+
+    fn select_zsks(candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>]) -> HashSet<usize> {
+        let zsks = DefaultSigningKeyUsageStrategy::select_zsks(candidate_keys);
+
+        if zsks.is_empty() {
+            DefaultSigningKeyUsageStrategy::select_ksks(candidate_keys)
+        } else {
+            zsks
+        }
+    }
 }
 
 struct AllKeyStrat;
