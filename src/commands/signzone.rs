@@ -962,7 +962,13 @@ impl SignZone {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
 
-                    let _ = records.insert(record);
+                    // Ignore any existing NSEC(3) and RRSIG RRs from the
+                    // loaded zone as we only support signing an unsigned
+                    // zone. We do not ignore DNSKEY RRs as we match given
+                    // keys against those.
+                    if !matches!(record.rtype(), Rtype::NSEC | Rtype::NSEC3 | Rtype::RRSIG) {
+                        let _ = records.insert(record);
+                    }
                 }
                 Entry::Include { .. } => {
                     return Err(Error::from(
