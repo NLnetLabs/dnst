@@ -1,5 +1,6 @@
 use std::process::Command;
 
+#[track_caller]
 pub fn assert_org_ldns_cmd_eq_new_ldns_cmd(
     org_ldns_cmd: &[&str],
     new_ldns_cmd: &[&str],
