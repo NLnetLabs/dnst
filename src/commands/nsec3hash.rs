@@ -333,10 +333,10 @@ mod tests {
 
         #[test]
         fn accept_good_cli_args() {
-            assert_cmd_eq(&["nlnetlabs.nl"], "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n");
+            assert_cmd_eq(&["nlnetlabs.nl"], "asqe4ap6479d7085ljcs10a2fpb2do94.\n");
             assert_cmd_eq(
                 &["-a", "1", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-t", "0", "nlnetlabs.nl"],
@@ -348,11 +348,11 @@ mod tests {
             );
             assert_cmd_eq(
                 &["-s", "", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-s", "DEADBEEF", "nlnetlabs.nl"],
-                "2h8rboqdrq0ard25vrmc4hjg7m56hnhd.\n",
+                "dfucs7bmmtsil9gij77k1kmocclg5d8a.\n",
             );
         }
 
