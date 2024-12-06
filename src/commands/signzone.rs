@@ -1575,27 +1575,16 @@ struct UseZskIfNoKskStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
     const NAME: &'static str = "Use ZSKs as KSKs if no KSKs key usage strategy";
 
-    fn select_dnskey_signing_keys(
+    fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        rtype: Option<Rtype>,
     ) -> HashSet<usize> {
-        let ksks = DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys);
-
-        if ksks.is_empty() {
-            DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys)
+        let keys =
+            DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype);
+        if keys.is_empty() {
+            DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, None)
         } else {
-            ksks
-        }
-    }
-
-    fn select_non_dnskey_signing_keys(
-        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
-    ) -> HashSet<usize> {
-        let zsks = DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys);
-
-        if zsks.is_empty() {
-            DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys)
-        } else {
-            zsks
+            keys
         }
     }
 }
@@ -1605,12 +1594,29 @@ struct AllKeyStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     const NAME: &'static str = "All keys (KSK and ZSK) key usage strategy";
 
-    fn select_dnskey_signing_keys(
+    fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        rtype: Option<Rtype>,
     ) -> HashSet<usize> {
-        let mut keys = DefaultSigningKeyUsageStrategy::select_dnskey_signing_keys(candidate_keys);
-        keys.extend(DefaultSigningKeyUsageStrategy::select_non_dnskey_signing_keys(candidate_keys));
-        keys
+        match rtype {
+            Some(Rtype::DNSKEY) => {
+                let mut keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
+                    candidate_keys,
+                    rtype,
+                );
+                keys.extend(
+                    DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
+                        candidate_keys,
+                        None,
+                    ),
+                );
+                keys
+            }
+
+            _ => {
+                DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype)
+            }
+        }
     }
 }
 
@@ -1620,23 +1626,32 @@ struct AllUniqStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK) key usage strategy";
 
-    fn select_dnskey_signing_keys(
+    fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        rtype: Option<Rtype>,
     ) -> HashSet<usize> {
-        let mut seen_algs = HashSet::new();
-        candidate_keys
-            .iter()
-            .enumerate()
-            .filter_map(|(i, k)| {
-                let new_alg = seen_algs.insert(k.key().algorithm());
-                match k.purpose() {
-                    IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
-                    IntendedKeyPurpose::ZSK => new_alg,
-                    _ => false,
-                }
-                .then_some(i)
-            })
-            .collect::<HashSet<_>>()
+        match rtype {
+            Some(Rtype::DNSKEY) => {
+                let mut seen_algs = HashSet::new();
+                candidate_keys
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, k)| {
+                        let new_alg = seen_algs.insert(k.key().algorithm());
+                        match k.purpose() {
+                            IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
+                            IntendedKeyPurpose::ZSK => new_alg,
+                            _ => false,
+                        }
+                        .then_some(i)
+                    })
+                    .collect::<HashSet<_>>()
+            }
+
+            _ => {
+                DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype)
+            }
+        }
     }
 }
 
