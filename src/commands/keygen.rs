@@ -14,7 +14,7 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args};
+use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
@@ -342,7 +342,7 @@ impl Keygen {
             format!(
                 "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(false)
+                digest.display_zonefile(DISPLAY_KIND)
             )
         });
 

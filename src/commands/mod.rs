@@ -4,6 +4,7 @@ pub mod key2ds;
 pub mod keygen;
 pub mod notify;
 pub mod nsec3hash;
+pub mod signzone;
 pub mod update;
 
 use clap::crate_version;
@@ -49,6 +50,10 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Sign the zone with the given key(s)
+    #[command(name = "signzone")]
+    SignZone(self::signzone::SignZone),
+
     /// Send a NOTIFY packet to DNS servers
     ///
     /// This tells them that an updated zone is available at the primaries. It can perform TSIG
@@ -83,10 +88,11 @@ pub enum Command {
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
+            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Notify(notify) => notify.execute(env),
+            Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
@@ -113,10 +119,7 @@ pub trait LdnsCommand {
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error>;
 
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        match Self::parse_ldns(args) {
-            Ok(c) => Ok(c),
-            Err(e) => Err(format!("{e}\n\n{}", Self::HELP).into()),
-        }
+        Self::parse_ldns(args).map_err(|e| format!("{e}\n\n{}", Self::HELP).into())
     }
 
     fn report_help() -> Args {
