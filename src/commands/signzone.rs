@@ -699,7 +699,7 @@ impl SignZone {
                 writer,
             )
         } else {
-            let signer = Signer::<Bytes, KeyPair, UseZskIfNoKskStrat>::new();
+            let signer = Signer::<Bytes, KeyPair, FallbackStrat>::new();
             self.go_further(
                 signer,
                 records,
@@ -1570,21 +1570,55 @@ impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
     }
 }
 
-struct UseZskIfNoKskStrat;
+struct FallbackStrat;
 
-impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
-    const NAME: &'static str = "Use ZSKs as KSKs if no KSKs key usage strategy";
+impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
+    const NAME: &'static str = "Fallback to ZSKs/KSKs if the other is empty";
 
     fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
-        let keys =
-            DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype);
+        debug!("select_signing_keys_for_type({rtype:?})");
+        match rtype {
+            // TODO: Do we need to treat CDS and CDNSKEY RRs like DNSKEY RRs?
+            Some(Rtype::DNSKEY) => {
+                // Use the default keys for signing DNSKEY RRs, i.e. keys
+                // intended to be used as KSKs.
+                let keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
+                    candidate_keys,
+                    rtype,
+                );
+
+                // But if there are no such keys, fallback to using the keys
+                // used to sign other record types, i.e. keys intended to be
+                // used as ZSKs.
         if keys.is_empty() {
-            DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, None)
+                    debug!("No KSKs, falling back to ZSKs");
+                    Self::select_signing_keys_for_rtype(candidate_keys, None)
         } else {
             keys
+                }
+            }
+
+            _ => {
+                // Use the default keys for signing non-DNSKEY RRs, i.e. keys
+                // intended to be used as ZSKs.
+                let keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
+                    candidate_keys,
+                    rtype,
+                );
+
+                // But if there are no such keys, fallback to using the keys
+                // used to sign DNSKEY RRs, i.e. keys intended to be used as
+                // KSKs.
+                if keys.is_empty() {
+                    debug!("No ZSKs, falling back to KSKs");
+                    Self::select_signing_keys_for_rtype(candidate_keys, Some(Rtype::DNSKEY))
+                } else {
+                    keys
+                }
+            }
         }
     }
 }
@@ -1592,7 +1626,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for UseZskIfNoKskStrat {
 struct AllKeyStrat;
 
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
-    const NAME: &'static str = "All keys (KSK and ZSK) key usage strategy";
+    const NAME: &'static str = "All keys (KSK and ZSK)";
 
     fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
@@ -1613,9 +1647,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
                 keys
             }
 
-            _ => {
-                DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype)
-            }
+            _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
         }
     }
 }
@@ -1624,7 +1656,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
 struct AllUniqStrat;
 
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
-    const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK) key usage strategy";
+    const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK)";
 
     fn select_signing_keys_for_rtype(
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
@@ -1648,9 +1680,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
                     .collect::<HashSet<_>>()
             }
 
-            _ => {
-                DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(candidate_keys, rtype)
-            }
+            _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
         }
     }
 }
