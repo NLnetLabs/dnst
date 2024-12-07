@@ -33,6 +33,7 @@ use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
+use log::debug;
 use octseq::builder::with_infallible;
 use ring::digest;
 
@@ -996,7 +997,18 @@ impl SignZone {
                     // loaded zone as we only support signing an unsigned
                     // zone. We do not ignore DNSKEY RRs as we match given
                     // keys against those.
-                    if !matches!(record.rtype(), Rtype::NSEC | Rtype::NSEC3 | Rtype::RRSIG) {
+                    //
+                    // TODO: RFC 5155 DNS Security (DNSSEC) Hashed
+                    // Authenticated Denial of Existence says in section 10
+                    // says that to safely transition between NSEC <-> NSEC3
+                    // one must be able to have both RR types in the zone at
+                    // once, while our current implementation only supports
+                    // having either NSEC or NSEC3 in the zone at any one
+                    // time.
+                    if !matches!(
+                        record.rtype(),
+                        Rtype::NSEC | Rtype::NSEC3 | Rtype::NSEC3PARAM | Rtype::RRSIG
+                    ) {
                         let _ = records.insert(record);
                     }
                 }
@@ -1593,11 +1605,11 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
                 // But if there are no such keys, fallback to using the keys
                 // used to sign other record types, i.e. keys intended to be
                 // used as ZSKs.
-        if keys.is_empty() {
+                if keys.is_empty() {
                     debug!("No KSKs, falling back to ZSKs");
                     Self::select_signing_keys_for_rtype(candidate_keys, None)
-        } else {
-            keys
+                } else {
+                    keys
                 }
             }
 
