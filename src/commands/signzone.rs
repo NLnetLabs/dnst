@@ -33,7 +33,6 @@ use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
 use lexopt::Arg;
-use log::debug;
 use octseq::builder::with_infallible;
 use ring::digest;
 
@@ -1591,7 +1590,6 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
         candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
-        debug!("select_signing_keys_for_type({rtype:?})");
         match rtype {
             // TODO: Do we need to treat CDS and CDNSKEY RRs like DNSKEY RRs?
             Some(Rtype::DNSKEY) => {
@@ -1606,7 +1604,6 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
                 // used to sign other record types, i.e. keys intended to be
                 // used as ZSKs.
                 if keys.is_empty() {
-                    debug!("No KSKs, falling back to ZSKs");
                     Self::select_signing_keys_for_rtype(candidate_keys, None)
                 } else {
                     keys
@@ -1625,7 +1622,6 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
                 // used to sign DNSKEY RRs, i.e. keys intended to be used as
                 // KSKs.
                 if keys.is_empty() {
-                    debug!("No ZSKs, falling back to KSKs");
                     Self::select_signing_keys_for_rtype(candidate_keys, Some(Rtype::DNSKEY))
                 } else {
                     keys
