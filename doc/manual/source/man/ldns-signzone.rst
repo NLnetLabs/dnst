@@ -68,7 +68,10 @@ Options
       Note: This option is ignored if the ``-f -`` is used.
 
       Note: Unlike the original LDNS, DS records are printed without a
-      bubblebabble version of the data in the comment text.
+      bubblebabble version of the data in the comment text, and some ordering
+      for easier consumption by humans is ONLY done if ``-b`` is in effect,
+      e.g. ordering RRSIGs after the record they cover, and ordering NSEC3
+      hashes by unhashed owner name rather than by hashed owner name.
 
 .. option:: -d
 
