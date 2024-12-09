@@ -795,7 +795,9 @@ impl SignZone {
             // Add ZONEMD RRs to output records
             records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
 
-            self.update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
+            if signing_mode == SigningMode::HashAndSign {
+                self.update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
+            }
         }
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
@@ -1380,7 +1382,6 @@ impl SignZone {
         // Sign only ZONEMD RRs
         let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
             SortedRecords::from(zonemd_rrs);
-        // No need to check for keys, as SortedRecords::sign just doesn't do anything without keys.
         let mut zonemd_rrsig = signer
             .sign(apex, zonemd_rrs.families(), keys, false)
             .unwrap();
