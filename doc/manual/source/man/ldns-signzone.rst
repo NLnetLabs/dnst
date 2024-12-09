@@ -176,3 +176,8 @@ Dates
 
 A date can be a UNIX timestamp as seconds since the Epoch (1970-01-01
 00:00 UTC), or of the form ``<YYYYMMdd[hhmmss]>``.
+
+Note: RRSIG inception and expiration timestamps in the signed output zone will
+be in unsigned decimal integer form (indicating seconds since 1 January 1970
+00:00:00 UTC) unlike the original LDNS which produced timestamps in the form
+``YYYYMMDDHHmmSS``.
