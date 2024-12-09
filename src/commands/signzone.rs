@@ -1004,9 +1004,16 @@ impl SignZone {
                     // once, while our current implementation only supports
                     // having either NSEC or NSEC3 in the zone at any one
                     // time.
+                    //
+                    // TODO: NSEC3PARAM and ZONEMD should only be ignored at
+                    // the apex (the only place RFCs define them to be valid).
                     if !matches!(
                         record.rtype(),
-                        Rtype::NSEC | Rtype::NSEC3 | Rtype::NSEC3PARAM | Rtype::RRSIG
+                        Rtype::NSEC
+                            | Rtype::NSEC3
+                            | Rtype::NSEC3PARAM
+                            | Rtype::RRSIG
+                            | Rtype::ZONEMD
                     ) {
                         let _ = records.insert(record);
                     }
