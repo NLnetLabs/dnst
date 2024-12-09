@@ -855,16 +855,17 @@ impl SignZone {
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
             writer.write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
-            if let Some(record) = records.iter().find(|r| {
-                if let ZoneRecordData::Rrsig(rrsig) = r.data() {
-                    rrsig.type_covered() == Rtype::SOA
-                } else {
-                    false
-                }
-            }) {
-                writer.write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
-            }
             if self.extra_comments {
+                if let Some(record) = records.iter().find(|r| {
+                    if let ZoneRecordData::Rrsig(rrsig) = r.data() {
+                        rrsig.type_covered() == Rtype::SOA
+                    } else {
+                        false
+                    }
+                }) {
+                    writer
+                        .write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
+                }
                 writer.write_str(";\n")?;
             }
         }
