@@ -39,7 +39,6 @@ lexopt = "0.3.0"
 octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
-#tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 # This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
@@ -48,9 +47,10 @@ _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 
 [dev-dependencies]
 const_format = " 0.2.33"
-test_bin = "0.4.0"
-tempfile = "3.14.0"
-regex = "1.11.1"
 domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", branch = "sortedrecords-zonemd-remove-replace-plus-pr444", features = [
     "unstable-stelline",
 ] }
+pretty_assertions = "1.4.1"
+regex = "1.11.1"
+tempfile = "3.14.0"
+test_bin = "0.4.0"
