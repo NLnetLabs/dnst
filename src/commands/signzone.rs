@@ -1724,6 +1724,7 @@ mod test {
     use domain::base::Name;
     use domain::rdata::dnssec::Timestamp;
     use domain::rdata::nsec3::Nsec3Salt;
+    use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     use crate::commands::signzone::{ZonemdTuple, FOUR_WEEKS};
@@ -2218,10 +2219,10 @@ mod test {
         assert_eq!(res1.exit_code, 0);
         assert_eq!(
             res1.stdout,
-            "example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
+            "example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
             example.org.\t240\tIN\tA\t128.140.76.106\n\
             example.org.\t240\tIN\tNS\texample.net.\n\
-            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\tD2D125EE8B4DDAD944FD7EE437908A5D4D5A7DB7C2F948C5A051146FC75D124666033DF7D1BA1653CF490E89F9A454F3\n\
+            example.org.\t240\tIN\tZONEMD\t1234567890 1 1 D2D125EE8B4DDAD944FD7EE437908A5D4D5A7DB7C2F948C5A051146FC75D124666033DF7D1BA1653CF490E89F9A454F3\n\
             *.example.org.\t240\tIN\tA\t1.2.3.4\n\
             deleg.example.org.\t240\tIN\tNS\texample.com.\n\
             occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n"
@@ -2270,29 +2271,28 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "\
-            example.org.\t240\tIN\tSOA\texample.net.\thostmaster.example.net.\t1234567890\t28800\t7200\t604800\t240\n\
-            example.org.\t240\tIN\tRRSIG\tSOA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\t2Jp7z/VMHlUvZoXApvsolX78ZzH9BmI8jznVHjagpmjOto/tAb1bL7AaTcOG2Ihk+uSSvDmIExaax0dbtL8CAg==\n\
+            "example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
             example.org.\t240\tIN\tA\t128.140.76.106\n\
-            example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tdVrR1Ay58L3cDaRIial45keWp/X8roeirciEqJqVZcqWO4AkSaILqDYIpfNRf3i9WvDzio0BLZT5K4r2krmyCA==\n\
             example.org.\t240\tIN\tNS\texample.net.\n\
-            example.org.\t240\tIN\tRRSIG\tNS\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tJJDRuXMuv9yiJAFN+15/7DBbaBHepA20QxLruqrjSJZsgzRcPb1UTyGozlsq9BdCq3oxZm8lea5DcIi2tyGVDQ==\n\
-            example.org.\t240\tIN\tNSEC\t*.example.org.\tA\tNS\tSOA\tRRSIG\tNSEC\tDNSKEY\tZONEMD\n\
-            example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tbL1aldkxI/a0P9Oo3FUJfGspDchBs8B476AnKS4O5g43KZ5Oy+Xvb5UimyzFQ2f5gXL47cdt8EMmuy2iRhUpBg==\n\
-            example.org.\t240\tIN\tDNSKEY\t257\t3\t15\t6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n\
-            example.org.\t240\tIN\tRRSIG\tDNSKEY\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tUPk13WDbN2MLjSwgV82084DrNUdJFmS9bthBw52X0rfiBMAvrQJJhSYbq72G5j11SFp2DnUyml8stScKJyMlCQ==\n\
-            example.org.\t240\tIN\tZONEMD\t1234567890\t1\t1\t97FCF584F87A42EA94F7C0DE25F3BA581A48D5FC4C5F1DD0FB275B9634EFE68A268606B6AB92A5D95062AB563B58196A\n\
-            example.org.\t240\tIN\tRRSIG\tZONEMD\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tf2VO/ROXqwgZdQNmTcu3Cc6zYbsFNRwiJsdYcfX1e+mdgIBt8PFsa5OOUy7VJHZnFD4/5Gq6n/6/FkWF/5iNDg==\n\
+            example.org.\t240\tIN\tRRSIG\tA 15 2 240 1732724662 1732724662 38873 example.org. dVrR1Ay58L3cDaRIial45keWp/X8roeirciEqJqVZcqWO4AkSaILqDYIpfNRf3i9WvDzio0BLZT5K4r2krmyCA==\n\
+            example.org.\t240\tIN\tRRSIG\tNS 15 2 240 1732724662 1732724662 38873 example.org. JJDRuXMuv9yiJAFN+15/7DBbaBHepA20QxLruqrjSJZsgzRcPb1UTyGozlsq9BdCq3oxZm8lea5DcIi2tyGVDQ==\n\
+            example.org.\t240\tIN\tRRSIG\tSOA 15 2 240 1732724662 1732724662 38873 example.org. 2Jp7z/VMHlUvZoXApvsolX78ZzH9BmI8jznVHjagpmjOto/tAb1bL7AaTcOG2Ihk+uSSvDmIExaax0dbtL8CAg==\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC 15 2 240 1732724662 1732724662 38873 example.org. bL1aldkxI/a0P9Oo3FUJfGspDchBs8B476AnKS4O5g43KZ5Oy+Xvb5UimyzFQ2f5gXL47cdt8EMmuy2iRhUpBg==\n\
+            example.org.\t240\tIN\tRRSIG\tDNSKEY 15 2 240 1732724662 1732724662 38873 example.org. UPk13WDbN2MLjSwgV82084DrNUdJFmS9bthBw52X0rfiBMAvrQJJhSYbq72G5j11SFp2DnUyml8stScKJyMlCQ==\n\
+            example.org.\t240\tIN\tRRSIG\tZONEMD 15 2 240 1732724662 1732724662 38873 example.org. f2VO/ROXqwgZdQNmTcu3Cc6zYbsFNRwiJsdYcfX1e+mdgIBt8PFsa5OOUy7VJHZnFD4/5Gq6n/6/FkWF/5iNDg==\n\
+            example.org.\t240\tIN\tNSEC\t*.example.org. A NS SOA RRSIG NSEC DNSKEY ZONEMD\n\
+            example.org.\t240\tIN\tDNSKEY\t257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y=\n\
+            example.org.\t240\tIN\tZONEMD\t1234567890 1 1 97FCF584F87A42EA94F7C0DE25F3BA581A48D5FC4C5F1DD0FB275B9634EFE68A268606B6AB92A5D95062AB563B58196A\n\
             *.example.org.\t240\tIN\tA\t1.2.3.4\n\
-            *.example.org.\t240\tIN\tRRSIG\tA\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\t1eLPyREltQqUClcAuT4SkqdWXL8D4C3K0mnotLv8d1x6kh/ARcac9l99ulLwtxvmJb+61+zv4vFgX35Yqbm1BA==\n\
-            *.example.org.\t240\tIN\tNSEC\tdeleg.example.org.\tA\tRRSIG\tNSEC\n\
-            *.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tFgRwrOd36au9ijKnx3AxsyN5Ar4mwt4AALTye3/IqravMHa2pTTP8h0Z2GXgu3YPmP3RXpPTwza5960KwE8YCQ==\n\
+            *.example.org.\t240\tIN\tRRSIG\tA 15 2 240 1732724662 1732724662 38873 example.org. 1eLPyREltQqUClcAuT4SkqdWXL8D4C3K0mnotLv8d1x6kh/ARcac9l99ulLwtxvmJb+61+zv4vFgX35Yqbm1BA==\n\
+            *.example.org.\t240\tIN\tRRSIG\tNSEC 15 2 240 1732724662 1732724662 38873 example.org. FgRwrOd36au9ijKnx3AxsyN5Ar4mwt4AALTye3/IqravMHa2pTTP8h0Z2GXgu3YPmP3RXpPTwza5960KwE8YCQ==\n\
+            *.example.org.\t240\tIN\tNSEC\tdeleg.example.org. A RRSIG NSEC\n\
             deleg.example.org.\t240\tIN\tNS\texample.com.\n\
-            deleg.example.org.\t240\tIN\tNSEC\texample.org.\tNS\tRRSIG\tNSEC\n\
-            deleg.example.org.\t240\tIN\tRRSIG\tNSEC\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tm/j7UOa1SvFw0rz5pBXVWS62gX328rxveNeD+Gd7husNcvbYhW2rLLYfTCG6LNvUP4fG2rJ45OhY3g3Trx2iBQ==\n\
+            deleg.example.org.\t240\tIN\tRRSIG\tNSEC 15 3 240 1732724662 1732724662 38873 example.org. m/j7UOa1SvFw0rz5pBXVWS62gX328rxveNeD+Gd7husNcvbYhW2rLLYfTCG6LNvUP4fG2rJ45OhY3g3Trx2iBQ==\n\
+            deleg.example.org.\t240\tIN\tNSEC\texample.org. NS RRSIG NSEC\n\
             occluded.deleg.example.org.\t240\tIN\tA\t1.2.3.4\n\
             "
-            );
+        );
         assert_eq!(res.stderr, "");
     }
 
@@ -2305,14 +2305,14 @@ mod test {
 
         // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
-            example.org.\t240\tIN\tNSEC3PARAM\t1\t0\t1\t-\n\
-            example.org.\t240\tIN\tRRSIG\tNSEC3PARAM\t15\t2\t240\t1732724662\t1732724662\t38873\texample.org.\tdOrhLIWhrQm2OunlTWrSsELkx1kKYo4jTkF5pEwrvZxjhUI9DBKdkloaVsTKcdrmffidC5pE9GoY9ckaoHpGCA==\n\
-            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\tK71KU6AICR5JPDJOE9J7CDNLK6D5C3UE\tA\tNS\tSOA\tRRSIG\tDNSKEY\tNSEC3PARAM\n\
-            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tz4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
-            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\tOJICMHRI4VP8PO7H2KVEJ99SKLQNJ5P2\tNS\n\
-            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tHUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
-            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tNSEC3\t1\t1\t1\t-\t93U63BG57PPJ6649AL2N31L92IEDKJD6\tNS\tDS\tRRSIG\n\
-            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tRRSIG\tNSEC3\t15\t3\t240\t1732724662\t1732724662\t38873\texample.org.\tNG/8jk3UHht1ZYNEjUZ4swaEHea1amF4l3jZ893oARi95oxtPVLKoinVbBbfVuoanicOgeZxUPpKWHMBR12XDA==\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC3PARAM 15 2 240 1732724662 1732724662 38873 example.org. dOrhLIWhrQm2OunlTWrSsELkx1kKYo4jTkF5pEwrvZxjhUI9DBKdkloaVsTKcdrmffidC5pE9GoY9ckaoHpGCA==\n\
+            example.org.\t240\tIN\tNSEC3PARAM\t1 0 1 -\n\
+            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 1732724662 1732724662 38873 example.org. z4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
+            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1 1 1 - K71KU6AICR5JPDJOE9J7CDNLK6D5C3UE A NS SOA RRSIG DNSKEY NSEC3PARAM\n\
+            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 1732724662 1732724662 38873 example.org. HUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
+            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tNSEC3\t1 1 1 - OJICMHRI4VP8PO7H2KVEJ99SKLQNJ5P2 NS\n\
+            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 1732724662 1732724662 38873 example.org. NG/8jk3UHht1ZYNEjUZ4swaEHea1amF4l3jZ893oARi95oxtPVLKoinVbBbfVuoanicOgeZxUPpKWHMBR12XDA==\n\
+            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tNSEC3\t1 1 1 - 93U63BG57PPJ6649AL2N31L92IEDKJD6 NS DS RRSIG\n\
             ";
 
         let res = FakeCmd::new([

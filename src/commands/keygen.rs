@@ -340,7 +340,7 @@ impl Keygen {
         let public_key = public_key.display_as_bind().to_string();
         let digest = digest.map(|digest| {
             format!(
-                "{} IN DS {}\n",
+                "{}\tIN\tDS\t{}\n",
                 self.name.fmt_with_dot(),
                 digest.display_zonefile(DISPLAY_KIND)
             )
@@ -621,7 +621,7 @@ mod test {
         let public_key_regex =
             Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
         let digest_key_regex =
-            Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
+            Regex::new(r"^example.org.\tIN\tDS\t[0-9]+\t15 2 [0-9a-fA-F]+\n$").unwrap();
 
         assert_eq!(res.exit_code, 0, "{res:?}");
         assert_eq!(res.stderr, "");
@@ -633,7 +633,7 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(digest_key_regex.is_match(&digest_key));
+        assert!(digest_key_regex.is_match(&digest_key), "{digest_key} not matched");
 
         assert!(dir
             .path()
