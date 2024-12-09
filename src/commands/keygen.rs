@@ -633,7 +633,10 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(digest_key_regex.is_match(&digest_key), "{digest_key} not matched");
+        assert!(
+            digest_key_regex.is_match(&digest_key),
+            "{digest_key} not matched"
+        );
 
         assert!(dir
             .path()
