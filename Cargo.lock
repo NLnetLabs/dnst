@@ -341,7 +341,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=sortedrecords-zonemd-remove-replace-plus-pr444#31fabac5e8e3086dfcb3545b03aef019a3c6e9be"
+source = "git+https://github.com/NLnetLabs/domain?branch=sortedrecords-zonemd-remove-replace-plus-pr444#55c6975e1f6ff3a1a981f258819b25466b1797b4"
 dependencies = [
  "arc-swap",
  "bytes",
