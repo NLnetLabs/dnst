@@ -1739,7 +1739,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
 /// instead of seconds since 1 January 1970 00:00:00 UTC format.
 struct YyyyMmDdHhMMSsRrsig<'a, O, N>(&'a Rrsig<O, N>);
 
-impl<'a, O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'a, O, N> {
+impl<O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     fn fmt(&self, p: &mut impl Formatter) -> zonefile_fmt::Result {
         #[allow(non_snake_case)]
         fn to_YYYYMMDDHHmmSS(ts: &Timestamp) -> impl Display {
@@ -1776,7 +1776,7 @@ impl<'a, O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'a, O, N
     }
 }
 
-impl<'a, O, N> RecordData for YyyyMmDdHhMMSsRrsig<'a, O, N> {
+impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     fn rtype(&self) -> Rtype {
         Rtype::RRSIG
     }
