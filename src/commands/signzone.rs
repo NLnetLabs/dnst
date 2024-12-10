@@ -2504,6 +2504,11 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 1084127779 1081535779 38353 example.
     }
 
     #[test]
+    fn rfc_5155_nsec3_signed_zone_example() {
+        todo!()
+    }
+
+    #[test]
     fn glue_records_should_not_be_hashed_or_signed() {
         // So there should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at
         // glue owner names.
