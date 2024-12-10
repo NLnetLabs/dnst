@@ -2205,80 +2205,6 @@ mod test {
         ));
     }
 
-    fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
-        let mut file = File::create(dir.path().join(filename)).unwrap();
-        file.write_all(content).unwrap();
-    }
-
-    fn run_setup() -> TempDir {
-        let dir = tempfile::TempDir::new().unwrap();
-
-        create_file_with_content(&dir, "ksk1.key", b"example.org. IN DNSKEY 257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n");
-        create_file_with_content(&dir, "ksk1.ds", b"example.org. IN DS 38873 15 2 e195b1a7d31c878993ad0095d723592a1e5ea55c90b229fc35e4c549ef406f6c\n");
-        create_file_with_content(&dir, "ksk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: /e7bFDFF88sdC949PC2YoHX9KJ5eEak3bk/Tub2vIng=\n");
-
-        create_file_with_content(&dir, "zsk1.key", b"example.org. IN DNSKEY 256 3 15 fPzhX3Tq/w3ncwsWYIRsK8rHLNtkVv1O3kXYAMdBQUk= ;{id = 44471 (zsk), size = 256b}");
-        create_file_with_content(&dir, "zsk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: mc2xW8JiES5Ub6UPP2xoHT0KyD6Lvi6fnjugjnRzBJU=");
-
-        create_file_with_content(&dir, "zonemd1_example.org.zone", b"\
-                example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
-                example.org.    240     IN      NS      example.net.\n\
-                ; Will be replaced when using ZONEMD option\n\
-                example.org.    240     IN      ZONEMD 1234567890 1 1 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB\n\
-                example.org.    240     IN      ZONEMD 1234567890 1 2 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABAB\n\
-                example.org.                240 IN  A  128.140.76.106\n\
-                *.example.org.              240 IN  A  1.2.3.4\n\
-                deleg.example.org.          240 IN  NS example.com.\n\
-                occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
-                ");
-
-        create_file_with_content(&dir, "nsec3_optout1_example.org.zone", b"\
-                example.org.                          240 IN SOA example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
-                example.org.                          240 IN NS  example.net.\n\
-                example.org.                          240 IN A   128.140.76.106\n\
-                insecure-deleg.example.org.           240 IN NS  example.com.\n\
-                occluded.insecure-deleg.example.org.  240 IN A   1.2.3.4\n\
-                secure-deleg.example.org.             240 IN NS  example.com.\n\
-                secure-deleg.example.org.             240 IN DS  3120 15 2 0675d8c4a90ecd25492e4c4c6583afcef7c3b910b7a39162803058e6e7393a19\n\
-                ");
-
-        dir
-    }
-
-    /// Filter a string slice for lines containing at least one of the provided patterns.
-    #[allow(dead_code)]
-    fn filter_lines_containing_any(src: &str, patterns: &[&str]) -> String {
-        if patterns.is_empty() {
-            // For consistency with str::contains() and filter_lines_containing_all()
-            String::from(src)
-        } else {
-            src.split_inclusive('\n')
-                .filter(|s| {
-                    for p in patterns {
-                        if s.contains(p) {
-                            return true;
-                        }
-                    }
-                    false
-                })
-                .collect()
-        }
-    }
-
-    /// Filter a string slice for lines containing all provided patterns.
-    fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
-        src.split_inclusive('\n')
-            .filter(|s| {
-                for p in patterns {
-                    if !s.contains(p) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect()
-    }
-
     #[test]
     fn zonemd_digest_and_replacing_existing_at_apex() {
         let dir = run_setup();
@@ -2434,5 +2360,81 @@ mod test {
     fn next_owner_hash_in_nsec3_rdata_should_be_lowercase_in_ldns_mode() {
         // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
         todo!()
+    }
+
+    //------------ Helper functions ------------------------------------------
+
+    fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
+        let mut file = File::create(dir.path().join(filename)).unwrap();
+        file.write_all(content).unwrap();
+    }
+
+    fn run_setup() -> TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        create_file_with_content(&dir, "ksk1.key", b"example.org. IN DNSKEY 257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n");
+        create_file_with_content(&dir, "ksk1.ds", b"example.org. IN DS 38873 15 2 e195b1a7d31c878993ad0095d723592a1e5ea55c90b229fc35e4c549ef406f6c\n");
+        create_file_with_content(&dir, "ksk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: /e7bFDFF88sdC949PC2YoHX9KJ5eEak3bk/Tub2vIng=\n");
+
+        create_file_with_content(&dir, "zsk1.key", b"example.org. IN DNSKEY 256 3 15 fPzhX3Tq/w3ncwsWYIRsK8rHLNtkVv1O3kXYAMdBQUk= ;{id = 44471 (zsk), size = 256b}");
+        create_file_with_content(&dir, "zsk1.private", b"Private-key-format: v1.2\nAlgorithm: 15 (ED25519)\nPrivateKey: mc2xW8JiES5Ub6UPP2xoHT0KyD6Lvi6fnjugjnRzBJU=");
+
+        create_file_with_content(&dir, "zonemd1_example.org.zone", b"\
+                example.org.    240     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+                example.org.    240     IN      NS      example.net.\n\
+                ; Will be replaced when using ZONEMD option\n\
+                example.org.    240     IN      ZONEMD 1234567890 1 1 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB\n\
+                example.org.    240     IN      ZONEMD 1234567890 1 2 ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABABABABABABABABABAB ABABABABABABABABABABABABABABABAB\n\
+                example.org.                240 IN  A  128.140.76.106\n\
+                *.example.org.              240 IN  A  1.2.3.4\n\
+                deleg.example.org.          240 IN  NS example.com.\n\
+                occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
+                ");
+
+        create_file_with_content(&dir, "nsec3_optout1_example.org.zone", b"\
+                example.org.                          240 IN SOA example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+                example.org.                          240 IN NS  example.net.\n\
+                example.org.                          240 IN A   128.140.76.106\n\
+                insecure-deleg.example.org.           240 IN NS  example.com.\n\
+                occluded.insecure-deleg.example.org.  240 IN A   1.2.3.4\n\
+                secure-deleg.example.org.             240 IN NS  example.com.\n\
+                secure-deleg.example.org.             240 IN DS  3120 15 2 0675d8c4a90ecd25492e4c4c6583afcef7c3b910b7a39162803058e6e7393a19\n\
+                ");
+
+        dir
+    }
+
+    /// Filter a string slice for lines containing at least one of the provided patterns.
+    #[allow(dead_code)]
+    fn filter_lines_containing_any(src: &str, patterns: &[&str]) -> String {
+        if patterns.is_empty() {
+            // For consistency with str::contains() and filter_lines_containing_all()
+            String::from(src)
+        } else {
+            src.split_inclusive('\n')
+                .filter(|s| {
+                    for p in patterns {
+                        if s.contains(p) {
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .collect()
+        }
+    }
+
+    /// Filter a string slice for lines containing all provided patterns.
+    fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
+        src.split_inclusive('\n')
+            .filter(|s| {
+                for p in patterns {
+                    if !s.contains(p) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
     }
 }
