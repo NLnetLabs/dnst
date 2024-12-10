@@ -936,11 +936,11 @@ impl SignZone {
                     {
                         for covering_rrsig_rr in covering_rrsigs {
                             self.writeln_rr(&mut writer, covering_rrsig_rr)?;
-                            if self.extra_comments {
-                                writer.write_str(";\n")?;
-                            }
                         }
                     }
+                }
+                if self.extra_comments {
+                    writer.write_str(";\n")?;
                 }
             } else {
                 for rrset in family.rrsets().filter(|rrset| rrset.rtype() != Rtype::SOA) {
