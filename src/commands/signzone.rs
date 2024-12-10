@@ -2416,4 +2416,23 @@ mod test {
         );
         assert_eq!(res.stderr, "");
     }
+
+    #[test]
+    fn glue_records_should_not_be_hashed_or_signed() {
+        // So there should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at
+        // glue owner names.
+        todo!()
+    }
+
+    #[test]
+    fn ds_digest_rdata_should_be_presented_as_lowercase() {
+        // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
+        todo!()
+    }
+
+    #[test]
+    fn next_owner_hash_in_nsec3_rdata_should_be_lowercase_in_ldns_mode() {
+        // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
+        todo!()
+    }
 }
