@@ -6,7 +6,7 @@ use core::str::FromStr;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::fmt;
+use std::fmt::{self, Display};
 use std::fs::File;
 use std::hash::RandomState;
 use std::io::{self, BufWriter};
@@ -17,17 +17,18 @@ use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::name::FlattenInto;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::{Name, NameBuilder, Record, Rtype, Serial, Ttl};
+use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
+use domain::base::{Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::rdata::{Dnskey, Nsec3, Nsec3param, Soa, ZoneRecordData, Zonemd};
+use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
     DefaultSigningKeyUsageStrategy, DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose,
     Nsec3OptOut, Nsec3Records, RecordsIter, Signer, SigningKeyUsageStrategy, SortedRecords, Sorter,
 };
 use domain::sign::{SecretKeyBytes, SigningKey};
+use domain::utils::base64;
 use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
@@ -854,7 +855,7 @@ impl SignZone {
         }
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
-            writer.write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
+            self.writeln_rr(&mut writer, record)?;
             if self.extra_comments {
                 if let Some(record) = records.iter().find(|r| {
                     if let ZoneRecordData::Rrsig(rrsig) = r.data() {
@@ -863,8 +864,7 @@ impl SignZone {
                         false
                     }
                 }) {
-                    writer
-                        .write_fmt(format_args!("{}\n", record.display_zonefile(DISPLAY_KIND)))?;
+                    self.writeln_rr(&mut writer, record)?;
                 }
                 writer.write_str(";\n")?;
             }
@@ -909,7 +909,7 @@ impl SignZone {
                     .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
                 {
                     for rr in rrset.iter() {
-                        writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))?;
+                        self.write_rr(&mut writer, rr)?;
                         match rr.data() {
                             ZoneRecordData::Nsec3(nsec3) => {
                                 nsec3.comment(&mut writer, rr, nsec3_cs)?
@@ -935,8 +935,7 @@ impl SignZone {
                         .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                     {
                         for covering_rrsig_rr in covering_rrsigs {
-                            writer.write_fmt(format_args!("{}", covering_rrsig_rr.display_zonefile(DISPLAY_KIND)))?;
-                            writer.write_str("\n")?;
+                            self.writeln_rr(&mut writer, covering_rrsig_rr)?;
                             if self.extra_comments {
                                 writer.write_str(";\n")?;
                             }
@@ -949,25 +948,53 @@ impl SignZone {
                         // Only output the key tag comment if running as LDNS.
                         // When running as DNST we assume without `-b` that speed
                         // is wanted, not human readable comments.
+                        self.write_rr(&mut writer, rr)?;
                         if self.invoked_as_ldns {
-                            writer
-                                .write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))?;
                             if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
                                 dnskey.comment(&mut writer, rr, ())?
                             }
-                            writer.write_str("\n")?;
-                        } else {
-                            writer.write_fmt(format_args!(
-                                "{}\n",
-                                rr.display_zonefile(DISPLAY_KIND)
-                            ))?;
                         }
+                        writer.write_char('\n')?;
                     }
                 }
             }
         }
 
         Ok(())
+    }
+
+    fn write_rr<W, N, O: AsRef<[u8]>>(
+        &self,
+        writer: &mut W,
+        rr: &Record<N, ZoneRecordData<O, N>>,
+    ) -> std::fmt::Result
+    where
+        N: ToName,
+        W: Write,
+        ZoneRecordData<O, N>: ZonefileFmt,
+    {
+        if self.invoked_as_ldns {
+            if let ZoneRecordData::Rrsig(rrsig) = rr.data() {
+                let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
+                return writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)));
+            }
+        }
+
+        writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))
+    }
+
+    fn writeln_rr<W, N, O: AsRef<[u8]>>(
+        &self,
+        writer: &mut W,
+        rr: &Record<N, ZoneRecordData<O, N>>,
+    ) -> std::fmt::Result
+    where
+        N: ToName,
+        W: Write,
+        ZoneRecordData<O, N>: ZonefileFmt,
+    {
+        self.write_rr(writer, rr)?;
+        writer.write_char('\n')
     }
 
     fn load_zone(
@@ -1699,6 +1726,59 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
 
             _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
         }
+    }
+}
+
+//------------ YyyyMmDdHhMMSsRrsig -------------------------------------------
+
+/// A RFC 4034 section 3.2 YYYYMMDDHHmmSS presentable RRSIG wrapper.
+///
+/// This wrapper type provides an alternate implementation of [`ZonefileFmt`]
+/// to the default implemented in `domain` such that RRSIG inception and
+/// expiration timestamps are rendered in RFC 4034 3.2 YYYYMMDDHHmmSS format
+/// instead of seconds since 1 January 1970 00:00:00 UTC format.
+struct YyyyMmDdHhMMSsRrsig<'a, O, N>(&'a Rrsig<O, N>);
+
+impl<'a, O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'a, O, N> {
+    fn fmt(&self, p: &mut impl Formatter) -> zonefile_fmt::Result {
+        #[allow(non_snake_case)]
+        fn to_YYYYMMDDHHmmSS(ts: &Timestamp) -> impl Display {
+            jiff::Timestamp::from_second(ts.into_int().into())
+                .unwrap()
+                .strftime("%Y%m%d%H%M%S")
+        }
+
+        // This block of code was copied from the `domain` crate impl of
+        // `Zonefilefmt` for domain::rdata::Rrsig. Ideally we wouldn't have to
+        // copy it like this but at the time of writing `domain` doesn't
+        // provide a way to override the rendering of RRSIG timestamps alone
+        // nor provide alternate renderings itself. For more information see
+        // https://github.com/NLnetLabs/domain/issues/467.
+        p.block(|p| {
+            let expiration = to_YYYYMMDDHHmmSS(&self.0.expiration());
+            let inception = to_YYYYMMDDHHmmSS(&self.0.inception());
+            p.write_show(self.0.type_covered())?;
+            p.write_show(self.0.algorithm())?;
+            p.write_token(self.0.labels())?;
+            p.write_comment("labels")?;
+            p.write_show(self.0.original_ttl())?;
+            p.write_comment("original ttl")?;
+            p.write_token(expiration)?;
+            p.write_comment("expiration")?;
+            p.write_token(inception)?;
+            p.write_comment("inception")?;
+            p.write_token(self.0.key_tag())?;
+            p.write_comment("key tag")?;
+            p.write_token(self.0.signer_name().fmt_with_dot())?;
+            p.write_comment("signer name")?;
+            p.write_token(base64::encode_display(&self.0.signature()))
+        })
+    }
+}
+
+impl<'a, O, N> RecordData for YyyyMmDdHhMMSsRrsig<'a, O, N> {
+    fn rtype(&self) -> Rtype {
+        Rtype::RRSIG
     }
 }
 

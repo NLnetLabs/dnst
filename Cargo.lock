@@ -327,6 +327,7 @@ dependencies = [
  "clap",
  "const_format",
  "domain",
+ "jiff",
  "lazy_static",
  "lexopt",
  "octseq",
@@ -516,6 +517,12 @@ name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
+
+[[package]]
+name = "jiff"
+version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db69f08d4fb10524cacdb074c10b296299d71274ddbc830a8ee65666867002e9"
 
 [[package]]
 name = "js-sys"

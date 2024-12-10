@@ -40,6 +40,11 @@ octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
 
+# LDNS-xxx mode specific dependencies.
+# TODO: put these behind a feature gate?
+jiff = { version = "0.1.15", default-features = false, features = ["alloc"] }
+
+
 # This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
