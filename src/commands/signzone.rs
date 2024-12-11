@@ -18,7 +18,9 @@ use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
-use domain::base::{Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
+use domain::base::{
+    CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
+};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
@@ -213,6 +215,33 @@ pub struct SignZone {
     #[arg(short = 'T', default_value_t = false)]
     use_yyyymmddhhmmss_rrsig_format: bool,
 
+    /// Preceed the zone output by a list that contains the NSEC3 hashes of the
+    /// original ownernames.
+    #[arg(short = 'L', default_value_t = false, requires = "nsec3")]
+    preceed_zone_with_hash_list: bool,
+
+    /// Order RRSIG RRs by the record type that they cover.
+    #[arg(
+        short = 'R',
+        default_value_ifs([
+            ("extra_comments", "false", Some("false")),
+            ("extra_comments", "true", Some("true"))
+        ]),
+    )]
+    order_rrsigs_after_the_rtype_they_cover: bool,
+
+    /// Order NSEC3 RRs by unhashed owner name.
+    #[arg(
+        short = 'O',
+        default_value_t = false,
+        requires = "nsec3",
+        default_value_ifs([
+            ("extra_comments", "false", Some("false")),
+            ("extra_comments", "true", Some("true"))
+        ]),
+    )]
+    order_nsec3_rrs_by_unhashed_owner_name: bool,
+
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
@@ -256,6 +285,7 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
                 -t [number] number of hash iterations
                 -s [string] salt
                 -p set the opt-out flag on all nsec3 rrs
+  -L            Preceed the zone output by a list of NSEC3 owners and hashes.
 
   keys must be specified by their base name (usually K<name>+<alg>+<id>),
   i.e. WITHOUT the .private extension.
@@ -287,6 +317,7 @@ impl LdnsCommand for SignZone {
         let mut iterations = 1u16;
         let mut salt = Nsec3Salt::<Bytes>::empty();
         let mut nsec3_opt_out_flags_only = false;
+        let mut preceed_zone_with_hash_list = false;
         let mut key_paths = Vec::<PathBuf>::new();
         let mut zonefile = Option::<PathBuf>::None;
 
@@ -365,6 +396,9 @@ impl LdnsCommand for SignZone {
                 Arg::Short('p') => {
                     nsec3_opt_out_flags_only = true;
                 }
+                Arg::Short('L') => {
+                    preceed_zone_with_hash_list = true;
+                }
                 Arg::Value(val) => {
                     if zonefile.is_none() {
                         zonefile = Some(parse_os("zonefile", &val)?);
@@ -396,6 +430,8 @@ impl LdnsCommand for SignZone {
             return Err("Missing key argument".into());
         };
 
+        preceed_zone_with_hash_list &= extra_comments && use_nsec3;
+
         Ok(Args::from(Command::SignZone(Self {
             extra_comments,
             do_not_add_keys_to_zone,
@@ -416,6 +452,9 @@ impl LdnsCommand for SignZone {
             nsec3_opt_out: false,
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: true,
+            preceed_zone_with_hash_list,
+            order_rrsigs_after_the_rtype_they_cover: extra_comments,
+            order_nsec3_rrs_by_unhashed_owner_name: extra_comments,
             zonefile_path,
             key_paths,
             no_require_keys_match_apex: false,
@@ -521,6 +560,7 @@ impl SignZone {
     }
 
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        eprintln!("-L = {}", self.preceed_zone_with_hash_list);
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
@@ -759,7 +799,7 @@ impl SignZone {
                         params,
                         opt_out,
                         !self.do_not_add_keys_to_zone,
-                        self.extra_comments,
+                        self.extra_comments || self.preceed_zone_with_hash_list,
                     )
                     .unwrap();
                 records.extend(recs.into_iter().map(Record::from_record));
@@ -818,50 +858,67 @@ impl SignZone {
         // creating a new Vec, it only contains references to the original
         // data so it's indiividual are not the records themselves.
         let mut families;
-        let family_iter: AnyFamiliesIter = if self.extra_comments && hashes.is_some() {
-            families = records.families().collect::<Vec<_>>();
-            let Some(hashes) = hashes.as_ref() else {
-                unreachable!();
-            };
-            families.sort_unstable_by(|a, b| {
-                let mut hashed_count = 0;
-                let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
-                    hashed_count += 1;
-                    unhashed_owner
-                } else {
-                    a.owner()
+        let family_iter: AnyFamiliesIter =
+            if self.order_nsec3_rrs_by_unhashed_owner_name && hashes.is_some() {
+                families = records.families().collect::<Vec<_>>();
+                let Some(hashes) = hashes.as_ref() else {
+                    unreachable!();
                 };
-                let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
-                    hashed_count += 2;
-                    unhashed_owner
-                } else {
-                    b.owner()
-                };
+                families.sort_unstable_by(|a, b| {
+                    let mut hashed_count = 0;
+                    let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
+                        hashed_count += 1;
+                        unhashed_owner
+                    } else {
+                        a.owner()
+                    };
+                    let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
+                        hashed_count += 2;
+                        unhashed_owner
+                    } else {
+                        b.owner()
+                    };
 
-                match unhashed_a.cmp(unhashed_b) {
-                    Ordering::Less => Ordering::Less,
-                    Ordering::Equal => match hashed_count {
-                        0 | 3 => Ordering::Equal,
-                        1 => Ordering::Greater,
-                        2 => Ordering::Less,
-                        _ => unreachable!(),
-                    },
-                    Ordering::Greater => Ordering::Greater,
-                }
-            });
-            families.iter().into()
-        } else {
-            records.families().into()
-        };
+                    match unhashed_a.cmp(unhashed_b) {
+                        Ordering::Less => Ordering::Less,
+                        Ordering::Equal => match hashed_count {
+                            0 | 3 => Ordering::Equal,
+                            1 => Ordering::Greater,
+                            2 => Ordering::Less,
+                            _ => unreachable!(),
+                        },
+                        Ordering::Greater => Ordering::Greater,
+                    }
+                });
+                families.iter().into()
+            } else {
+                records.families().into()
+            };
 
         // Output the resulting zone, with comments if enabled.
         if self.extra_comments {
-            writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.owner()))?;
+            writer.write_fmt(format_args!(
+                ";; Zone: {}\n;\n",
+                apex.owner().fmt_with_dot()
+            ))?;
+        }
+
+        if self.preceed_zone_with_hash_list {
+            if let Some(hashes) = hashes.as_ref() {
+                let mut owner_sorted_hashes = hashes
+                    .iter()
+                    .collect::<Vec<_>>();
+                owner_sorted_hashes
+                    .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
+                for (hash, owner) in owner_sorted_hashes {
+                    writer.write_fmt(format_args!("; H({owner}) = {hash}\n"))?;
+                }
+            }
         }
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
             self.writeln_rr(&mut writer, record)?;
-            if self.extra_comments {
+            if self.order_rrsigs_after_the_rtype_they_cover {
                 if let Some(record) = records.iter().find(|r| {
                     if let ZoneRecordData::Rrsig(rrsig) = r.data() {
                         rrsig.type_covered() == Rtype::SOA
@@ -871,7 +928,9 @@ impl SignZone {
                 }) {
                     self.writeln_rr(&mut writer, record)?;
                 }
-                writer.write_str(";\n")?;
+                if self.extra_comments {
+                    writer.write_str(";\n")?;
+                }
             }
         }
 
@@ -908,7 +967,7 @@ impl SignZone {
             // The SOA is output separately above as the very first RRset so
             // we skip that, and we skip RRSIGs as they are output only after
             // the RRset that they cover.
-            if self.extra_comments {
+            if self.order_rrsigs_after_the_rtype_they_cover {
                 for rrset in family
                     .rrsets()
                     .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
@@ -916,7 +975,7 @@ impl SignZone {
                     for rr in rrset.iter() {
                         self.write_rr(&mut writer, rr)?;
                         match rr.data() {
-                            ZoneRecordData::Nsec3(nsec3) => {
+                            ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
                                 nsec3.comment(&mut writer, rr, nsec3_cs)?
                             }
                             ZoneRecordData::Dnskey(dnskey) => {
@@ -1571,7 +1630,7 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
                 format!("<invalid name: {next_owner_hash_hex}>")
             };
 
-            writer.write_fmt(format_args!(", from: {from}, to: {to}}}"))?;
+            writer.write_fmt(format_args!(", from: {from} to: {to}}}"))?;
         }
         Ok(())
     }
@@ -1885,6 +1944,9 @@ mod test {
             nsec3_opt_out: false,
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: false,
+            preceed_zone_with_hash_list: false,
+            order_rrsigs_after_the_rtype_they_cover: false,
+            order_nsec3_rrs_by_unhashed_owner_name: false,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
@@ -2068,6 +2130,9 @@ mod test {
             nsec3_opt_out: false,
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: true,
+            preceed_zone_with_hash_list: false,
+            order_rrsigs_after_the_rtype_they_cover: true,
+            order_nsec3_rrs_by_unhashed_owner_name: true,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
@@ -2493,7 +2558,12 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         let dir = tempfile::TempDir::new().unwrap();
 
         // TODO: RFC 5155 Appendix A Example Zone shows lowercase NSEC3 salt
-        // but we produce uppercase NSEC3 salt - does it matter?
+        // but we produce uppercase NSEC3 salt - does it matter? LDNS shows it
+        // in lowercase too.
+
+        // TODO: RFC 5155 Appendix A Example Zone shows next NSEC3 hashed
+        // owner in lowercase but we show it in uppercase - does it matter?
+        // LDNS shows it in lowercase too.
 
         // TODO: RFC 5155 Appendix A Example Zone shows next NSEC3 hashed
         // owner as the owner of the next record output but we use a different
@@ -2517,11 +2587,20 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         // ldns-signzone when using -f-) in order to get the same ordering as
         // both the original ldns-signzone and the example in RFC 4035.
         let expected_signed_zone = r###"
-;; Zone: example
-;
+; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
+; H(2t7b4g4vsa5smi47k61mv5bv1a22bojr.example) = kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example
+; H(a.example) = 35mthgpgcu1qg68fab165klnsnk3dpvl.example
+; H(ai.example) = gjeqe526plbf1g8mklp59enfd789njgi.example
+; H(ns1.example) = 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example
+; H(ns2.example) = q04jkcevqvmu85r014c7dkba38o0ji5r.example
+; H(w.example) = k8udemvp1j2f7eg6jebps17vp3n8i58h.example
+; H(*.w.example) = r53bq7cc2uvmubfu5ocmm6pers9tk9en.example
+; H(x.w.example) = b4um86eghhds6nea196smvmlo4ors995.example
+; H(y.w.example) = ji6neoaepv8b5o6k4ev33abha8ht9fgc.example
+; H(x.y.w.example) = 2vptu5timamqttgl4luu9kg21e0aor3s.example
+; H(xx.example) = t644ebqk9bibcna874givr6joj62mlhv.example
 example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1 3600 300 3600000 3600
 example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20150420235959 20051021000000 38353 example. OQmI2syAvTPgPZCKCV2cIvJyEAWyTatdMUKhg9hBdPovmZzRZ9wWaLtRzwGUuHdzeNzA7MEPOSZ1heIWYiS4JqEfemJSwZtQRLuwhOKznPMQt7UJNN4e7cjM2j0W7D8v92TsjwdB9j47Qjl64Yl0Y26zh25Sw3JRuq2dbGbbl8I=
-;
 example.\t3600\tIN\tNS\tns1.example.
 example.\t3600\tIN\tNS\tns2.example.
 example.\t3600\tIN\tRRSIG\tNS 8 1 3600 20150420235959 20051021000000 38353 example. YEedzYLNAJpDj/1ekisL51HQ3m9Dmcf/kj+1XxMs86P91wWTB07mhv9Jin6ziwPPwSn2erXKsJkFOT6W5XNh1W3WlgvxsQ1mAApppm0OPxmuA/pjMiv6Hr+df+N/6IZ2Wq36EtgUXxFU+QN4WVPzwebjM9rZLtNxN8kQnhSs4E4=
@@ -2532,95 +2611,64 @@ example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzH
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
 example.\t3600\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
 example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. jb9Dw0kO4hEMpxqo1veI6HmYQGMo3bbahItqjBwLuQ4y1eKQEhGok/Ar6VPrXpPNDQgLnPQafmA6ziI3WoMLtA+vfT7wzLx0UK3ZGqcWPQp00MGNwYQfJ/QezIJteHtVDWBwXWj2xR3f/eUxJAxhPzgj4kOPHMnYMYF4o2ZVsD0=
-;
-0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM ;{ flags: optout, from: example., to: ns1.example.}
+0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
-;
-kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R A RRSIG ;{ flags: optout, from: 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example., to: ns2.example.}
-kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. iCIqnxLw7KsQZxj7MNPlEGlbU4SvoroyygNAILtzxgEY0qJflPEsV4lyjsJMNMPMvzlyzs4zAl2StBYF+Y9WDCJf5h1t/W0tB9oddfoLwtAEqukHFW6DIcoHuERjdqTVr3+fvcIJzwGAuT+TYuOucq/2aTwmludE1lhHBgOIjJU=
-;
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. h7JOg0b+I3ZWI4usKYTCV8Kvik2wIOlJbbgqnQuMq/eADcNucUSKP454p+6HgrTA+11FLirv07d1CL3HcXUiNd0J/85LfII965t9jEKOWq2tWzEXj0LYhoXFqcfLDmYBSNxOXy8/VexRvYlIk1wooQ8aYqdc0VIeQKba66yNAKo=
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A RRSIG
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. W3ZqyTU5dpvSeNYUtjk5mGDDyLWyoNmJXBNfZmv9Hwpb7FZQ/dZLu9OhS6B8JBDxunRaatpNFQjurkdQNdaLPH3B61824V0mW4JZFWZuTJJMIVZtPDOXNYXeezejYwuIKn1CZXtkobdJOtQUEmiW3OjC0Hz3L/0IUoKTgIbLZB4=
+2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 35MTHGPGCU1QG68FAB165KLNSNK3DPVL MX RRSIG
+2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. n0psta4fcHe5JvTi3KSA4O0n732l/4qYpwZhso2G8MvCTGTlVrGH/DQTPjS9rhBwkw2AWBN0kAVZ7Ry48jtfub9zC6VjLaF2aNzBScvbRRsewJi3pdNbo69qidOrlBEJUyVRo9cu3XQOA0zjT0mh+iT31oqQMNg3n3d66HnD3bs=
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS DS RRSIG
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. cLVHqZp0jL0MG2ZqcnVUsOHkrGajuOtSJU/W9t7u8JDr0pjhw/yhtY1sCemgHEDVz1E9cyp3WLvcVphApGOMR6tkVOHzsPbVlKHRHogILXWL5Q6BUvXCWYtTsPvRT0eukGy/yFGL+JnCI+uRHuhMqmAmfjvBfIDzvYyy8MjNF5w=
 a.example.\t3600\tIN\tNS\tns1.a.example.
 a.example.\t3600\tIN\tNS\tns2.a.example.
 a.example.\t3600\tIN\tDS\t58470 5 1 3079F1593EBAD6DC121E202A8B766A6A4837206C
 a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20150420235959 20051021000000 38353 example. hvn/QOHcGuvuZFuBgc2w6Z6GwhIYlzz+Rc1Y0F8ewD9IURCHmU438p++lx8MRY7IlGpa9rO+TIXiGpeA4amgO0wLTNUz9PcCihZuJ7wI8CSM49VB9OyCgORDsW13WTAUkqKgKyldbH3xE4EzNlY59pmWQgt6dGdHNj1aM9WsEco=
-;
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 4G6P9U5GVFSHP30PQECJ98B3MAQBN1CK NS DS RRSIG ;{ flags: optout, from: a.example., to: c.example.}
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. hTrNsyiD951001L/MQtyazeFt4g/ocduLSHuZqVixpdCX4cHO/b1/3QNTp0jJviNrXTMtNnqBRp3gP2psEEO53ELVUk8ZWQGgUWHDNlzTd6idiSvO4lH62pC6D70Lc+fx1DcPzDKhYRHxqtpkYcMPC0piYI2Y0TnQRrQIp2qcjA=
-;
 ns1.a.example.\t3600\tIN\tA\t192.0.2.5
-;
 ns2.a.example.\t3600\tIN\tA\t192.0.2.6
-;
 ai.example.\t3600\tIN\tA\t192.0.2.9
 ai.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. Y/ycwCcc4Ocm7Hmn0p7G2LqiQmm3rO9J8up3Q/rz6VhRm9IhAYj9Pae3iaGuaPd3lXwmWvSYx6aLhGvl5q8BPJXH5l220pDH1aszH48c+sYfSSgSkCe3Tjcd2OnWBX3rkbVIs8JYkAdkBct8jOQXzzjqtRIwdE4rbBav4/Azk3s=
 ai.example.\t3600\tIN\tHINFO\t"KLH-10" "ITS"
 ai.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. gt5ErLUHitivHynCgmH/uQJ9xnb/Y4Qja8LiQ2zilH2Yyqon2RBO/GRwSCVFN6uBAXB4JHvW/+Aflpa0MRX+CSvvWFUG65QTalw3z3tksEf+1OadC6r3sst6IF7CjCt3PQKkKuZfxWn9V6yRSYXH8Sp+YPsb63NAQev9RJhMYII=
 ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
 ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. diBqPpbIyhguumnN3aqQnAKiqOZk0q1fJSANjYZcnGJjAxrTfQ1kkEjG1NAJpINnfIo2lD1dxXwHvW9TJXHRcx6KcLc5v0e+weoLtA+6eNViLQVG7JvL24amuPMHS0oJBE4bkJEMYGvtJmIitb0rNaA4MIf3j0oYWS+dhL4B8A4=
-;
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC A HINFO AAAA RRSIG ;{ flags: optout, from: ai.example., to: y.w.example.}
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WOV1cBmmwlbTsR4qie8996TsFxWeYh0Q9CKNvHbTRtvNX2BHFa2K8583B+5x/GBOrHdZqFgSHXqkyAkD8y1gAj0cHzCUIvZhlGwHKtOlLk3lZBK0UdQGtWzbqRJBfoEZW9ZLuyWw1R67hxCkysPS2Mq4pHsXQgbQZZt4G7O/XwM=
-;
+b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD GJEQE526PLBF1G8MKLP59ENFD789NJGI MX RRSIG
+b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. q2De6iOGJZBGqKlrmdGEXvXHb2Rz0OT1P5Rnfqn+TutSupUYmLKZYlk66QSj/CXW8aLb0mDGdqyRTjm7DuDv0+su2T+w0SoS3M5t1wiDSeE/vl6VFwGuZeCZGb0Re4sfkGpuFv/LD6VmNvhCcy+O+sXrguMrMdJ3lQCvJQjhCqA=
 c.example.\t3600\tIN\tNS\tns1.c.example.
 c.example.\t3600\tIN\tNS\tns2.c.example.
-;
-4g6p9u5gvfshp30pqecj98b3maqbn1ck.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS ;{ flags: optout, from: c.example., to: x.w.example.}
-4g6p9u5gvfshp30pqecj98b3maqbn1ck.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WseKryvLOisKlxteXGCnWETBSWSTj9gnZ8zxwRxpT/tCpndwUJ0Ow9oTSg8Xzm1KiELacQd9mgbEnJagHf1LGmBQcSPAeiFix4dtjZYVsk05OReYMM4RvXEJh9KMzAmPZofXJ2nECWa5G5LQFC+UoY3vsFTHVOm2wYRpFiAj+cY=
-;
 ns1.c.example.\t3600\tIN\tA\t192.0.2.7
-;
 ns2.c.example.\t3600\tIN\tA\t192.0.2.8
-;
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC A HINFO AAAA RRSIG
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WOV1cBmmwlbTsR4qie8996TsFxWeYh0Q9CKNvHbTRtvNX2BHFa2K8583B+5x/GBOrHdZqFgSHXqkyAkD8y1gAj0cHzCUIvZhlGwHKtOlLk3lZBK0UdQGtWzbqRJBfoEZW9ZLuyWw1R67hxCkysPS2Mq4pHsXQgbQZZt4G7O/XwM=
+ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD K8UDEMVP1J2F7EG6JEBPS17VP3N8I58H
+ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. J0QT2D31aTMBikuGbnGDTazPPx2fHNg3R8T6BPyNW+nX2qtI74BEdgFOsPUL7C3DlXPayWDYHFREXumHQldAb65X2N4EGblZVJ5HiVVxe4mqaGipckyWhvbNXTm3ITvvuCK6G+Q0XUMsQ2INb7wF9Qo1acd1b5cLLi1UNET3NPo=
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD KOHAR7MBB8DC2CE8A9QVL8HON4K53UHI
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. s43tb7Gyh2lQ5wSKgxNMrP0HFJtjBuT+lzutMwoivhn4CMmJqYoOiMgtozsOg8OcG6mBZn6WqEC5y05CuHrHOirzGY55+Jp2B/I/RwVgWjWTA5qsjuqohgJjNnJDF1PpC+qVJZjdDU41+q/M63fiMvDBeJ5PAfqqdDLOxX/muGc=
+kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R A RRSIG
+kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. iCIqnxLw7KsQZxj7MNPlEGlbU4SvoroyygNAILtzxgEY0qJflPEsV4lyjsJMNMPMvzlyzs4zAl2StBYF+Y9WDCJf5h1t/W0tB9oddfoLwtAEqukHFW6DIcoHuERjdqTVr3+fvcIJzwGAuT+TYuOucq/2aTwmludE1lhHBgOIjJU=
 ns1.example.\t3600\tIN\tA\t192.0.2.1
 ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. i2ljZXbHVRHFrDI00jW8Ln6Pivq0S2cBS9TNBHoiiCvMR4cxE/jijDAqt7U/TqIHyu3lSK3tmLEZhCh9rWEXOzfLuzo6RfcXvg4V7lLXuLMRhvLjTn1+LmWHGaW6xnNkvapU8/bm2Ckriy3+05cTEsbpTJ9swf2Fg6Q2yDnn8ig=
-;
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. h7JOg0b+I3ZWI4usKYTCV8Kvik2wIOlJbbgqnQuMq/eADcNucUSKP454p+6HgrTA+11FLirv07d1CL3HcXUiNd0J/85LfII965t9jEKOWq2tWzEXj0LYhoXFqcfLDmYBSNxOXy8/VexRvYlIk1wooQ8aYqdc0VIeQKba66yNAKo=
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A RRSIG ;{ flags: optout, from: ns1.example., to: x.y.w.example.}
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. W3ZqyTU5dpvSeNYUtjk5mGDDyLWyoNmJXBNfZmv9Hwpb7FZQ/dZLu9OhS6B8JBDxunRaatpNFQjurkdQNdaLPH3B61824V0mW4JZFWZuTJJMIVZtPDOXNYXeezejYwuIKn1CZXtkobdJOtQUEmiW3OjC0Hz3L/0IUoKTgIbLZB4=
-;
 ns2.example.\t3600\tIN\tA\t192.0.2.2
 ns2.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. hnBX5fSoXikZeE903WDLD6o2u+1j+9mo+u5b1YRxlCvR1FPRnhV8byCTEpV8RyQdjN6YL/tCG+wyLDysdHiVkNMEQe8SIRTzJLXFD1OvvdpIe+tNA2yTEemrMEkJIDcQeXy5BqWQwZb+DckvOxwnAIsHgCidUGNVXQrqtC0hwJc=
-;
-q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD R53BQ7CC2UVMUBFU5OCMM6PERS9TK9EN A RRSIG ;{ flags: optout, from: ns2.example., to: *.w.example.}
+q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD R53BQ7CC2UVMUBFU5OCMM6PERS9TK9EN A RRSIG
 q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. TolAxcK5GG0pkbK6DawH8immUjUF/HbrVlmD+QPB0te4JcawLHxARbigxoHQnwUNqhoU5CEj2f/ozPjWJ/F+sj3ZsLzC4dcGp4nMOE0cdP9SQ+5fxuq57/Aj26invkthydBMdk+kZSD5IDw2I4llR3Es+P1ZqA+qd4auIpcHsX4=
-;
-;; Empty nonterminal: w.example
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD KOHAR7MBB8DC2CE8A9QVL8HON4K53UHI ;{ flags: optout, from: w.example., to: 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.}
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. s43tb7Gyh2lQ5wSKgxNMrP0HFJtjBuT+lzutMwoivhn4CMmJqYoOiMgtozsOg8OcG6mBZn6WqEC5y05CuHrHOirzGY55+Jp2B/I/RwVgWjWTA5qsjuqohgJjNnJDF1PpC+qVJZjdDU41+q/M63fiMvDBeJ5PAfqqdDLOxX/muGc=
-;
+r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD T644EBQK9BIBCNA874GIVR6JOJ62MLHV MX RRSIG
+r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. CsWt2WIBFyVeGv5wE13EI3MyGa4lhoZIOBQQWphNLKeH7j5c5xKmaoeleKmsl2D1Ni1+sr8U5IwvWfHmjOqo0mo4zQdv6K/U6AcnwXd0hZ+jCWE0QNAJt4HJXC/7vBCeDcSZ1MJ95X24FxkToQRPFkboCoP/+9glOJAx6X+jnCE=
+t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM A HINFO AAAA RRSIG
+t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. AI+9pSvUUyTVQiLMX0Iz/2yyL9CdFzOYYJkbYH6sJX7/649vikFsMSCTpz3UTBp17ubKtlr1sP5Xiu++RCXu0hL8k9AOBSzy1ZmCS3T24Nj20gzuueN77ov0NsVxAh/tyBJV5LoNG1TG7+AVbepsqVKOMvON4clunFHlbTCYueM=
 *.w.example.\t3600\tIN\tMX\t1 ai.example.
 *.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20150420235959 20051021000000 38353 example. OzXlQ4NOdqgULXY+nHuXWzomMR9WAha768A/zfm24C4/Ug5OIR0vkjNZ0Is2MoXPCMv2GI2X42BkIY9S60pjlJ26IITW8pzArt+xURsWfonw9/WF/mpa6r1IxXZ3QCWmS7aIrQ/sDw1u6UnsTJIaFZbE94DvyeU+/TZ8mN8tz2k=
-;
-r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD T644EBQK9BIBCNA874GIVR6JOJ62MLHV MX RRSIG ;{ flags: optout, from: *.w.example., to: xx.example.}
-r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. CsWt2WIBFyVeGv5wE13EI3MyGa4lhoZIOBQQWphNLKeH7j5c5xKmaoeleKmsl2D1Ni1+sr8U5IwvWfHmjOqo0mo4zQdv6K/U6AcnwXd0hZ+jCWE0QNAJt4HJXC/7vBCeDcSZ1MJ95X24FxkToQRPFkboCoP/+9glOJAx6X+jnCE=
-;
 x.w.example.\t3600\tIN\tMX\t1 xx.example.
 x.w.example.\t3600\tIN\tRRSIG\tMX 8 3 3600 20150420235959 20051021000000 38353 example. nw5Z1G1XkM3R6uJNzohynT9cXnNwCDwORheT4aqmO3EcfJrrp6k5VjtdY5Bqtxo6FlCgybcsinZVdcIV+14374aQrvezjiZmiqECdCDHzO/X4XVaxk6ei5oj+22Pl4P6D3YLt6D+KlXZbdTmfRkgo8ZwQ9JceEYwvTrlPQw3ldQ=
-;
-b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD GJEQE526PLBF1G8MKLP59ENFD789NJGI MX RRSIG ;{ flags: optout, from: x.w.example., to: ai.example.}
-b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. q2De6iOGJZBGqKlrmdGEXvXHb2Rz0OT1P5Rnfqn+TutSupUYmLKZYlk66QSj/CXW8aLb0mDGdqyRTjm7DuDv0+su2T+w0SoS3M5t1wiDSeE/vl6VFwGuZeCZGb0Re4sfkGpuFv/LD6VmNvhCcy+O+sXrguMrMdJ3lQCvJQjhCqA=
-;
-;; Empty nonterminal: y.w.example
-ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD K8UDEMVP1J2F7EG6JEBPS17VP3N8I58H ;{ flags: optout, from: y.w.example., to: w.example.}
-ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. J0QT2D31aTMBikuGbnGDTazPPx2fHNg3R8T6BPyNW+nX2qtI74BEdgFOsPUL7C3DlXPayWDYHFREXumHQldAb65X2N4EGblZVJ5HiVVxe4mqaGipckyWhvbNXTm3ITvvuCK6G+Q0XUMsQ2INb7wF9Qo1acd1b5cLLi1UNET3NPo=
-;
 x.y.w.example.\t3600\tIN\tMX\t1 xx.example.
 x.y.w.example.\t3600\tIN\tRRSIG\tMX 8 4 3600 20150420235959 20051021000000 38353 example. fJTea7tirPJYIy10rt0PHyV08ZbfuyJ4dyh8B4ycCxiHZkRJgnNjTS4y+/csAKkaIvToub5f/ob53/4ZMg9f6SlTby6ybbwxY4bWoZsISXIjhw3mDdVm2FsJiz4r8hPQjTOLSE6wpZtbxgfwtXa7OiJbzgAuHg9KbgGk2PNPfns=
-;
-2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 35MTHGPGCU1QG68FAB165KLNSNK3DPVL MX RRSIG ;{ flags: optout, from: x.y.w.example., to: a.example.}
-2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. n0psta4fcHe5JvTi3KSA4O0n732l/4qYpwZhso2G8MvCTGTlVrGH/DQTPjS9rhBwkw2AWBN0kAVZ7Ry48jtfub9zC6VjLaF2aNzBScvbRRsewJi3pdNbo69qidOrlBEJUyVRo9cu3XQOA0zjT0mh+iT31oqQMNg3n3d66HnD3bs=
-;
 xx.example.\t3600\tIN\tA\t192.0.2.10
 xx.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. ZPoxxa+U0ZI5Do7mJsq5rGC+bpUNTwRtTZJrr+tREhQn/AWKVwJGJFTitzn5akmusIk3RLGIfZPOLECMu6o+sF924qKA+M66ts98HfQP8b+duBd7kFW5I0hqtq0pcRDJm/tyFRgDRTas0puUzgNt4jud4CGFD0SM0h/MsWnxSnE=
 xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
 xx.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. hCbnIDg46IzRgVjOsllF/Q/VyqJQcMa3v/Ykh4wctqFQiyuJaIvwiGYm/QMlMZswqTF921ivFdvNVZ+Q/3p/6ykpTNWQriw5Bta2ba6/ALI/ZQVbUht4Znq5Xxs3El1641vg9936calXXmLzwNNs4JJwGhUbui9PF9UrRv49OoM=
 xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. TX5v7Jnw/lo29b3jr0aSbRGUDrk/NJm/3mcdGgSXsIPObhEI82PGPLKpy6vTQDyoXVIMigG0XATN74gav/kF90aBsTRsm6ITKE09sccLR8OIg+lFaVtEjSroZBrBHRocWStD4yssaWrmhS/+g8IC3PTPEPXJDFkj46vK9Z/nlNU=
-;
-t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM A HINFO AAAA RRSIG ;{ flags: optout, from: xx.example., to: example.}
-t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. AI+9pSvUUyTVQiLMX0Iz/2yyL9CdFzOYYJkbYH6sJX7/649vikFsMSCTpz3UTBp17ubKtlr1sP5Xiu++RCXu0hL8k9AOBSzy1ZmCS3T24Nj20gzuueN77ov0NsVxAh/tyBJV5LoNG1TG7+AVbepsqVKOMvON4clunFHlbTCYueM=
-;
 "###.replace("\\t", "\t");
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
@@ -2628,7 +2676,7 @@ t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
         // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
-        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
+        // Use -T to output RRSIG timestamps in YYYYMMDDHHmmSS format to match
         // RFC 4035 Appendix A.
         // Use -b to get similar ordering to that of RFC 4035 Appendix A.
         // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
@@ -2640,7 +2688,8 @@ t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150
             "dnst",
             "signzone",
             "-T",
-            "-b",
+            "-L",
+            "-R",
             "-f",
             "example.signed",
             "-e",
@@ -2649,7 +2698,7 @@ t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150
             "20051021000000",
             "-n",
             "-t12",
-            "-p",
+            "-P",
             "-saabbccdd",
             &zone_file_path,
             &ksk_path,
