@@ -1,4 +1,5 @@
-; Extracted from https://datatracker.ietf.org/doc/html/rfc4035#appendix-A
+; Extracted using ldns-readzone -s from the signed zone defined at
+; https://datatracker.ietf.org/doc/html/rfc4035#appendix-A
 ; Keys have been replaced by newer algorithm 8 instead of older algorithm 5
 ; which we do not support, and to match key pairs stored alongside this file.
 example.        3600    IN      SOA     ns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600

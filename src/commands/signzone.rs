@@ -2447,7 +2447,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
 ;
         "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example");
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc4035");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
@@ -2489,7 +2489,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
     }
 
     #[test]
-    fn rfc_5155_nsec3_signed_zone_erratum_4993_example() {
+    fn rfc_5155_nsec3_signed_zone_example() {
         let dir = tempfile::TempDir::new().unwrap();
 
         // TODO: RFC 5155 Appendix A Example Zone shows lowercase NSEC3 salt
@@ -2519,8 +2519,8 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         let expected_signed_zone = r###"
 ;; Zone: example
 ;
-example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600
-example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20150420235959 20051021000000 38353 example. Y85QbsBWSZWI9y6gWqufn7xI3R6Hh0SCrO85NFrcMu73jA714MeMleZA7elpFpi3iFyAdLM+9NTgRR9TglY5GOiJ1g3u6PUkpSowOQ1cdeFCyXccbb58hZ/z6wfIFhP1XxLwAYdlGHTCIDxTc70WiQJhrE2vux6p4EKmk8ksyT0=
+example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1 3600 300 3600000 3600
+example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20150420235959 20051021000000 38353 example. OQmI2syAvTPgPZCKCV2cIvJyEAWyTatdMUKhg9hBdPovmZzRZ9wWaLtRzwGUuHdzeNzA7MEPOSZ1heIWYiS4JqEfemJSwZtQRLuwhOKznPMQt7UJNN4e7cjM2j0W7D8v92TsjwdB9j47Qjl64Yl0Y26zh25Sw3JRuq2dbGbbl8I=
 ;
 example.\t3600\tIN\tNS\tns1.example.
 example.\t3600\tIN\tNS\tns2.example.
@@ -2536,13 +2536,16 @@ example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 383
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM ;{ flags: optout, from: example., to: ns1.example.}
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
 ;
+kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R A RRSIG ;{ flags: optout, from: 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example., to: ns2.example.}
+kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. iCIqnxLw7KsQZxj7MNPlEGlbU4SvoroyygNAILtzxgEY0qJflPEsV4lyjsJMNMPMvzlyzs4zAl2StBYF+Y9WDCJf5h1t/W0tB9oddfoLwtAEqukHFW6DIcoHuERjdqTVr3+fvcIJzwGAuT+TYuOucq/2aTwmludE1lhHBgOIjJU=
+;
 a.example.\t3600\tIN\tNS\tns1.a.example.
 a.example.\t3600\tIN\tNS\tns2.a.example.
-a.example.\t3600\tIN\tDS\t57855 5 1 B6DCD485719ADCA18E5F3D48A2331627FDD3636B
-a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20150420235959 20051021000000 38353 example. ArXR5AlLzLNPxn3SDHWzJLSZBkRZ5gRhR/tFPwVCt9UHDlii6+6RNunaCoAXl3mpDvWjXNYwvjcq0dAnj62NM7eaQFf6b42mS9XX18cEpLUJaoNs3hkqQ4CeNRojeezpm33clJ3ME0sjodhebrnNQlCCxfRGZ1GptXwU7Kpe9X4=
+a.example.\t3600\tIN\tDS\t58470 5 1 3079F1593EBAD6DC121E202A8B766A6A4837206C
+a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20150420235959 20051021000000 38353 example. hvn/QOHcGuvuZFuBgc2w6Z6GwhIYlzz+Rc1Y0F8ewD9IURCHmU438p++lx8MRY7IlGpa9rO+TIXiGpeA4amgO0wLTNUz9PcCihZuJ7wI8CSM49VB9OyCgORDsW13WTAUkqKgKyldbH3xE4EzNlY59pmWQgt6dGdHNj1aM9WsEco=
 ;
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS DS RRSIG ;{ flags: optout, from: a.example., to: x.w.example.}
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. cLVHqZp0jL0MG2ZqcnVUsOHkrGajuOtSJU/W9t7u8JDr0pjhw/yhtY1sCemgHEDVz1E9cyp3WLvcVphApGOMR6tkVOHzsPbVlKHRHogILXWL5Q6BUvXCWYtTsPvRT0eukGy/yFGL+JnCI+uRHuhMqmAmfjvBfIDzvYyy8MjNF5w=
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 4G6P9U5GVFSHP30PQECJ98B3MAQBN1CK NS DS RRSIG ;{ flags: optout, from: a.example., to: c.example.}
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. hTrNsyiD951001L/MQtyazeFt4g/ocduLSHuZqVixpdCX4cHO/b1/3QNTp0jJviNrXTMtNnqBRp3gP2psEEO53ELVUk8ZWQGgUWHDNlzTd6idiSvO4lH62pC6D70Lc+fx1DcPzDKhYRHxqtpkYcMPC0piYI2Y0TnQRrQIp2qcjA=
 ;
 ns1.a.example.\t3600\tIN\tA\t192.0.2.5
 ;
@@ -2555,22 +2558,24 @@ ai.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353
 ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
 ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. diBqPpbIyhguumnN3aqQnAKiqOZk0q1fJSANjYZcnGJjAxrTfQ1kkEjG1NAJpINnfIo2lD1dxXwHvW9TJXHRcx6KcLc5v0e+weoLtA+6eNViLQVG7JvL24amuPMHS0oJBE4bkJEMYGvtJmIitb0rNaA4MIf3j0oYWS+dhL4B8A4=
 ;
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD J7HVASCS9U2V1V0K5U1KN203SJT3P34T A HINFO AAAA RRSIG ;{ flags: optout, from: ai.example., to: b.example.}
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. k50HV05Pgr3JLn3bp5Y/El615b1ehc3kc/I0beVbn/xPAz8ktE5pXDFAuLZVba6Gv+ctFVTg+ctigtwkt4K+UhU6IZOSbfrqmX6/Mo0CUiPaY6e9hKEqKsBbFsAmIBhU0aU9IBOFZAzzaaLySsQ0VU0kjI95SnqbXYWu7jNhl6k=
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC A HINFO AAAA RRSIG ;{ flags: optout, from: ai.example., to: y.w.example.}
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WOV1cBmmwlbTsR4qie8996TsFxWeYh0Q9CKNvHbTRtvNX2BHFa2K8583B+5x/GBOrHdZqFgSHXqkyAkD8y1gAj0cHzCUIvZhlGwHKtOlLk3lZBK0UdQGtWzbqRJBfoEZW9ZLuyWw1R67hxCkysPS2Mq4pHsXQgbQZZt4G7O/XwM=
 ;
-b.example.\t3600\tIN\tNS\tns1.b.example.
-b.example.\t3600\tIN\tNS\tns2.b.example.
+c.example.\t3600\tIN\tNS\tns1.c.example.
+c.example.\t3600\tIN\tNS\tns2.c.example.
 ;
-j7hvascs9u2v1v0k5u1kn203sjt3p34t.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC NS ;{ flags: optout, from: b.example., to: y.w.example.}
-j7hvascs9u2v1v0k5u1kn203sjt3p34t.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. fp8W8ebeS/wBYMEgmsTWPPFwVW1VBPD/EHEi1k5wAVKctv/IAAgIv2RTYjFSd9vIbdbR8arJ4+tRg8PqSwWA7e+kJPE/I5mBbdNLM2HBZFZqKf74eZGmEeTYl7wSyWcevC+nOEvGdenYCPmtuQiArBrCwpvkzyRZIseq4Mu8V+g=
+4g6p9u5gvfshp30pqecj98b3maqbn1ck.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS ;{ flags: optout, from: c.example., to: x.w.example.}
+4g6p9u5gvfshp30pqecj98b3maqbn1ck.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WseKryvLOisKlxteXGCnWETBSWSTj9gnZ8zxwRxpT/tCpndwUJ0Ow9oTSg8Xzm1KiELacQd9mgbEnJagHf1LGmBQcSPAeiFix4dtjZYVsk05OReYMM4RvXEJh9KMzAmPZofXJ2nECWa5G5LQFC+UoY3vsFTHVOm2wYRpFiAj+cY=
 ;
-ns1.b.example.\t3600\tIN\tA\t192.0.2.7
+ns1.c.example.\t3600\tIN\tA\t192.0.2.7
 ;
-ns2.b.example.\t3600\tIN\tA\t192.0.2.8
+ns2.c.example.\t3600\tIN\tA\t192.0.2.8
 ;
 ns1.example.\t3600\tIN\tA\t192.0.2.1
 ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. i2ljZXbHVRHFrDI00jW8Ln6Pivq0S2cBS9TNBHoiiCvMR4cxE/jijDAqt7U/TqIHyu3lSK3tmLEZhCh9rWEXOzfLuzo6RfcXvg4V7lLXuLMRhvLjTn1+LmWHGaW6xnNkvapU8/bm2Ckriy3+05cTEsbpTJ9swf2Fg6Q2yDnn8ig=
 ;
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. h7JOg0b+I3ZWI4usKYTCV8Kvik2wIOlJbbgqnQuMq/eADcNucUSKP454p+6HgrTA+11FLirv07d1CL3HcXUiNd0J/85LfII965t9jEKOWq2tWzEXj0LYhoXFqcfLDmYBSNxOXy8/VexRvYlIk1wooQ8aYqdc0VIeQKba66yNAKo=
 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A RRSIG ;{ flags: optout, from: ns1.example., to: x.y.w.example.}
 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. W3ZqyTU5dpvSeNYUtjk5mGDDyLWyoNmJXBNfZmv9Hwpb7FZQ/dZLu9OhS6B8JBDxunRaatpNFQjurkdQNdaLPH3B61824V0mW4JZFWZuTJJMIVZtPDOXNYXeezejYwuIKn1CZXtkobdJOtQUEmiW3OjC0Hz3L/0IUoKTgIbLZB4=
 ;
@@ -2581,8 +2586,8 @@ q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD R53B
 q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. TolAxcK5GG0pkbK6DawH8immUjUF/HbrVlmD+QPB0te4JcawLHxARbigxoHQnwUNqhoU5CEj2f/ozPjWJ/F+sj3ZsLzC4dcGp4nMOE0cdP9SQ+5fxuq57/Aj26invkthydBMdk+kZSD5IDw2I4llR3Es+P1ZqA+qd4auIpcHsX4=
 ;
 ;; Empty nonterminal: w.example
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R ;{ flags: optout, from: w.example., to: ns2.example.}
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. UiwhGOMZIkyHTasPDiadgiBdCEEQu02zDOEdRz9xFghnFcBsf0D/qH40eZeAj+Wq4xoNQu2Iu8tjz6i73LE8I1Mcuj93MBfThdj8ipt6nQlwhyNhWVnCLZ8epaVteNzLxv3nXZnOGUhi7Ae6z4QQAwLxJPWLUgFP/Y16obNP+Ko=
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD KOHAR7MBB8DC2CE8A9QVL8HON4K53UHI ;{ flags: optout, from: w.example., to: 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.}
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. s43tb7Gyh2lQ5wSKgxNMrP0HFJtjBuT+lzutMwoivhn4CMmJqYoOiMgtozsOg8OcG6mBZn6WqEC5y05CuHrHOirzGY55+Jp2B/I/RwVgWjWTA5qsjuqohgJjNnJDF1PpC+qVJZjdDU41+q/M63fiMvDBeJ5PAfqqdDLOxX/muGc=
 ;
 *.w.example.\t3600\tIN\tMX\t1 ai.example.
 *.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20150420235959 20051021000000 38353 example. OzXlQ4NOdqgULXY+nHuXWzomMR9WAha768A/zfm24C4/Ug5OIR0vkjNZ0Is2MoXPCMv2GI2X42BkIY9S60pjlJ26IITW8pzArt+xURsWfonw9/WF/mpa6r1IxXZ3QCWmS7aIrQ/sDw1u6UnsTJIaFZbE94DvyeU+/TZ8mN8tz2k=
@@ -2612,12 +2617,13 @@ xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
 xx.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. hCbnIDg46IzRgVjOsllF/Q/VyqJQcMa3v/Ykh4wctqFQiyuJaIvwiGYm/QMlMZswqTF921ivFdvNVZ+Q/3p/6ykpTNWQriw5Bta2ba6/ALI/ZQVbUht4Znq5Xxs3El1641vg9936calXXmLzwNNs4JJwGhUbui9PF9UrRv49OoM=
 xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. TX5v7Jnw/lo29b3jr0aSbRGUDrk/NJm/3mcdGgSXsIPObhEI82PGPLKpy6vTQDyoXVIMigG0XATN74gav/kF90aBsTRsm6ITKE09sccLR8OIg+lFaVtEjSroZBrBHRocWStD4yssaWrmhS/+g8IC3PTPEPXJDFkj46vK9Z/nlNU=
+;
 t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM A HINFO AAAA RRSIG ;{ flags: optout, from: xx.example., to: example.}
 t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. AI+9pSvUUyTVQiLMX0Iz/2yyL9CdFzOYYJkbYH6sJX7/649vikFsMSCTpz3UTBp17ubKtlr1sP5Xiu++RCXu0hL8k9AOBSzy1ZmCS3T24Nj20gzuueN77ov0NsVxAh/tyBJV5LoNG1TG7+AVbepsqVKOMvON4clunFHlbTCYueM=
 ;
-        "###.replace("\\t", "\t");
+"###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example");
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
