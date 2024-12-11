@@ -2489,8 +2489,175 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
     }
 
     #[test]
-    fn rfc_5155_nsec3_signed_zone_example() {
-        todo!()
+    fn rfc_5155_nsec3_signed_zone_erratum_4993_example() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        // TODO: RFC 5155 Appendix A Example Zone shows lowercase NSEC3 salt
+        // but we produce uppercase NSEC3 salt - does it matter?
+
+        // TODO: RFC 5155 Appendix A Example Zone shows next NSEC3 hashed
+        // owner as the owner of the next record output but we use a different
+        // order - does it matter?
+
+        // TODO: RFC 5155 Appendix A Example Zone shows NSEC3 covered types
+        // in a different order than we do, e.g.
+        //   NS SOA MX RRSIG DNSKEY NSEC3PARAM vs
+        //   MX DNSKEY NS SOA NSEC3PARAM RRSIG
+        // Does it matter?
+
+        // TODO: RFC 5155 Appendix A Example Zone shows NSEC3 chain
+        //   gjeqe526plbf1g8mklp59enfd789njgi -> ji6neoaepv8b5o6k4ev33abha8ht9fgc
+        // But we have:
+        //   gjeqe526plbf1g8mklp59enfd789njgi -> J7HVASCS9U2V1V0K5U1KN203SJT3P34T
+
+        // Modified from the version in RFC 4035 replacing the keys used with
+        // ones we have the private key for and using a key algorithm that we
+        // support (8 instead of 5). Matches output produced by dnst signzone
+        // -b (not ldns-signzone -b as the -b output is suppressed by
+        // ldns-signzone when using -f-) in order to get the same ordering as
+        // both the original ldns-signzone and the example in RFC 4035.
+        let expected_signed_zone = r###"
+;; Zone: example
+;
+example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600
+example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20150420235959 20051021000000 38353 example. Y85QbsBWSZWI9y6gWqufn7xI3R6Hh0SCrO85NFrcMu73jA714MeMleZA7elpFpi3iFyAdLM+9NTgRR9TglY5GOiJ1g3u6PUkpSowOQ1cdeFCyXccbb58hZ/z6wfIFhP1XxLwAYdlGHTCIDxTc70WiQJhrE2vux6p4EKmk8ksyT0=
+;
+example.\t3600\tIN\tNS\tns1.example.
+example.\t3600\tIN\tNS\tns2.example.
+example.\t3600\tIN\tRRSIG\tNS 8 1 3600 20150420235959 20051021000000 38353 example. YEedzYLNAJpDj/1ekisL51HQ3m9Dmcf/kj+1XxMs86P91wWTB07mhv9Jin6ziwPPwSn2erXKsJkFOT6W5XNh1W3WlgvxsQ1mAApppm0OPxmuA/pjMiv6Hr+df+N/6IZ2Wq36EtgUXxFU+QN4WVPzwebjM9rZLtNxN8kQnhSs4E4=
+example.\t3600\tIN\tMX\t1 xx.example.
+example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20150420235959 20051021000000 38353 example. tEw3cOYajeExrCquvSlxpcjUUKNw7Myy6WjsQvboMtM4W5rs36oLF9bJiG0IuduLz3JnGPnl8o1XgpVpsmrt/xqh2ifesUD1SILxKmljw7IvJ1VDeqsaVJxmlbG0BXhNrGLRwfuiJnvUxGf3Dl8bW1g8aLOEwwm+Gz7091GJcvM=
+example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
+example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
+example.\t3600\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
+example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. jb9Dw0kO4hEMpxqo1veI6HmYQGMo3bbahItqjBwLuQ4y1eKQEhGok/Ar6VPrXpPNDQgLnPQafmA6ziI3WoMLtA+vfT7wzLx0UK3ZGqcWPQp00MGNwYQfJ/QezIJteHtVDWBwXWj2xR3f/eUxJAxhPzgj4kOPHMnYMYF4o2ZVsD0=
+;
+0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM ;{ flags: optout, from: example., to: ns1.example.}
+0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
+;
+a.example.\t3600\tIN\tNS\tns1.a.example.
+a.example.\t3600\tIN\tNS\tns2.a.example.
+a.example.\t3600\tIN\tDS\t57855 5 1 B6DCD485719ADCA18E5F3D48A2331627FDD3636B
+a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20150420235959 20051021000000 38353 example. ArXR5AlLzLNPxn3SDHWzJLSZBkRZ5gRhR/tFPwVCt9UHDlii6+6RNunaCoAXl3mpDvWjXNYwvjcq0dAnj62NM7eaQFf6b42mS9XX18cEpLUJaoNs3hkqQ4CeNRojeezpm33clJ3ME0sjodhebrnNQlCCxfRGZ1GptXwU7Kpe9X4=
+;
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS DS RRSIG ;{ flags: optout, from: a.example., to: x.w.example.}
+35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. cLVHqZp0jL0MG2ZqcnVUsOHkrGajuOtSJU/W9t7u8JDr0pjhw/yhtY1sCemgHEDVz1E9cyp3WLvcVphApGOMR6tkVOHzsPbVlKHRHogILXWL5Q6BUvXCWYtTsPvRT0eukGy/yFGL+JnCI+uRHuhMqmAmfjvBfIDzvYyy8MjNF5w=
+;
+ns1.a.example.\t3600\tIN\tA\t192.0.2.5
+;
+ns2.a.example.\t3600\tIN\tA\t192.0.2.6
+;
+ai.example.\t3600\tIN\tA\t192.0.2.9
+ai.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. Y/ycwCcc4Ocm7Hmn0p7G2LqiQmm3rO9J8up3Q/rz6VhRm9IhAYj9Pae3iaGuaPd3lXwmWvSYx6aLhGvl5q8BPJXH5l220pDH1aszH48c+sYfSSgSkCe3Tjcd2OnWBX3rkbVIs8JYkAdkBct8jOQXzzjqtRIwdE4rbBav4/Azk3s=
+ai.example.\t3600\tIN\tHINFO\t"KLH-10" "ITS"
+ai.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. gt5ErLUHitivHynCgmH/uQJ9xnb/Y4Qja8LiQ2zilH2Yyqon2RBO/GRwSCVFN6uBAXB4JHvW/+Aflpa0MRX+CSvvWFUG65QTalw3z3tksEf+1OadC6r3sst6IF7CjCt3PQKkKuZfxWn9V6yRSYXH8Sp+YPsb63NAQev9RJhMYII=
+ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
+ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. diBqPpbIyhguumnN3aqQnAKiqOZk0q1fJSANjYZcnGJjAxrTfQ1kkEjG1NAJpINnfIo2lD1dxXwHvW9TJXHRcx6KcLc5v0e+weoLtA+6eNViLQVG7JvL24amuPMHS0oJBE4bkJEMYGvtJmIitb0rNaA4MIf3j0oYWS+dhL4B8A4=
+;
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD J7HVASCS9U2V1V0K5U1KN203SJT3P34T A HINFO AAAA RRSIG ;{ flags: optout, from: ai.example., to: b.example.}
+gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. k50HV05Pgr3JLn3bp5Y/El615b1ehc3kc/I0beVbn/xPAz8ktE5pXDFAuLZVba6Gv+ctFVTg+ctigtwkt4K+UhU6IZOSbfrqmX6/Mo0CUiPaY6e9hKEqKsBbFsAmIBhU0aU9IBOFZAzzaaLySsQ0VU0kjI95SnqbXYWu7jNhl6k=
+;
+b.example.\t3600\tIN\tNS\tns1.b.example.
+b.example.\t3600\tIN\tNS\tns2.b.example.
+;
+j7hvascs9u2v1v0k5u1kn203sjt3p34t.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC NS ;{ flags: optout, from: b.example., to: y.w.example.}
+j7hvascs9u2v1v0k5u1kn203sjt3p34t.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. fp8W8ebeS/wBYMEgmsTWPPFwVW1VBPD/EHEi1k5wAVKctv/IAAgIv2RTYjFSd9vIbdbR8arJ4+tRg8PqSwWA7e+kJPE/I5mBbdNLM2HBZFZqKf74eZGmEeTYl7wSyWcevC+nOEvGdenYCPmtuQiArBrCwpvkzyRZIseq4Mu8V+g=
+;
+ns1.b.example.\t3600\tIN\tA\t192.0.2.7
+;
+ns2.b.example.\t3600\tIN\tA\t192.0.2.8
+;
+ns1.example.\t3600\tIN\tA\t192.0.2.1
+ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. i2ljZXbHVRHFrDI00jW8Ln6Pivq0S2cBS9TNBHoiiCvMR4cxE/jijDAqt7U/TqIHyu3lSK3tmLEZhCh9rWEXOzfLuzo6RfcXvg4V7lLXuLMRhvLjTn1+LmWHGaW6xnNkvapU8/bm2Ckriy3+05cTEsbpTJ9swf2Fg6Q2yDnn8ig=
+;
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A RRSIG ;{ flags: optout, from: ns1.example., to: x.y.w.example.}
+2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. W3ZqyTU5dpvSeNYUtjk5mGDDyLWyoNmJXBNfZmv9Hwpb7FZQ/dZLu9OhS6B8JBDxunRaatpNFQjurkdQNdaLPH3B61824V0mW4JZFWZuTJJMIVZtPDOXNYXeezejYwuIKn1CZXtkobdJOtQUEmiW3OjC0Hz3L/0IUoKTgIbLZB4=
+;
+ns2.example.\t3600\tIN\tA\t192.0.2.2
+ns2.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. hnBX5fSoXikZeE903WDLD6o2u+1j+9mo+u5b1YRxlCvR1FPRnhV8byCTEpV8RyQdjN6YL/tCG+wyLDysdHiVkNMEQe8SIRTzJLXFD1OvvdpIe+tNA2yTEemrMEkJIDcQeXy5BqWQwZb+DckvOxwnAIsHgCidUGNVXQrqtC0hwJc=
+;
+q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD R53BQ7CC2UVMUBFU5OCMM6PERS9TK9EN A RRSIG ;{ flags: optout, from: ns2.example., to: *.w.example.}
+q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. TolAxcK5GG0pkbK6DawH8immUjUF/HbrVlmD+QPB0te4JcawLHxARbigxoHQnwUNqhoU5CEj2f/ozPjWJ/F+sj3ZsLzC4dcGp4nMOE0cdP9SQ+5fxuq57/Aj26invkthydBMdk+kZSD5IDw2I4llR3Es+P1ZqA+qd4auIpcHsX4=
+;
+;; Empty nonterminal: w.example
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R ;{ flags: optout, from: w.example., to: ns2.example.}
+k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. UiwhGOMZIkyHTasPDiadgiBdCEEQu02zDOEdRz9xFghnFcBsf0D/qH40eZeAj+Wq4xoNQu2Iu8tjz6i73LE8I1Mcuj93MBfThdj8ipt6nQlwhyNhWVnCLZ8epaVteNzLxv3nXZnOGUhi7Ae6z4QQAwLxJPWLUgFP/Y16obNP+Ko=
+;
+*.w.example.\t3600\tIN\tMX\t1 ai.example.
+*.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20150420235959 20051021000000 38353 example. OzXlQ4NOdqgULXY+nHuXWzomMR9WAha768A/zfm24C4/Ug5OIR0vkjNZ0Is2MoXPCMv2GI2X42BkIY9S60pjlJ26IITW8pzArt+xURsWfonw9/WF/mpa6r1IxXZ3QCWmS7aIrQ/sDw1u6UnsTJIaFZbE94DvyeU+/TZ8mN8tz2k=
+;
+r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD T644EBQK9BIBCNA874GIVR6JOJ62MLHV MX RRSIG ;{ flags: optout, from: *.w.example., to: xx.example.}
+r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. CsWt2WIBFyVeGv5wE13EI3MyGa4lhoZIOBQQWphNLKeH7j5c5xKmaoeleKmsl2D1Ni1+sr8U5IwvWfHmjOqo0mo4zQdv6K/U6AcnwXd0hZ+jCWE0QNAJt4HJXC/7vBCeDcSZ1MJ95X24FxkToQRPFkboCoP/+9glOJAx6X+jnCE=
+;
+x.w.example.\t3600\tIN\tMX\t1 xx.example.
+x.w.example.\t3600\tIN\tRRSIG\tMX 8 3 3600 20150420235959 20051021000000 38353 example. nw5Z1G1XkM3R6uJNzohynT9cXnNwCDwORheT4aqmO3EcfJrrp6k5VjtdY5Bqtxo6FlCgybcsinZVdcIV+14374aQrvezjiZmiqECdCDHzO/X4XVaxk6ei5oj+22Pl4P6D3YLt6D+KlXZbdTmfRkgo8ZwQ9JceEYwvTrlPQw3ldQ=
+;
+b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD GJEQE526PLBF1G8MKLP59ENFD789NJGI MX RRSIG ;{ flags: optout, from: x.w.example., to: ai.example.}
+b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. q2De6iOGJZBGqKlrmdGEXvXHb2Rz0OT1P5Rnfqn+TutSupUYmLKZYlk66QSj/CXW8aLb0mDGdqyRTjm7DuDv0+su2T+w0SoS3M5t1wiDSeE/vl6VFwGuZeCZGb0Re4sfkGpuFv/LD6VmNvhCcy+O+sXrguMrMdJ3lQCvJQjhCqA=
+;
+;; Empty nonterminal: y.w.example
+ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD K8UDEMVP1J2F7EG6JEBPS17VP3N8I58H ;{ flags: optout, from: y.w.example., to: w.example.}
+ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. J0QT2D31aTMBikuGbnGDTazPPx2fHNg3R8T6BPyNW+nX2qtI74BEdgFOsPUL7C3DlXPayWDYHFREXumHQldAb65X2N4EGblZVJ5HiVVxe4mqaGipckyWhvbNXTm3ITvvuCK6G+Q0XUMsQ2INb7wF9Qo1acd1b5cLLi1UNET3NPo=
+;
+x.y.w.example.\t3600\tIN\tMX\t1 xx.example.
+x.y.w.example.\t3600\tIN\tRRSIG\tMX 8 4 3600 20150420235959 20051021000000 38353 example. fJTea7tirPJYIy10rt0PHyV08ZbfuyJ4dyh8B4ycCxiHZkRJgnNjTS4y+/csAKkaIvToub5f/ob53/4ZMg9f6SlTby6ybbwxY4bWoZsISXIjhw3mDdVm2FsJiz4r8hPQjTOLSE6wpZtbxgfwtXa7OiJbzgAuHg9KbgGk2PNPfns=
+;
+2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 35MTHGPGCU1QG68FAB165KLNSNK3DPVL MX RRSIG ;{ flags: optout, from: x.y.w.example., to: a.example.}
+2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. n0psta4fcHe5JvTi3KSA4O0n732l/4qYpwZhso2G8MvCTGTlVrGH/DQTPjS9rhBwkw2AWBN0kAVZ7Ry48jtfub9zC6VjLaF2aNzBScvbRRsewJi3pdNbo69qidOrlBEJUyVRo9cu3XQOA0zjT0mh+iT31oqQMNg3n3d66HnD3bs=
+;
+xx.example.\t3600\tIN\tA\t192.0.2.10
+xx.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. ZPoxxa+U0ZI5Do7mJsq5rGC+bpUNTwRtTZJrr+tREhQn/AWKVwJGJFTitzn5akmusIk3RLGIfZPOLECMu6o+sF924qKA+M66ts98HfQP8b+duBd7kFW5I0hqtq0pcRDJm/tyFRgDRTas0puUzgNt4jud4CGFD0SM0h/MsWnxSnE=
+xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
+xx.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. hCbnIDg46IzRgVjOsllF/Q/VyqJQcMa3v/Ykh4wctqFQiyuJaIvwiGYm/QMlMZswqTF921ivFdvNVZ+Q/3p/6ykpTNWQriw5Bta2ba6/ALI/ZQVbUht4Znq5Xxs3El1641vg9936calXXmLzwNNs4JJwGhUbui9PF9UrRv49OoM=
+xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
+xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. TX5v7Jnw/lo29b3jr0aSbRGUDrk/NJm/3mcdGgSXsIPObhEI82PGPLKpy6vTQDyoXVIMigG0XATN74gav/kF90aBsTRsm6ITKE09sccLR8OIg+lFaVtEjSroZBrBHRocWStD4yssaWrmhS/+g8IC3PTPEPXJDFkj46vK9Z/nlNU=
+t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM A HINFO AAAA RRSIG ;{ flags: optout, from: xx.example., to: example.}
+t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. AI+9pSvUUyTVQiLMX0Iz/2yyL9CdFzOYYJkbYH6sJX7/649vikFsMSCTpz3UTBp17ubKtlr1sP5Xiu++RCXu0hL8k9AOBSzy1ZmCS3T24Nj20gzuueN77ov0NsVxAh/tyBJV5LoNG1TG7+AVbepsqVKOMvON4clunFHlbTCYueM=
+;
+        "###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
+
+        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
+        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
+        // RFC 4035 Appendix A.
+        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
+        // Use RSASHA256 (type 8) signing keys as they produce consistent
+        // signatures for the same input, and are supported by us unlike
+        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
+        // zone but we do not support.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-b",
+            "-f",
+            "example.signed",
+            "-e",
+            "20150420235959",
+            "-i",
+            "20051021000000",
+            "-n",
+            "-t12",
+            "-p",
+            "-saabbccdd",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .cwd(&dir)
+        .run();
+
+        assert_eq!(res.stdout, "");
+        // assert_eq!(res.stderr, ""); // Commented out due to NSEC3 iterations warning.
+        assert_eq!(res.exit_code, 0);
+
+        let signed_zone = std::fs::read_to_string(dir.path().join("example.signed")).unwrap();
+        assert_eq!(signed_zone, expected_signed_zone);
     }
 
     #[test]
