@@ -64,7 +64,11 @@ pub struct SignZone {
     // Original ldns-signzone options in ldns-signzone -h order:
     // -----------------------------------------------------------------------
     /// Use layout in signed zone and print comments on DNSSEC records
-    #[arg(short = 'b', default_value_t = false)]
+    #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
+        short = 'b',
+        default_value_t = false
+    )]
     extra_comments: bool,
 
     /// Used keys are not added to the zone
@@ -137,11 +141,11 @@ pub struct SignZone {
     #[arg(short = 'Z', requires = "zonemd")]
     allow_zonemd_without_signing: bool,
 
-    // Sign DNSKEYs with all keys instead of minimal
+    /// Sign DNSKEYs with all keys instead of minimal
     #[arg(short = 'A', default_value_t = false)]
     sign_dnskeys_with_all_keys: bool,
 
-    // Sign with every unique algorithm in the provided keys
+    /// Sign with every unique algorithm in the provided keys
     #[arg(short = 'U', default_value_t = false)]
     sign_with_every_unique_algorithm: bool,
 
@@ -212,16 +216,26 @@ pub struct SignZone {
     no_require_keys_match_apex: bool,
 
     /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
-    #[arg(short = 'T', default_value_t = false)]
+    #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
+        short = 'T',
+        default_value_t = false
+    )]
     use_yyyymmddhhmmss_rrsig_format: bool,
 
     /// Preceed the zone output by a list that contains the NSEC3 hashes of the
     /// original ownernames.
-    #[arg(short = 'L', default_value_t = false, requires = "nsec3")]
+    #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
+        short = 'L',
+        default_value_t = false,
+        requires = "nsec3"
+    )]
     preceed_zone_with_hash_list: bool,
 
     /// Order RRSIG RRs by the record type that they cover.
     #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
         short = 'R',
         default_value_ifs([
             ("extra_comments", "false", Some("false")),
@@ -232,6 +246,7 @@ pub struct SignZone {
 
     /// Order NSEC3 RRs by unhashed owner name.
     #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
         short = 'O',
         default_value_t = false,
         requires = "nsec3",
@@ -905,9 +920,7 @@ impl SignZone {
 
         if self.preceed_zone_with_hash_list {
             if let Some(hashes) = hashes.as_ref() {
-                let mut owner_sorted_hashes = hashes
-                    .iter()
-                    .collect::<Vec<_>>();
+                let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes
                     .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
                 for (hash, owner) in owner_sorted_hashes {
