@@ -38,7 +38,7 @@ use octseq::builder::with_infallible;
 use ring::digest;
 
 use crate::env::{Env, Stream};
-use crate::error::Error;
+use crate::error::{Context, Error};
 use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
@@ -566,7 +566,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let records = self.load_zone(&env)?;
+        let records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -612,7 +612,7 @@ impl SignZone {
             let key_path = env.in_cwd(key_path).into_owned();
             // Load the private key.
             let private_key_path = Self::mk_private_key_path(&key_path);
-            let private_key = Self::load_private_key(&private_key_path)?;
+            let private_key = Self::load_private_key(&env.in_cwd(&private_key_path))?;
 
             // Note: Our behaviour differs to that of the original
             // ldns-signzone because we are unable at the time of writing to
@@ -641,7 +641,7 @@ impl SignZone {
             // No matching public key found, try to load the public key
             // instead.
             let public_key_path = Self::mk_public_key_path(&key_path);
-            let public_key = Self::load_public_key(&public_key_path)?;
+            let public_key = Self::load_public_key(&env.in_cwd(&public_key_path))?;
 
             // Verify that the owner of the public key matches the apex of the
             // zone.
@@ -999,13 +999,18 @@ impl SignZone {
 
     fn load_zone(
         &self,
-        env: &impl Env,
+        zonefile_path: &Path,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
         // bytes than are needed. Instead control the allocation size based on
         // our knowledge of the file size.
-        let mut zone_file = File::open(env.in_cwd(&self.zonefile_path))?;
+        let mut zone_file = File::open(zonefile_path)
+            .map_err(Error::from)
+            .context(&format!(
+                "loading zone file from path '{}'",
+                zonefile_path.display(),
+            ))?;
         let zone_file_len = zone_file.metadata()?.len();
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
         std::io::copy(&mut zone_file, &mut buf)?;
@@ -1122,13 +1127,12 @@ impl SignZone {
     }
 
     fn load_private_key(key_path: &Path) -> Result<SecretKeyBytes, Error> {
-        let private_data = std::fs::read_to_string(key_path).map_err(|err| {
-            format!(
-                "Unable to load private key from file '{}': {}",
+        let private_data = std::fs::read_to_string(key_path)
+            .map_err(Error::from)
+            .context(&format!(
+                "loading private key from file '{}'",
                 key_path.display(),
-                err
-            )
-        })?;
+            ))?;
 
         // Note: Compared to the original ldns-signzone there is a minor
         // regression here because at the time of writing the error returned
@@ -1146,13 +1150,12 @@ impl SignZone {
     }
 
     fn load_public_key(key_path: &Path) -> Result<Key<Bytes>, Error> {
-        let public_data = std::fs::read_to_string(key_path).map_err(|err| {
-            format!(
-                "Unable to load public key from file '{}': {}",
+        let public_data = std::fs::read_to_string(key_path)
+            .map_err(Error::from)
+            .context(&format!(
+                "loading public key from file '{}'",
                 key_path.display(),
-                err
-            )
-        })?;
+            ))?;
 
         // Note: Compared to the original ldns-signzone there is a minor
         // regression here because at the time of writing the error returned
