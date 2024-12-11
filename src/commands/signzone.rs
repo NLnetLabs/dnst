@@ -209,6 +209,10 @@ pub struct SignZone {
     #[arg(short = 'M', default_value_t = false)]
     no_require_keys_match_apex: bool,
 
+    /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
+    #[arg(short = 'T', default_value_t = false)]
+    use_yyyymmddhhmmss_rrsig_format: bool,
+
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
@@ -411,6 +415,7 @@ impl LdnsCommand for SignZone {
             nsec3_opt_out_flags_only,
             nsec3_opt_out: false,
             hash_only: false,
+            use_yyyymmddhhmmss_rrsig_format: true,
             zonefile_path,
             key_paths,
             no_require_keys_match_apex: false,
@@ -973,7 +978,7 @@ impl SignZone {
         W: Write,
         ZoneRecordData<O, N>: ZonefileFmt,
     {
-        if self.invoked_as_ldns {
+        if self.use_yyyymmddhhmmss_rrsig_format {
             if let ZoneRecordData::Rrsig(rrsig) = rr.data() {
                 let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
                 return writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)));
@@ -1879,6 +1884,7 @@ mod test {
             nsec3_opt_out_flags_only: false,
             nsec3_opt_out: false,
             hash_only: false,
+            use_yyyymmddhhmmss_rrsig_format: false,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
@@ -2061,6 +2067,7 @@ mod test {
             nsec3_opt_out_flags_only: false,
             nsec3_opt_out: false,
             hash_only: false,
+            use_yyyymmddhhmmss_rrsig_format: true,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
