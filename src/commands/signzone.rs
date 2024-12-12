@@ -2571,11 +2571,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         //   MX DNSKEY NS SOA NSEC3PARAM RRSIG
         // Does it matter?
 
-        // TODO: RFC 5155 Appendix A Example Zone shows NSEC3 chain
-        //   gjeqe526plbf1g8mklp59enfd789njgi -> ji6neoaepv8b5o6k4ev33abha8ht9fgc
-        // But we have:
-        //   gjeqe526plbf1g8mklp59enfd789njgi -> J7HVASCS9U2V1V0K5U1KN203SJT3P34T
-
         let expected_signed_zone = r###"
 ; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
 ; H(2t7b4g4vsa5smi47k61mv5bv1a22bojr.example) = kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example
