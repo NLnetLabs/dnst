@@ -74,7 +74,8 @@ extensions = [
     'sphinx_copybutton',
     'sphinx.ext.intersphinx',
     'sphinx.ext.autosectionlabel',
-    'notfound.extension'
+    'notfound.extension',
+    'sphinxcontrib.jquery'
 ]
 if versionbanner:
     extensions.append('versionwarning.extension')
