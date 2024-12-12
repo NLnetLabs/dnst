@@ -2528,8 +2528,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
             "-A",
             "-T",
             "-R",
-            "-f",
-            "example.signed",
+            "-f-",
             "-e",
             "20040409183619",
             "-i",
@@ -2541,12 +2540,9 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         .cwd(&dir)
         .run();
 
-        assert_eq!(res.stdout, "");
+        assert_eq!(res.stdout, expected_signed_zone);        
         assert_eq!(res.stderr, "");
         assert_eq!(res.exit_code, 0);
-
-        let signed_zone = std::fs::read_to_string(dir.path().join("example.signed")).unwrap();
-        assert_eq!(signed_zone, expected_signed_zone);
     }
 
     #[test]
