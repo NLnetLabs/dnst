@@ -625,7 +625,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
+        let records = self.load_zone(&env.in_cwd(&self.zonefile_path), &signing_mode)?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -1076,6 +1076,7 @@ impl SignZone {
     fn load_zone(
         &self,
         zonefile_path: &Path,
+        signing_mode: &SigningMode,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
@@ -1097,9 +1098,17 @@ impl SignZone {
             reader.set_origin(origin.clone());
         }
 
+        // There's no way to get the origin that is detected while loading the
+        // zonefile if none was provided by the caller. We can only assume that the first SOA we see is the origin and check at the
+        let mut origin = self.origin.clone();
+
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
             match entry {
+                Entry::Origin(detected_origin) => {
+                    origin = Some(detected_origin);
+                }
+
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
 
@@ -1115,17 +1124,39 @@ impl SignZone {
                     // once, while our current implementation only supports
                     // having either NSEC or NSEC3 in the zone at any one
                     // time.
-                    //
-                    // TODO: NSEC3PARAM and ZONEMD should only be ignored at
-                    // the apex (the only place RFCs define them to be valid).
-                    if !matches!(
-                        record.rtype(),
-                        Rtype::NSEC
-                            | Rtype::NSEC3
-                            | Rtype::NSEC3PARAM
-                            | Rtype::RRSIG
-                            | Rtype::ZONEMD
-                    ) {
+
+                    match record.rtype() {
+                        Rtype::ZONEMD => {
+                            if Some(record.owner()) == origin.as_ref() {
+                                // Skip the ZONEMD record as we will be
+                                // modifying the zone thus invalidating any
+                                // existing ZONEMD record.
+                                continue;
+                            }
+                        }
+
+                        Rtype::NSEC3PARAM => {
+                            if Some(record.owner()) == origin.as_ref() {
+                                // If the user is not hashing the zone, e.g.
+                                // is only ZONEMD hashing the zone, leave any
+                                // existing NSEC3PARAM record in the zone,
+                                // otherwise remove it because either the user
+                                // is switching to NSEC or it will be replaced
+                                // by NSEC3 hashing.
+                                //
+                                // Note: This is incompatible with RFC 5155
+                                // guidance on transitioning from NSEC3 to
+                                // NSEC.
+                                if *signing_mode != SigningMode::None {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        _ => { /* Nothing to do */ }
+                    }
+
+                    if !matches!(record.rtype(), Rtype::NSEC | Rtype::NSEC3 | Rtype::RRSIG) {
                         let _ = records.insert(record);
                     }
                 }
@@ -2423,7 +2454,7 @@ mod test {
         .run();
 
         assert_eq!(res.stderr, "");
-        assert_eq!(res.stdout, expected_zone);        
+        assert_eq!(res.stdout, expected_zone);
         assert_eq!(res.exit_code, 0);
     }
 
@@ -2434,14 +2465,20 @@ mod test {
 
         // TODO: ldns-signzone leaves the non-apex ZONEMD in the zone, we do
         // not.
+
+        // TODO: RFC 8976 Appendix A.2 Complex EXAMPLE Zone shows the ZONEMD
+        // hash in lowercase but we show it in uppercase - does it matter?
+        // LDNS shows it in lowercase too.
+
         let expected_zone = "example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
         example.\t86400\tIN\tNS\tns1.example.\n\
         example.\t86400\tIN\tNS\tns2.example.\n\
-        example.\t86400\tIN\tZONEMD\t2018031900 1 1 a3b69bad980a3504e1cffcb0fd6397f93848071c93151f552ae2f6b1711d4bd2d8b39808226d7b9db71e34b72077f8fe\n\
+        example.\t86400\tIN\tZONEMD\t2018031900 1 1 A3B69BAD980A3504E1CFFCB0FD6397F93848071C93151F552AE2F6B1711D4BD2D8B39808226D7B9DB71E34B72077F8FE\n\
         *.example.\t777\tIN\tPTR\tdont-forget-about-wildcards.example.\n\
         duplicate.example.\t300\tIN\tTXT\t\"I must be digested just once\"\n\
         mail.example.\t3600\tIN\tMX\t10 Mail2.Example.\n\
         mail.example.\t3600\tIN\tMX\t20 MAIL1.example.\n\
+        non-apex.example.\t900\tIN\tZONEMD\t2018031900 1 1 616C6C6F776564206275742069676E6F7265642E20616C6C6F776564206275742069676E6F7265642E20616C6C6F7765\n\
         ns1.example.\t3600\tIN\tA\t203.0.113.63\n\
         NS2.example.\t3600\tIN\tAAAA\t2001:db8::63\n\
         sortme.example.\t3600\tIN\tAAAA\t2001:db8::1:65\n\
@@ -2479,7 +2516,7 @@ mod test {
         .run();
 
         assert_eq!(res.stderr, "");
-        assert_eq!(res.stdout, expected_zone);        
+        assert_eq!(res.stdout, expected_zone);
         assert_eq!(res.exit_code, 0);
     }
 
@@ -2630,7 +2667,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         ])
         .run();
 
-        assert_eq!(res.stdout, expected_signed_zone);        
+        assert_eq!(res.stdout, expected_signed_zone);
         assert_eq!(res.stderr, "");
         assert_eq!(res.exit_code, 0);
     }
