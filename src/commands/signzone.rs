@@ -2390,6 +2390,100 @@ mod test {
     }
 
     #[test]
+    fn rfc_8976_zonemd_simple_example_zone() {
+        let expected_zone = "example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
+        example.\t86400\tIN\tNS\tns1.example.\n\
+        example.\t86400\tIN\tNS\tns2.example.\n\
+        example.\t86400\tIN\tZONEMD\t2018031900 1 1 C68090D90A7AED716BC459F9340E3D7C1370D4D24B7E2FC3A1DDC0B9A87153B9A9713B3C9AE5CC27777F98B8E730044C\n\
+        ns1.example.\t3600\tIN\tA\t203.0.113.63\n\
+        ns2.example.\t3600\tIN\tAAAA\t2001:db8::63\n\
+        ";
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+
+        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
+        // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
+        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
+        // RFC 4035 Appendix A.
+        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
+        // Use RSASHA256 (type 8) signing keys as they produce consistent
+        // signatures for the same input, and are supported by us unlike
+        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
+        // zone but we do not support.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-f-",
+            "-z1:1",
+            "-Z",
+            &zone_file_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);        
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn rfc_8976_zonemd_complex_example_zone() {
+        // TODO: ldns-signzone produces the same ZONEMD value as RFC 8976 A.2
+        // Complex EXAMPLE Zone, but we do not.
+
+        // TODO: ldns-signzone leaves the non-apex ZONEMD in the zone, we do
+        // not.
+        let expected_zone = "example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
+        example.\t86400\tIN\tNS\tns1.example.\n\
+        example.\t86400\tIN\tNS\tns2.example.\n\
+        example.\t86400\tIN\tZONEMD\t2018031900 1 1 a3b69bad980a3504e1cffcb0fd6397f93848071c93151f552ae2f6b1711d4bd2d8b39808226d7b9db71e34b72077f8fe\n\
+        *.example.\t777\tIN\tPTR\tdont-forget-about-wildcards.example.\n\
+        duplicate.example.\t300\tIN\tTXT\t\"I must be digested just once\"\n\
+        mail.example.\t3600\tIN\tMX\t10 Mail2.Example.\n\
+        mail.example.\t3600\tIN\tMX\t20 MAIL1.example.\n\
+        ns1.example.\t3600\tIN\tA\t203.0.113.63\n\
+        NS2.example.\t3600\tIN\tAAAA\t2001:db8::63\n\
+        sortme.example.\t3600\tIN\tAAAA\t2001:db8::1:65\n\
+        sortme.example.\t3600\tIN\tAAAA\t2001:db8::2:64\n\
+        sortme.example.\t3600\tIN\tAAAA\t2001:db8::3:62\n\
+        sortme.example.\t3600\tIN\tAAAA\t2001:db8::4:63\n\
+        sortme.example.\t3600\tIN\tAAAA\t2001:db8::5:61\n\
+        sub.example.\t7200\tIN\tNS\tns1.example.\n\
+        occluded.sub.example.\t7200\tIN\tTXT\t\"I'm occluded but must be digested\"\n\
+        UPPERCASE.example.\t3600\tIN\tTXT\t\"canonicalize uppercase owner names\"\n\
+        foo.test.\t555\tIN\tTXT\t\"out-of-zone data must be excluded\"\n\
+        ";
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-complex");
+
+        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
+        // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
+        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
+        // RFC 4035 Appendix A.
+        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
+        // Use RSASHA256 (type 8) signing keys as they produce consistent
+        // signatures for the same input, and are supported by us unlike
+        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
+        // zone but we do not support.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-f-",
+            "-z1:1",
+            "-Z",
+            &zone_file_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);        
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
     /// Test NSEC3 optout behaviour with signing
     fn ldns_nsec3_optout() {
         // TODO: maybe make these strings a regex match of some kind for better flexibility with
