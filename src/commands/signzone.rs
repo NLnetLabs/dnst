@@ -2665,16 +2665,31 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         // better match that of the example in RFC 4035 Appendix A without
         // also introducing extra comments that `ldns-signzone -b` adds.
         // Specifically the following options are used to make the output a
-        // better match to that of RFC 4035 Appendix A:
+        // better match to that of RFC 5155 Appendix A:
         //
-        //   -T outputs RRSIG timestamps in YYYYMMDDHHmmSS format.
-        //   -L outputs NSEC3 hash mappings.
-        //   -R orders RRSIGs after the records they sign.
+        //   -T outputs RRSIG timestamps in YYYYMMDDHHmmSS format. -L outputs
+        //   NSEC3 hash mappings. -R orders RRSIGs after the records they
+        //   sign.
         //
         // We use RSASHA256 (type 8) signing keys instead of RSASHA1 (type 5)
-        // used by RFC 4035 Appendix A as we don't support type 5 (as it is
+        // used by RFC 5155 Appendix A as we don't support type 5 (as it is
         // NOT RECOMMENDED by RFC 8624) and because RSASHA256 signatures are
         // consistent for the same input unlike ECDSAP256SHA256 for example.
+        //
+        // Signature validity period (expiration via `-e` and inception via
+        // `-i`) and NSEC3 options (extra iterations via `-t12` and salt via
+        // `-saabbccdd`) are set to match those in the RFC 5155 Appendix A
+        // example.
+        //
+        // We use -P (note the capital) because without it the standard, ldns
+        // based, opt-out behaviour is to include insecure delegations in the
+        // NSEC3 chain but the RFC 5155 Appendix A signed zone assumes that
+        // insecure delegations (such as c.example which lacks a DS record and
+        // is thus an insecure delegation) are omitted from the NSEC3 chain.
+        // Both behaviours are valid according to RFC 5155 as it states in
+        // section 7.1 on Zone Signing: "Owner names that correspond to
+        // unsigned delegations MAY have a corresponding NSEC3 RR", note the
+        // "MAY".
         let res = FakeCmd::new([
             "dnst",
             "signzone",
@@ -2688,8 +2703,8 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
             "20051021000000",
             "-n",
             "-t12",
-            "-P",
             "-saabbccdd",
+            "-P",
             &zone_file_path,
             &ksk_path,
             &zsk_path,
