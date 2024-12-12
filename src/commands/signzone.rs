@@ -2443,11 +2443,8 @@ mod test {
         // ldns-signzone when using -f-) in order to get the same ordering as
         // both the original ldns-signzone and the example in RFC 4035.
         let expected_signed_zone = r###"
-;; Zone: example
-;
 example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600
 example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20040409183619 20040509183619 38353 example. B/2RO0F3fBDDeouNWDWqt55qRBJttkU8UlQb54Qk8DnPqxmdlBRuP9DkMDBQNf2Us1OIQ7fnarokdSC3s9PO4FLx6YkFjR1w7ox6u1KXKJQUHqFHGOF1n3+lRZo74sEbP9+4DlvpYylLFV+bbxLDG0NEqCs+vDy2w+2zfSAW7y8=
-;
 example.\t3600\tIN\tNS\tns1.example.
 example.\t3600\tIN\tNS\tns2.example.
 example.\t3600\tIN\tRRSIG\tNS 8 1 3600 20040409183619 20040509183619 38353 example. ey6wIUC+5INUdErg7es/ANgPHSWAT5wZ7+ncgQ7oBytioha5YGp9aI/6p7KujzBPD6RiANhAV4gX4WqI5RDTc8KP/KBORN8quiN0G2ydVxwsedX/8r4dbb3OqQdP8Lh5AF8KS4dmu5EKdlRcckheV06+NFkWK2WqCaodScieF1Q=
@@ -2459,18 +2456,14 @@ example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDT
 example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20040409183619 20040509183619 31967 example. C8ZDPvp8Z2kNagqYLZwY0IGFutIi7OQR2VHjYZgCeC0NKCute2FdTilElZPg2WuJ86QHeGp3D5uZiW+dypiaNPdLh++6lY0qbLZNw3JNCzVLJzF/P+1NILsosuYMaQSc5QX4YVz5HygjofH1y/gel9O2UdmAE5oIzlBpTsgM+BI=
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20040409183619 20040509183619 38353 example. H0SIDL0zGHsdDtA7cW93wlUeAC0l/1KTQKeKctC72inf7qvanbT9ZcaqIeYIP3T3YlcIG23+j8qOK46B+KL9IWWA9oFFNuw8oTpyZGiy2kNEqhfwma7bUeWTDLaH8Uhf/it1xiiy9lV4NlOgEyTGE/IMB1+Xgf2RYMmgqLfak2o=
-;
 a.example.\t3600\tIN\tNS\tns1.a.example.
 a.example.\t3600\tIN\tNS\tns2.a.example.
 a.example.\t3600\tIN\tDS\t57855 5 1 B6DCD485719ADCA18E5F3D48A2331627FDD3636B
 a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20040409183619 20040509183619 38353 example. TwR1SK1LqiQCVMDoc3hJza+nVFSzFx33sjMeZvlWrqBD1G/sJcH3ItIgb/4uj0b95VM6ndxevga9pgd33PHmFmR1g6afS21kCMhhATvYBqCRgrUNBFzooGZpIitJier6T2CP/LSeispWULyXnB0F6C+/vmXWU6+Vhae6KIoS3EY=
 a.example.\t3600\tIN\tNSEC\tai.example. NS DS RRSIG NSEC
 a.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. FcUGncV5yjqhITrUeKiZwlrbsUY8G4sMnuckw7yqoWnsmU9TCLgjAwGWZGeNpjADKJ+dk9t06ofvLqIsQshu3Hrke1FZvuZT0vqtPNjhIz/03/2Dyx3nFdoxagofdinmNm92jt6mefflzxzYF1j9NqPC4YFDDgz5EjxX592e9QY=
-;
 ns1.a.example.\t3600\tIN\tA\t192.0.2.5
-;
 ns2.a.example.\t3600\tIN\tA\t192.0.2.6
-;
 ai.example.\t3600\tIN\tA\t192.0.2.9
 ai.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20040409183619 20040509183619 38353 example. LWkkFmU/enigH/FAJJO4en4t3AUG+2GoGSrJvTO3qJYTDXzU2MMYAHXwl2RgSC7eTzbMap7HukEczWA7UdQkkurFCH4Xv/CxmJRKL9XcZ2fDfKNIzqNcsQj+NHnbKRR1GCituKLMV2AxBqH4ABopKYCvlsryaN8sLb01PyM9/Ro=
 ai.example.\t3600\tIN\tHINFO\t"KLH-10" "ITS"
@@ -2479,41 +2472,32 @@ ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
 ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20040409183619 20040509183619 38353 example. EGvDQig8uMlKodJP5OZ9ybhlyCinsInA4vzkoDBxBTHjuO7zyAx6mdxPw4rSHdn8ZdDssZKORFGpXcpEk3tGHAt0Z/kMME3JZ4dY2EiRhybueaPfiz95KNafdSZgqA7dKMxi9HGoBsGLqV/6I3grcGvMfHauItsX4Z8yV+htoM4=
 ai.example.\t3600\tIN\tNSEC\tb.example. A HINFO AAAA RRSIG NSEC
 ai.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. FbM7UgeKb7GAP9WMxBJlTb76IQx430tp1f/EIbIbqTUxduzseBSn4ntcf7+VwYVzBNtglnDFuw3C5LWE9jpa/rZ5Z/SmDmOCZP/aJPhausPO0AfQeiMoLjSJ0A9WavpGBzCC3gmrC7X3oqDuV6Y3fHAGU/YGQj0XNG7Ha1DE58c=
-;
 b.example.\t3600\tIN\tNS\tns1.b.example.
 b.example.\t3600\tIN\tNS\tns2.b.example.
 b.example.\t3600\tIN\tNSEC\tns1.example. NS RRSIG NSEC
 b.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. UZeRqUD2OBo6iZckfZ9tMYlUuWcMzVDkhrITNptCs8CFVF2YCHBKg9heLMdEN92ie5V4GaMjIAd75MNlMm0EZGiDU2TzYz0k0jejcO/79XkAC/giqBHTedW9cbFYt2TqQi85ZxwhPq7ph5jSf5Iwt7rD4qKJXCp75npuGNDutEw=
-;
 ns1.b.example.\t3600\tIN\tA\t192.0.2.7
-;
 ns2.b.example.\t3600\tIN\tA\t192.0.2.8
-;
 ns1.example.\t3600\tIN\tA\t192.0.2.1
 ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20040409183619 20040509183619 38353 example. eFA7SiJRtUkMeb4JsJGTg2NRpfBCDpmMF4zvmm05BwndvEdYXBAOviHNMKXLX6ctjBUlzp0KxvUBhA/7ScEIMmmQHJfOnahzWnmbiZTZWwi3I8/fgCsEGZVsTJFRwPR4ddZF1M8S1lWnzPmnFja/nAIQdfA9HlP8xfsTDR195Ew=
 ns1.example.\t3600\tIN\tNSEC\tns2.example. A RRSIG NSEC
 ns1.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. hPXDx7JbevZRDI5z98jXVAVdtTIv89gjjEJMe1Nm+o/UIvsxon8OmWO6+b6lWLy6AEj/SiLC3wOaFbDb0wTkm/cI548Tyr2tg5D5ZIRjXtMJkx2aE0zLzRHnitrUQXYTJss/JCoPKEsGNExK9LgTIw7jKqcwfvH9dsxqxISwAC8=
-;
 ns2.example.\t3600\tIN\tA\t192.0.2.2
 ns2.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20040409183619 20040509183619 38353 example. F36AOe1lWZ9QzPR+fiG94c+k6RitqgIrs99gaB/KdEqiZtQ8w3Tr+sfPogLMXbqW2+dSrEUM535IHqjLZzARY9Zd2KQWPMxWdponaCAIkVwJ4kXtWI2OSqx3IFoG4z91Wm3e/JsXahX6cJE5R+5LZaA6zO6sFLO/Q9LVa74parg=
 ns2.example.\t3600\tIN\tNSEC\t*.w.example. A RRSIG NSEC
 ns2.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. eu5gkpcWiXorZvkSYmbNKrd+7PGS/Er/J1IYt1wiRwOs0GfaWwhJb95prb+AKoAY5usp8eaQsmYbAYBnWl+cleXtnIKEwJ4OY+YVJhlIY9Pbl+49iL2uTL0O/hXcDbL0KHx2pfu//yDD3alybwrHA8QU7S4C6P2vI5h6WMnAD0E=
-;
 *.w.example.\t3600\tIN\tMX\t1 ai.example.
 *.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20040409183619 20040509183619 38353 example. ZasaVvJ9n08Tx6wLVI5nat5LFcaUdCvcs4Oztowc/QbYuu6Ib/TXHCfm33JKyqyZiKBwiHIzpjEslgj+2X42SiIu9A57aGRWJqTfUkpe33b7iQik26Fas57k+Zr8OruHG+q5vCvcyj/BdQjNuvFpCPtp2186DZAI2YiXCvgvdvQ=
 *.w.example.\t3600\tIN\tNSEC\tx.w.example. MX RRSIG NSEC
 *.w.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. ebmpkmslOqUOJSErn7SoUCHGhxF4MVhx+xEk7Pu3pMfdz9i2GzlyExdOuZE48Z2YOUrP7i3Rlb2d+aqnBCSDuYW3pA7vAfm6GkZST+A5Hns5wy/KxQUxy6Fn5ruzqAUa1TIl5lUjsU+8b/KXZ0/BVrfg7LOUJlgjgVvbuYf0xZY=
-;
 x.w.example.\t3600\tIN\tMX\t1 xx.example.
 x.w.example.\t3600\tIN\tRRSIG\tMX 8 3 3600 20040409183619 20040509183619 38353 example. uBNMY+9VbUbXg8s4hPKGGCASm4D0OCbdAKeDU71xYCDPd9+/gWvC8N+V+gbKMja5W67gh/LBjffkPYcWD5ttuom6SkORX95jwMlm1LFEBMmr0+jkU4j+oiQ6r3dcO+EHBpDzd3osMIAOoaNyUfeWoUtl31QtqnFysy4avQx9Mx4=
 x.w.example.\t3600\tIN\tNSEC\tx.y.w.example. MX RRSIG NSEC
 x.w.example.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20040409183619 20040509183619 38353 example. XyotdqZtaSA7xkmBwkE1rJB0WwHeZL4IhTKe498OUIbIEB81MjZ24YSz/ufDS0CPxqz4KwKu456HDwLubhTlIOJUXFzjyHZvuJ+3I/qGo2wt0VtOlzoKMMp/alN+Yh+PuOeiPTPremBZGY5BLN/HiekayLXPVqcNjoZvFZnCk9U=
-;
 x.y.w.example.\t3600\tIN\tMX\t1 xx.example.
 x.y.w.example.\t3600\tIN\tRRSIG\tMX 8 4 3600 20040409183619 20040509183619 38353 example. AfUZgFVehMl1vifSWhH6D4u15sKZwT2KPCCntLBk26aQB089XR1adDQfRTm/Z5uW9kMjebnz2UN+158uQEjCgFM9Y3LaHakEbb5KVhMEWVTmh8Rg3eaRhouo1ruvdcRyET44UF3euhY3uHi7aXsZPufRaUCXCGRqF/ZO9MvOcfo=
 x.y.w.example.\t3600\tIN\tNSEC\txx.example. MX RRSIG NSEC
 x.y.w.example.\t3600\tIN\tRRSIG\tNSEC 8 4 3600 20040409183619 20040509183619 38353 example. eMyJm+jbEMy3HziBATVnXXpL3DJ46aZEbK0PXaqoWml4E9On8SCt2VCq1SJG+tz4Ah6ltnHu7ZTidiaXjV9K//UNfQaZz6KbxolhltPnLhwAW3lUJMNG88E1evhN97X9zzct87DmGAvMMMtAs4vDiP53DvcIwCoMCxfyurJ7Hr0=
-;
 xx.example.\t3600\tIN\tA\t192.0.2.10
 xx.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20040409183619 20040509183619 38353 example. HoCNtIY8jdsGdu6nH+VwLEqmzH11vTTLyiZXUJrg1LvohZRrG8tdjAQpZvTPYdP8Z/P0Secy4xUk2wFIpqluENPFUxGinkEPsFzl3OlfT0JAyLBCcww2KKrXOQzlvUEBMAj/DFlErUEMiJqtAfPU1CfQvnW1mi0+WuqyBBN6Av8=
 xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
@@ -2522,7 +2506,6 @@ xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20040409183619 20040509183619 38353 example. gRWCKCsaDkmX1g768tsLwG0Luaf8vvnYeINOr4WDVD3jTgsj7agXjsMRlsoQif5EcJ9Xo8q4UrcVZPo2nt5/55Hc9egKroLXoq86gA0juCECbM5rYKl41GcEObe8UHN+2P3dclCwkVcZ3sLUEsNgtmAllMBdRtDuWvg5GMYUqWg=
 xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
 xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 example. p50kHhYlNWKrbo2OeUwvVH6ithEZctVUqRsLeZq7PmE9lA06Wu6MWuImV5rZC4lUUsbkok48FD/y69fuXms7Jq+tYSwiQKjzNPKt9cRww4xIAY/4B+B6t3AP1QY6Yw6JLeQMNoj3xTWzBLYmq6sA3pEHRqU8S2YdCJFat44GeYo=
-;
         "###.replace("\\t", "\t");
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc4035");
@@ -2544,7 +2527,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
             "signzone",
             "-A",
             "-T",
-            "-b",
+            "-R",
             "-f",
             "example.signed",
             "-e",
@@ -2688,23 +2671,28 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
-        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
-        // Use -T to output RRSIG timestamps in YYYYMMDDHHmmSS format to match
-        // RFC 4035 Appendix A.
-        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
-        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
-        // Use RSASHA256 (type 8) signing keys as they produce consistent
-        // signatures for the same input, and are supported by us unlike
-        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
-        // zone but we do not support.
+        // Use `dnst signzone` mode instead of `ldns-signzone` mode to get
+        // more control via specific CLI arguments over the output format to
+        // better match that of the example in RFC 4035 Appendix A without
+        // also introducing extra comments that `ldns-signzone -b` adds.
+        // Specifically the following options are used to make the output a
+        // better match to that of RFC 4035 Appendix A:
+        //
+        //   -T outputs RRSIG timestamps in YYYYMMDDHHmmSS format.
+        //   -L outputs NSEC3 hash mappings.
+        //   -R orders RRSIGs after the records they sign.
+        //
+        // We use RSASHA256 (type 8) signing keys instead of RSASHA1 (type 5)
+        // used by RFC 4035 Appendix A as we don't support type 5 (as it is
+        // NOT RECOMMENDED by RFC 8624) and because RSASHA256 signatures are
+        // consistent for the same input unlike ECDSAP256SHA256 for example.
         let res = FakeCmd::new([
             "dnst",
             "signzone",
             "-T",
             "-L",
             "-R",
-            "-f",
-            "example.signed",
+            "-f-",
             "-e",
             "20150420235959",
             "-i",
@@ -2720,12 +2708,9 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         .cwd(&dir)
         .run();
 
-        assert_eq!(res.stdout, "");
+        assert_eq!(res.stdout, expected_signed_zone);
         // assert_eq!(res.stderr, ""); // Commented out due to NSEC3 iterations warning.
         assert_eq!(res.exit_code, 0);
-
-        let signed_zone = std::fs::read_to_string(dir.path().join("example.signed")).unwrap();
-        assert_eq!(signed_zone, expected_signed_zone);
     }
 
     #[test]
