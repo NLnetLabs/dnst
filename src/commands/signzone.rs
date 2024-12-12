@@ -575,7 +575,6 @@ impl SignZone {
     }
 
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        eprintln!("-L = {}", self.preceed_zone_with_hash_list);
         // Post-process arguments.
         // TODO: Can Clap do this for us?
         let opt_out = if self.nsec3_opt_out {
