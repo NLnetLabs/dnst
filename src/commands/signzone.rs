@@ -2576,12 +2576,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
         // But we have:
         //   gjeqe526plbf1g8mklp59enfd789njgi -> J7HVASCS9U2V1V0K5U1KN203SJT3P34T
 
-        // Modified from the version in RFC 4035 replacing the keys used with
-        // ones we have the private key for and using a key algorithm that we
-        // support (8 instead of 5). Matches output produced by dnst signzone
-        // -b (not ldns-signzone -b as the -b output is suppressed by
-        // ldns-signzone when using -f-) in order to get the same ordering as
-        // both the original ldns-signzone and the example in RFC 4035.
         let expected_signed_zone = r###"
 ; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
 ; H(2t7b4g4vsa5smi47k61mv5bv1a22bojr.example) = kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example
