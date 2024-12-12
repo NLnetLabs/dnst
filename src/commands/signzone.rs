@@ -2434,8 +2434,6 @@ mod test {
     // TODO: Currently fails due to https://github.com/NLnetLabs/domain/issues/468.
     #[test]
     fn rfc_4035_nsec_signed_zone_example() {
-        let dir = tempfile::TempDir::new().unwrap();
-
         // Modified from the version in RFC 4035 replacing the keys used with
         // ones we have the private key for and using a key algorithm that we
         // support (8 instead of 5). Matches output produced by dnst signzone
@@ -2537,7 +2535,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
             &ksk_path,
             &zsk_path,
         ])
-        .cwd(&dir)
         .run();
 
         assert_eq!(res.stdout, expected_signed_zone);        
@@ -2548,8 +2545,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
     // TODO: Currently fails due to https://github.com/NLnetLabs/domain/issues/468.
     #[test]
     fn rfc_5155_nsec3_signed_zone_example() {
-        let dir = tempfile::TempDir::new().unwrap();
-
         // TODO: RFC 5155 Appendix A Example Zone shows lowercase NSEC3 salt
         // but we produce uppercase NSEC3 salt - does it matter? LDNS shows it
         // in lowercase too.
@@ -2706,7 +2701,6 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
             &ksk_path,
             &zsk_path,
         ])
-        .cwd(&dir)
         .run();
 
         assert_eq!(res.stdout, expected_signed_zone);
