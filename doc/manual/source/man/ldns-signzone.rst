@@ -23,9 +23,6 @@ Arguments
 
       The zonefile to sign.
 
-      Note: Unlike the original LDNS, any existing NSEC(3) and/or RRSIG
-      resource records will be skipped when loaded the zonefile.
-
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.
@@ -107,6 +104,9 @@ Options
 
       Use this as the origin for the zone (only necessary for zonefiles with
       relative names and no $ORIGIN).
+
+      Note: Unlike the original LDNS, the origin is NOT set to the owner of
+      the first SOA found.
 
 .. option:: -u
 
