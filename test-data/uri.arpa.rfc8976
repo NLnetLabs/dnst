@@ -1,4 +1,6 @@
-; Taken from https://www.rfc-editor.org/rfc/rfc8976.html#section-a.4
+; Extracted using ldns-readzone -s from the signed zone defined at
+; https://www.rfc-editor.org/rfc/rfc8976.html#name-the-uriarpa-zone
+; Keys have been replaced to match key pairs stored alongside this file.
 uri.arpa.       3600    IN      SOA     sns.dns.icann.org. (
    noc.dns.icann.org. 2018100702 10800 3600 1209600 3600 )
 uri.arpa.       3600    IN      RRSIG   SOA 8 2 3600 (
@@ -23,24 +25,29 @@ uri.arpa.       600     IN      RRSIG   MX 8 2 600 (
     d0lpnDtgNNSoHkYRSOoB+C4+zuJsoyAAzGo9uoWMWj97/2xeGhf3PTC9me
     Q9Ohi6hul9By7OR76XYmGhdWX8PBi60RUmZ1guslFBfQ8izwPqzuphs= )
 uri.arpa.       3600    IN      DNSKEY  256 3 8 (
-    AwEAAbMxuFuLeVDuOwIMzYOTD/bTREjLflo7wOi6ieIJhqltEzgjNzmWJf
-    9kGwwDmzxU7kbthMEhBNBZNn84zmcyRSCMzuStWveL7xmqqUlE3swL8kLO
-    vdZvc75XnmpHrk3ndTyEb6eZM7slh2C63Oh6K8VR5VkiZAkEGg0uZIT3Nj
-    sF )
+    AwEAAbdA7hbl8YtfwjDxI1L06os3xkyehpGROhX8nLCwrwx3+veYbAWIdR
+    ahKN2SMSHrRtj8k7bRxJC5fhUweA5L8h4CDVGCOJhkOCni/O0xQ44MVT/b
+    HF4WcCtAbThy8vlPj0xR0r0DkqEbuOsK+uJAJfgli5I5Im3VNB8RPBcfu4
+    2GR8ObDOLVxuDJ52A+ZGqH8H9VyGfuxtnjSVenkeQNQidwkfI6IWxrk1/H
+    1G+Az/45yFDZGCWzqBX0yml6dplmxX9LMypPubeDQZniR+9hxut0Ig2Wh3
+    c6yB/619A0P5gbtuO7gqrfkoEuZThEUzzqyKGOQV4UF2hU7BLABuyzch0=
+    )
 uri.arpa.       3600    IN      DNSKEY  257 3 8 (
-    AwEAAdkTaWkZtZuRh7/OobBUFxM+ytTst+bCu0r9w+rEwXD7GbDs0pIMhM
-    enrZzoAvmv1fQxw2MGs6Ri6yPKfNULcFOSt9l8i6BVBLI+SKTY6XXeDUQp
-    SEmSaxohHeRPMQFzpysfjxINp/L2rGtZ7yPmxY/XRiFPSO0myqwGJa9r06
-    Zw9CHM5UDHKWV/E+zxPFq/I7CfPbrrzbUotBX7Z6Vh3Sarllbe8cGUB2UF
-    NaTRgwB0TwDBPRD5ER3w2Dzbry9NhbElTr7vVfhaGWeOGuqAUXwlXEg6Cr
-    NkmJXJ2F1Rzr9WHUzhp7uWxhAbmJREGfi2dEyPAbUAyCjBqhFaqglknvc= )
+    AwEAAahOTGtQI/HNtJgStghtd8Y4H26mPauZw1UFVSq/X5c3ThjRCd2Kie
+    TVokcUhZfWIw9AQmLEO4qJTPXreiXDRZTLm8O0M7jDXggzdnAxhstSaUIT
+    jBbvnBf1p2erI2BQK6d7mmsywEgJ8Fy5zhQGMwRpNCe8eDsEPHWdfhO++x
+    xxCqeZQgGi++3M+9/R41qXpJUySlmlxUp0cE5OianyxcJEl5gOnVz9UXpc
+    ZeaZdyQuEkZVe1BcXgYB3tKPREujHTiwp+tXZHqfE3pqnDpepzR3tFrHoU
+    3/KkreXP/8Xn0Behe8TByic8Gb60tFl5Q5Kb98poPKzTdeKv0PvhRL+VE=
+    )
 uri.arpa.       3600    IN      DNSKEY  257 3 8 (
-    AwEAAenQaBoFmDmvRT+/H5oNbm0Tr5FmNRNDEun0Jpj/ELkzeUrTWhNpQm
-    ZeIMC8I0kZ185tEvOnRvn8OvV39B17QIdrvvKGIh2HlgeDRCLolhaojfn2
-    QM0DStjF/WWHpxJOmE6CIuvhqYEU37yoJscGAPpPVPzNvnL1HhYTaao1VR
-    YWQ/maMrJ+bfHg+YX1N6M/8MnRjIKBif1FWjbCKvsn6dnuGGL9oCWYUFJ3
-    DwofXuhgPyZMkzPc88YkJj5EMvbMH4wtelbCwC+ivx732l0w/rXJn0ciQS
-    OgoeVvDio8dIJmWQITWQAuP+q/ZHFEFHPlrP3gvQh5mcVS48eLX71Bq7c= )
+    AwEAAcd4/Jd9UZEHkAtD6IAhkgMqKnhDQR29DRAJBvfymZ2h6hvHRoEk/m
+    LhpmlpdqJ6AWYTGeTu+03Yk4DRyxAbPmWiY3q0+ceezbGEgHzuW53llsu9
+    PFX2zK1yqU6kCJ5V4dNYDwe+G5RoQO0/Qo5IRXzruQIowKZKVdJBi22x6A
+    PNul61g22GUk1Et9kO+Wc9g116KBR7eRzmvj/7cprd19sJGDGFCNieyeex
+    IgXstk5u/d+dZ2DXHDn+3hp3QhYQLqbYG7s+9wIzw0Oa1jneujXzI3udkQ
+    6khp1GeIziuI1IWQNNF7/weoHu1LzX/xPCE/aK5eTy1Avu11DTamn163M=
+    )
 uri.arpa.       3600    IN      RRSIG   DNSKEY 8 2 3600 (
     20210217232440 20210120232440 12670 uri.arpa.
     DBE2gkKAoxJCfz47KKxzoImN/0AKArhIVHE7TyTwy0DdRPo44V5R+vL6th

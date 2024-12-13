@@ -2530,6 +2530,111 @@ mod test {
     }
 
     #[test]
+    fn rfc_8976_zonemd_example_zone_with_multiple_digests() {
+        // The ZONEMD records in the input zone at the apex are stripped out
+        // and replaced by ones we generate based on the `-z` arguments given.
+        let expected_zone = "\
+        example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
+        example.\t86400\tIN\tNS\tns1.example.\n\
+        example.\t86400\tIN\tNS\tns2.example.\n\
+        example.\t86400\tIN\tZONEMD\t2018031900 1 1 62E6CF51B02E54B9B5F967D547CE43136792901F9F88E637493DAAF401C92C279DD10F0EDB1C56F8080211F8480EE306\n\
+        example.\t86400\tIN\tZONEMD\t2018031900 1 2 08CFA1115C7B948C4163A901270395EA226A930CD2CBCF2FA9A5E6EB85F37C8A4E114D884E66F176EAB121CB02DB7D652E0CC4827E7A3204F166B47E5613FD27\n\
+        ns1.example.\t3600\tIN\tA\t203.0.113.63\n\
+        ns2.example.\t86400\tIN\tTXT\t\"This example has multiple digests\"\n\
+        NS2.EXAMPLE.\t3600\tIN\tAAAA\t2001:db8::63\n\
+        ";
+
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.rfc8976-multiple-digests");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-f-",
+            "-z1:1",
+            "-z1:2",
+            // "-z1:240", // Neither of these are supported by us currently
+            // "-z240:1", // Neither of these are supported by us currently
+            "-Z",
+            &zone_file_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn rfc_8976_zonemd_the_uri_dot_arpa_zone() {
+        let expected_zone = r###"uri.arpa.\t3600\tIN\tSOA\tsns.dns.icann.org. noc.dns.icann.org. 2018100702 10800 3600 1209600 3600
+uri.arpa.\t3600\tIN\tRRSIG\tSOA 8 2 3600 20210217232440 20210120232440 36153 uri.arpa. qP8f0IqOT3VJn/ysxBCZC+yXdwW+z7wPB1O2SHnQn8B9b5B4F5jzN4UqJDJ6CNQdZYv7TMDO24sGk8OIT3kmzTMcEZZSdxD+y8Q160mI54fHN8XZVwKs1bByNtk6k5bUG7kUi9agbqe1GNkMJJk8acgeZzWPC/LsB90fOEhvYK1QgMBCqFEYHx9JybLCXvAvMbS3T0hizYLY5tDqgDmzuIE9KXR8J9UTsWuu/GmadtBNtG71fPq4rhlypnjMM5Tgo5ygHO1fYS6TmAapF3T6I4zVs9V++y7MNIYaVtFPZfhvuB3LFY6C8RNOB9HyFRldKkeqYFkHH7K6A0pghK7Y5Q==
+uri.arpa.\t86400\tIN\tNS\ta.iana-servers.net.
+uri.arpa.\t86400\tIN\tNS\tb.iana-servers.net.
+uri.arpa.\t86400\tIN\tNS\tc.iana-servers.net.
+uri.arpa.\t86400\tIN\tNS\tns2.lacnic.net.
+uri.arpa.\t86400\tIN\tNS\tsec3.apnic.net.
+uri.arpa.\t86400\tIN\tRRSIG\tNS 8 2 86400 20210217232440 20210120232440 36153 uri.arpa. Sd7Y2mhMmffhjFeX2j5rGAts+bGljJjOgMJVL8ksnW/pZWhzLDUQcugpQNIA4UxoAGBSBqS03LboYyItAIGPrbmHLqg9TmU5l9PFI8WX9CIIwk4Ym3OflXTTpZANlKevQzjmmraRkNjmcBvrZdcgUiATP7jBNECnsC2OyA7iPQUMNN+DhmXjO3ghXRv2Wc74pXoT0uAeSIrdgyieHse2icoePTDx+wzBDkyzw5yYzZMHmSRJBP4yuNR9sLbzoaL1JDBVdZ061YT4zl1YsLQ+htTizSzx6iPxjNJAZ8RAHWWTPAXZVqMSjm3vrzEzEgdOgMrCJVYV/yvmLBoA+Pq8Tw==
+uri.arpa.\t600\tIN\tMX\t10 pechora.icann.org.
+uri.arpa.\t600\tIN\tRRSIG\tMX 8 2 600 20210217232440 20210120232440 36153 uri.arpa. UfoDlqfS+xHmAoe9uu8suPAS6Hwl0pEGYjyWr7SV6tqszbOrpA4Juk1sygvuVSGjO9nEc5wLitSonY+NbHuWTLtbtj6i3A8xHD71a8IDMfEegrr6ZrTN0HRUJetB4w67p8ieI+Szgh0U7a52XzU0fvjD7cqFRqHIAG6DR5fY68t//ehZG+jcAbU+m26dc7EC+NC7yzklvEehCWknnFAqUEV9JzjOyhUj9GGWXxhgHBBS0QQcNLzUq+FwIq1Mr25tH0bUkjVrkpDDNqTDzRzr8SLfbW+ldgiowVapkt2lpfm+siy3GCuXaddB49WTBcAmKuip5V8WSV0hDKSl7Q2zNA==
+uri.arpa.\t3600\tIN\tNSEC\tftp.uri.arpa. NS SOA MX RRSIG NSEC DNSKEY ZONEMD
+uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20210217232440 20210120232440 36153 uri.arpa. EUBTH/YN3A4HIVyR2FJ0iIrR53xKE98swa7ViTNUIccjDUst2NedYJG8ei24mUNMID/Y4AXN/Npo/Y92PxTMtVd7w4fQ/lX3wADIvp49N21UPonq2J/IG4Y742+JReTz3zmQmAoMkvqTKys2asOPpkktllCGACv70VJd/Z9Am2kRlfkrss5xfSxLIVIE0lA1XXZQGbll93FLa74+lein60YtyWj5WZydoo4Kr/k0oT/TA7qjuzJ9OXcG+dff9HdYt7IKM5aRVA0tpZwDIZLn+uKZZilRLrUFfXxPLndFdnnXWsHy/Rue1YpaB2Lfg6gAAkU0Ken+D4u62izI8vIoJA==
+uri.arpa.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbdA7hbl8YtfwjDxI1L06os3xkyehpGROhX8nLCwrwx3+veYbAWIdRahKN2SMSHrRtj8k7bRxJC5fhUweA5L8h4CDVGCOJhkOCni/O0xQ44MVT/bHF4WcCtAbThy8vlPj0xR0r0DkqEbuOsK+uJAJfgli5I5Im3VNB8RPBcfu42GR8ObDOLVxuDJ52A+ZGqH8H9VyGfuxtnjSVenkeQNQidwkfI6IWxrk1/H1G+Az/45yFDZGCWzqBX0yml6dplmxX9LMypPubeDQZniR+9hxut0Ig2Wh3c6yB/619A0P5gbtuO7gqrfkoEuZThEUzzqyKGOQV4UF2hU7BLABuyzch0= ;{id = 36153 (zsk), size = 2048b}
+uri.arpa.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAahOTGtQI/HNtJgStghtd8Y4H26mPauZw1UFVSq/X5c3ThjRCd2KieTVokcUhZfWIw9AQmLEO4qJTPXreiXDRZTLm8O0M7jDXggzdnAxhstSaUITjBbvnBf1p2erI2BQK6d7mmsywEgJ8Fy5zhQGMwRpNCe8eDsEPHWdfhO++xxxCqeZQgGi++3M+9/R41qXpJUySlmlxUp0cE5OianyxcJEl5gOnVz9UXpcZeaZdyQuEkZVe1BcXgYB3tKPREujHTiwp+tXZHqfE3pqnDpepzR3tFrHoU3/KkreXP/8Xn0Behe8TByic8Gb60tFl5Q5Kb98poPKzTdeKv0PvhRL+VE= ;{id = 22772 (ksk), size = 2048b}
+uri.arpa.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAcd4/Jd9UZEHkAtD6IAhkgMqKnhDQR29DRAJBvfymZ2h6hvHRoEk/mLhpmlpdqJ6AWYTGeTu+03Yk4DRyxAbPmWiY3q0+ceezbGEgHzuW53llsu9PFX2zK1yqU6kCJ5V4dNYDwe+G5RoQO0/Qo5IRXzruQIowKZKVdJBi22x6APNul61g22GUk1Et9kO+Wc9g116KBR7eRzmvj/7cprd19sJGDGFCNieyeexIgXstk5u/d+dZ2DXHDn+3hp3QhYQLqbYG7s+9wIzw0Oa1jneujXzI3udkQ6khp1GeIziuI1IWQNNF7/weoHu1LzX/xPCE/aK5eTy1Avu11DTamn163M= ;{id = 42686 (ksk), size = 2048b}
+uri.arpa.\t3600\tIN\tRRSIG\tDNSKEY 8 2 3600 20210217232440 20210120232440 22772 uri.arpa. R2ecLjDnuDyoAJ8KMOhfRJzs0bp9TBWAHZ+vmOKnTMhuW6NqIp8tzO0Z3ti5nxVFqDDX7aL9IXVbYjxE2u5TCSQUYx9Qkr84rpNsvHiz0V9qZfe2/CY02Jy0D/TswLSrW5w/Ph2fdH8kAzZZSlyELadAI69qSE6GUXAW5xml9Abikd5ITX9TeK0z3VmSSpjw/nV5Piui7IRCY1ADKIBJJZJliiSB9iTglkzfTEdtsoFncfsqa/giWP3o8CCLyj9fuwg4oxkbRBoQDtZUmvNqKjXP7GfOqtZa0DNtWH7eGWk6ZJsPtVnq436XNqlbidSJjXclZoUlwGEPjf4X75fE1g==
+uri.arpa.\t3600\tIN\tRRSIG\tDNSKEY 8 2 3600 20210217232440 20210120232440 42686 uri.arpa. hZ97HPDGO8Cfpiz240wxLKvMMHkhh9tLqrXG2w9OXv/DtbovAnG7RnCRMVOjOgZIqLqgxZo3OY72Ctb1ayL7M9fpuhSypOxkZPl/tNlyH0IafcQu2BYed+N3kbHlf784Sy1YlI19VZgDZk7yrXYkuLkSTXOSOydWjDIAUVGSgj8jmL0/pJn5zVv/kTn693ubo7lxpVQhCYeeWz/m2/QMAYRIb9h7vb//EAcqKZQFv5DQvGPQ9r92jN1+0WO/883O+kgTiSXVk79KcbfiQfPVWy9RhOnFGNHEyrC8ro2lEsEz/pKlr7jaqO9jSY2j+v59G70rJHQqSJZtMNlIpAYpuA==
+uri.arpa.\t3600\tIN\tZONEMD\t2018100702 1 1 59CC5323E8A1816C72547A852039172EA1AB4682BEF90AE47AD5EE35B69E282AFA13AA93D7AA64CB139FE3DBEF7FE250
+uri.arpa.\t3600\tIN\tRRSIG\tZONEMD 8 2 3600 20210217232440 20210120232440 36153 uri.arpa. tJary55E0dt4m794/oBU34HywzddMFkm+DfRwBY4zaRopDHF9LZUqKT3ZYDQaWwU5S69pUI4ttExiJ8UlLdHb7ND/JzplLFb047FJebR7bJ+iGxQyvnY5VQbQKY4MhYt62LqlBjyitxmPxdFYfygZd/lKEJdfJXd0OgcTtn8MM3YrRM1pennmTYhOL5+Xhvd21wNd9pGLy75rzgpNuXXxP5zTepVyKeP0xxONWkdrwJmr87FPgkFBKG00lS73bG1J+LxqdN1gNQbOkIE4z1GMzeY1oeePd8xRPt6RGT06SoafyYEqMeu7j1VweSLpaXbXQs+mKKbA080+zuAqrLGAQ==
+ftp.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^ftp://([^:/?#]*).*$!\\1!i" .
+ftp.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. p/zHty30rwGMMAzm7ifV4B1YExdKQYe13NnGknI5wRhpuuCDBMlemvi5dcYiimOWQt2igwnw/CEo6s6rvdXAZvWVFL12lggWKHJgFo1085VeviXwv9uIZJHRpI3meJFaOEvTkSlYpvYv4umOt1sXgaHV5uhLOjF7mbfhmy4AGoDY/6vIlwAb8TrVpy1Gl9zK6GCiELty1LGP5QGUYMbtfOuknEwMdPk4NPGBVjIlPGAa7v+adxNbI3Z4IQf+MSyXG4OmU9/dcLFAcc7MmT/aECiuXSJ2/bIn2GyXKkkZTysOvm1KUGO1WeH8aEbE9zZrOr2fRM/fhAue5Qr2EOwgWg==
+ftp.uri.arpa.\t3600\tIN\tNSEC\thttp.uri.arpa. NAPTR RRSIG NSEC
+ftp.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. cFeGFiIM81B7YFBd9ScDc+rjo12udBgS43mVkSCsw4nlfB7mKW60BuyQjbU2l0UbdcoRxeroXVHwLQfMOIRMKb46h30Hk+/eu4Q6NL5vC0wnwOqrRyYp9THDnL9OIZZX2yrIlGI+cbt3+lGmP/tj6qLwqxIkrOD61EVTLf4NDZS8sUxS32z/Lq6iCngOIUyQDMTMJCtNAD6f4iAJNLuPwBnpMkH7iYUvhLgEOsYE4QAC1AkTwwQWl4zU3QsTDcJ9zliZ7TUroHLBRuhajp5wZjkip6tOwIOmMInsx6KGTTt9Q9guAoVEY+ies1IYdASRjhR/3KnNUiUFMSx4QAM3iQ==
+http.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^http://([^:/?#]*).*$!\\1!i" .
+http.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. dDSyt6+uTOwbaMpIotYOpcugkB1m+uM+pedwkVJEnCZYBTu8Zix2w2C3lFxvhIwpbvFNl8Q6GxRKdaJfp+S3V+kasecizE1sVOmQi5bQb8fWzbS/CqlUptSHCCWvnmNAkSwmYwQku7oKI/hkEgpjtgKa0AZA7/O+jUnJH40nBwKqYaMgEeGEONgcJwzTqHJUbNm76g2C1XwSFlcJU5VmURcnQGOUf1617tt5ugdx5CYHvgIf4/ho8bizk1yWhWkiALVX/xxgLRtbQiYuAVhxfC66ZBiygcuns7rZvA1lbxu++E8twX/50GdDOviYMlAvSNIkQMsG3jEYU6eWQpDh/A==
+http.uri.arpa.\t3600\tIN\tNSEC\tmailto.uri.arpa. NAPTR RRSIG NSEC
+http.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. f9nFsiTzR1ZkcIx7pIW4uRdF4yV8E8823F5nkKsqf8t4oD7K1A6KcqtPaL/0RqYFYeICCstpy/F0bcINgYXxLv+yXDAl8a48D5jXx/MBvurwB3bbLlkAzke5wHMiEFp2ZC917D1/cm5NXwXQusFS0uPkHQ3cUF7FK0coYd+5v0lFl/sByK/fmiBPNfMKnXzwxelCGpR28PhdDUuva+TB/GxbnH9+Z0GoLzZeQ6q023rEVR6yTJ4C7LUeFMX8R3kYK4NfS8/33nKV3SqK70MEnHpkwJClTYTbWMTHuUnTqj402OG45ApA8nXyg6xXnnnm3SjJ69zm6P0aCQCVdkQhfA==
+mailto.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^mailto:(.*)@(.*)$!\\2!i" .
+mailto.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. tPbu85J1gSWNiOsecP/Y0r6V4+2Px6Mnk8aQYFKsy4EKJ1WWeQLnpHZOs323QLfRLcuACDP1rX+08IB88/g+1vZcEhC/UwQVLbuss9ncAyLVnlkKU4HcpYGOPiZEKpc2La2vlIId41YLBHcrXH6x0ridYDweEjrzpu0Mjf4BwB5Szs249es9uEm/iMjKb+SogHNznNZygHocX5GeC7MBfS/MR+vYejgckMy96rZpW07H33tKOxvvlB+zNWxqfE7DYp/81ozL8m6f7R0l+fhiIRrwSrr2l3Q7WvjmoWP55UXjCbC3eGEweD6zjOtvUWOK92FARyXPbD5Vm5975a553w==
+mailto.uri.arpa.\t3600\tIN\tNSEC\turn.uri.arpa. NAPTR RRSIG NSEC
+mailto.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. BR3Qv9BRZPcmLz3yN8JO0Q+xzx82NKks+Qx3NYTA1mFKGgrgzNCJfGFHqderL/D4YVGTsFijS8u9GIY5IvvGTtpoCQ5buh6yvdcMZsvv1gIZv32/ipVPxUBq1mAdZVQN5S/tnkKMnNhRR7oyZb8Plx8NPgdrggb5RUFCBu23barqZwdcphDFDPaKATt0MKrVqhSe3iQWhNXepje/k8AYy3A1oFPcIn2NRN9Ajx5CO6wf3uw1MvTRthAxCv+xA1wq0R6i49ByNkyIDc3YnGnOHJdPNmd1KDMkzbeI7VaeIKW+N40z0Vj1FYsnLh3BYQOkNvhtBFGHjdqxxLnIwWY8yg==
+urn.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "/urn:([^:]+)/\\1/i" .
+urn.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. einLB7SMkdOMwA22NrHN1L9VRegkKFuOyBqbvzVeL5s+zNxtJuxeb18WNnsO7TwRJDyfZmi/AgcHIaM59yBq8OYAKvDR9QxTgaGYuTA0HRmkP4dnQQ3jJQh49tYUn4MfwsVs0lBguDCfAtWH/lVsZg9ezQlWykfLWXkIbd616vLsO+Bj3cwjEtmhBbowulyE1yIj3ThRSy0O5GH1+hwmnc2pvBiBqoeTMRWFk4bwMKV6VmWMPywKKiF6uZ0R1aJye4us0CO323vi7LPOwkNc43OmpYxp2aODdfRUbcWQVwH/iWIYpEJIWKekpG0IyRg7896n8mmuM0o64y3mtc+JUA==
+urn.uri.arpa.\t3600\tIN\tNSEC\turi.arpa. NAPTR RRSIG NSEC
+urn.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. V597e3piSVuLUu/sqyZCcKvS9FvB44DTfwrszA0FNmBiIi3LyIaObUN91F5wQshFP8et0GetNN38EpZeuA2JzapgIS7Oby2ZPFijBPXZg+9rRIjeB6UhSkQ7hO94ZrnWsNCcuGtsryT/Fz4HXShwogeks2nSODl5cqclhGnAtdiAnBVve4oMzZMTBJWxOb3wTq9kF7PmWnBDdDAZ0T1x9aJW7XKiJj4fSDvHpeWWQKv5lBbCkIRri3DF5lBeC/0qZC4H7/TTVP2HLI7oTAgRU7c7eE62tidtE0VC0EYV3HLZoOmw8lg7U9ZophqhJy5OjtiV8BGnopP3wZwmpYlLaw==
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/uri.arpa.rfc8976");
+        let ksk1_path = mk_test_data_abs_path_string("test-data/Kuri.arpa.+008+42686");
+        let ksk2_path = mk_test_data_abs_path_string("test-data/Kuri.arpa.+008+22772");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kuri.arpa.+008+36153");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-ouri.arpa",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20210217232440",
+            "-i",
+            "20210120232440",
+            "-z1:1",
+            &zone_file_path,
+            &ksk1_path,
+            &ksk2_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
     /// Test NSEC3 optout behaviour with signing
     fn ldns_nsec3_optout() {
         // TODO: maybe make these strings a regex match of some kind for better flexibility with
