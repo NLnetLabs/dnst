@@ -906,7 +906,7 @@ impl SignZone {
         }
 
         if !zonemd.is_empty() {
-            // Remove existing ZONEMD RRs at apex (the placeholder is no longer needed)
+            // Remove the placeholder ZONEMD RR at apex
             let _ = records.remove_first_by_name_class_rtype(
                 apex.owner().clone(),
                 None,
@@ -920,7 +920,7 @@ impl SignZone {
             records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
 
             if signing_mode == SigningMode::HashAndSign {
-                self.update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
+                Self::update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
             }
         }
 
@@ -1471,8 +1471,8 @@ impl SignZone {
         let _ =
             records.remove_all_by_name_class_rtype(apex.owner().clone(), None, Some(Rtype::ZONEMD));
 
-        // Insert placeholder ZONEMD at apex for
-        // correct NSEC(3) bitmap (will be replaced later).
+        // Insert a single placeholder ZONEMD at apex for creating the
+        // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).
         let placeholder_zonemd = ZoneRecordData::Zonemd(Zonemd::new(
             soa_serial,
             ZonemdScheme::from_int(0),
@@ -1522,7 +1522,6 @@ impl SignZone {
     }
 
     fn update_zonemd_rrsig<KeyStrat, Sort>(
-        &self,
         signer: &Signer<Bytes, KeyPair, KeyStrat, Sort>,
         records: &mut SortedRecords<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>, Sort>,
         apex: &FamilyName<Name<Bytes>>,
