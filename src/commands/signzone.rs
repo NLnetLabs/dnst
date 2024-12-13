@@ -2429,12 +2429,6 @@ mod test {
 
     #[test]
     fn rfc_8976_zonemd_complex_example_zone() {
-        // TODO: ldns-signzone produces the same ZONEMD value as RFC 8976 A.2
-        // Complex EXAMPLE Zone, but we do not.
-
-        // TODO: ldns-signzone leaves the non-apex ZONEMD in the zone, we do
-        // not.
-
         // TODO: RFC 8976 Appendix A.2 Complex EXAMPLE Zone shows the ZONEMD
         // hash in lowercase but we show it in uppercase - does it matter?
         // LDNS shows it in lowercase too.
@@ -2824,6 +2818,11 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     fn next_owner_hash_in_nsec3_rdata_should_be_lowercase_in_ldns_mode() {
         // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
         todo!()
+    }
+
+    #[test]
+    fn non_authoritative_records_should_not_be_signed() {
+
     }
 
     //------------ Helper functions ------------------------------------------
