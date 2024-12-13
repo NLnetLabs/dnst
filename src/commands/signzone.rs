@@ -237,10 +237,8 @@ pub struct SignZone {
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'R',
-        default_value_ifs([
-            ("extra_comments", "false", Some("false")),
-            ("extra_comments", "true", Some("true"))
-        ]),
+        default_value_t = false,
+        default_value_if("extra_comments", "true", Some("true")),
     )]
     order_rrsigs_after_the_rtype_they_cover: bool,
 
@@ -249,11 +247,8 @@ pub struct SignZone {
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'O',
         default_value_t = false,
+        default_value_if("extra_comments", "true", Some("true")),
         requires = "nsec3",
-        default_value_ifs([
-            ("extra_comments", "false", Some("false")),
-            ("extra_comments", "true", Some("true"))
-        ]),
     )]
     order_nsec3_rrs_by_unhashed_owner_name: bool,
 
@@ -2009,6 +2004,8 @@ mod test {
                 use_nsec3: true,
                 nsec3_opt_out_flags_only: true,
                 no_require_keys_match_apex: true,
+                order_rrsigs_after_the_rtype_they_cover: true,
+                order_nsec3_rrs_by_unhashed_owner_name: true,
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
@@ -2174,8 +2171,8 @@ mod test {
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: true,
             preceed_zone_with_hash_list: false,
-            order_rrsigs_after_the_rtype_they_cover: true,
-            order_nsec3_rrs_by_unhashed_owner_name: true,
+            order_rrsigs_after_the_rtype_they_cover: false,
+            order_nsec3_rrs_by_unhashed_owner_name: false,
             no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
@@ -2194,6 +2191,8 @@ mod test {
                 set_soa_serial_to_epoch_time: true,
                 use_nsec3: true,
                 nsec3_opt_out_flags_only: true,
+                order_rrsigs_after_the_rtype_they_cover: true,
+                order_nsec3_rrs_by_unhashed_owner_name: true,
                 expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
                 inception: Timestamp::now(),
                 ..base.clone()
