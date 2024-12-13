@@ -797,26 +797,27 @@ impl SignZone {
             signing_mode,
             SigningMode::HashOnly | SigningMode::HashAndSign
         ) {
-            // LDNS doesn't add NSEC(3)s to a zone that already has them so we
-            // don't either. Assuming that we want to later be able to support
+            // LDNS doesn't add NSECs to a zone that already has NSECs or
+            // NSEC3s so we don't either. It *does* add NSEC3 if the zone has
+            // NSECs. Assuming that we want to later be able to support
             // transition between NSEC <-> NSEC3 we will need to revisit this.
             // Note that this doesn't match on NSEC3PARAM as AFAIK LDNS didn't
             // match on that either when testing for an existing hash chain.
             let mut families = records.families();
             families.skip_before(&apex);
             let apex_family = families.next().unwrap();
-            let is_hashed_already = apex_family
+            let is_nsec_hashed_already = apex_family
                 .records()
-                .any(|rr| matches!(rr.rtype(), Rtype::NSEC | Rtype::NSEC3));
+                .any(|rr| matches!(rr.rtype(), Rtype::NSEC));
 
-            if is_hashed_already {
+            if is_nsec_hashed_already && !self.use_nsec3 {
                 // Commented out debug statement because we don't (yet) have
                 // logging support. If a dependency were to be added on the
                 // `log` crate note that it wouldn't work for all logs output
                 // by the `domain` crate without first resolving
                 // https://github.com/NLnetLabs/domain/pull/465.
                 //
-                // debug!("Cowardly refusing to hash already hashed zone.");
+                // debug!("Cowardly refusing to NSEC hash already hashed zone.");
             } else if self.use_nsec3 {
                 let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
                 let Nsec3Records {
@@ -2821,11 +2822,11 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
-    fn non_authoritative_records_should_not_be_signed() {
-
+    fn nsec3param_should_appear_once_per_nsec3_chain() {
+        todo!()
     }
 
-    //------------ Helper functions ------------------------------------------
+    // ------------ Helper functions -----------------------------------------
 
     fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
         let mut file = File::create(dir.path().join(filename)).unwrap();
