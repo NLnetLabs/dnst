@@ -806,9 +806,7 @@ impl SignZone {
             let mut families = records.families();
             families.skip_before(&apex);
             let apex_family = families.next().unwrap();
-            let is_nsec_hashed_already = apex_family
-                .records()
-                .any(|rr| matches!(rr.rtype(), Rtype::NSEC));
+            let is_nsec_hashed_already = apex_family.records().any(|rr| rr.rtype() == Rtype::NSEC);
 
             if is_nsec_hashed_already && !self.use_nsec3 {
                 // Commented out debug statement because we don't (yet) have
@@ -834,8 +832,36 @@ impl SignZone {
                         self.extra_comments || self.preceed_zone_with_hash_list,
                     )
                     .unwrap();
+
+                // Only add the NSEC3PARAM RR if none exists already. This
+                // matches original ldns-signzone behaviour.
+                // 
+                // Note: If the existing NSEC3PARAM RR has different settings
+                // than the newly created NSEC3 RRs, e.g. different number of
+                // iterations or different salt, then BIND dnssec-verify will
+                // complain that there are missing NSEC3 records. This is
+                // presumably because RFC 5155 section 7.3. Secondary Servers
+                // says:
+                //
+                //   "If there are multiple NSEC3PARAM RRs present, there are
+                //    multiple valid NSEC3 chains present.  The server must
+                //    choose one of them, but may use any criteria to do so."
+                //
+                // ldns-verify-zone does NOT however complain in this case.
+                if apex_family
+                    .records()
+                    .any(|rr| rr.rtype() == Rtype::NSEC3PARAM)
+                {
+                    // See comment above about adding support for debug!().
+                    // debug!("Cowardly refusing to add NSEC3PARAM record as one already exists.");
+                } else {
+                    records.insert(Record::from_record(param)).unwrap();
+                }
+
+                // Add the generated NSEC3 records.
                 records.extend(recs.into_iter().map(Record::from_record));
-                records.insert(Record::from_record(param)).unwrap();
+
+                // Remember hash mapping data, if any.
                 hashes = new_hashes;
             } else {
                 let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
