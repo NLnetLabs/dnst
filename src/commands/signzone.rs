@@ -620,7 +620,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let records = self.load_zone(&env.in_cwd(&self.zonefile_path), &signing_mode)?;
+        let records = self.load_zone(&env.in_cwd(&self.zonefile_path), signing_mode)?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -791,16 +791,38 @@ impl SignZone {
         }
 
         // Hash the zone with NSEC or NSEC3, unless only ZONEMD is done.
-        let hashes = if matches!(
+        let mut hashes = None;
+
+        if matches!(
             signing_mode,
             SigningMode::HashOnly | SigningMode::HashAndSign
         ) {
-            if self.use_nsec3 {
+            // LDNS doesn't add NSEC(3)s to a zone that already has them so we
+            // don't either. Assuming that we want to later be able to support
+            // transition between NSEC <-> NSEC3 we will need to revisit this.
+            // Note that this doesn't match on NSEC3PARAM as AFAIK LDNS didn't
+            // match on that either when testing for an existing hash chain.
+            let mut families = records.families();
+            families.skip_before(&apex);
+            let apex_family = families.next().unwrap();
+            let is_hashed_already = apex_family
+                .records()
+                .any(|rr| matches!(rr.rtype(), Rtype::NSEC | Rtype::NSEC3));
+
+            if is_hashed_already {
+                // Commented out debug statement because we don't (yet) have
+                // logging support. If a dependency were to be added on the
+                // `log` crate note that it wouldn't work for all logs output
+                // by the `domain` crate without first resolving
+                // https://github.com/NLnetLabs/domain/pull/465.
+                //
+                // debug!("Cowardly refusing to hash already hashed zone.");
+            } else if self.use_nsec3 {
                 let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
                 let Nsec3Records {
                     recs,
                     param,
-                    hashes,
+                    hashes: new_hashes,
                 } = records
                     .nsec3s::<_, BytesMut>(
                         &apex,
@@ -813,15 +835,12 @@ impl SignZone {
                     .unwrap();
                 records.extend(recs.into_iter().map(Record::from_record));
                 records.insert(Record::from_record(param)).unwrap();
-                hashes
+                hashes = new_hashes;
             } else {
                 let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
                 records.extend(nsecs.into_iter().map(Record::from_record));
-                None
             }
-        } else {
-            None
-        };
+        }
 
         // Sign the zone unless disabled.
         if signing_mode == SigningMode::HashAndSign {
@@ -1071,7 +1090,7 @@ impl SignZone {
     fn load_zone(
         &self,
         zonefile_path: &Path,
-        signing_mode: &SigningMode,
+        signing_mode: SigningMode,
     ) -> Result<SortedRecords<StoredName, StoredRecordData>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
@@ -1093,65 +1112,16 @@ impl SignZone {
             reader.set_origin(origin.clone());
         }
 
-        // There's no way to get the origin that is detected while loading the
-        // zonefile if none was provided by the caller. We can only assume that the first SOA we see is the origin and check at the
-        let mut origin = self.origin.clone();
-
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
             match entry {
-                Entry::Origin(detected_origin) => {
-                    origin = Some(detected_origin);
-                }
-
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
 
-                    // Ignore any existing NSEC(3) and RRSIG RRs from the
-                    // loaded zone as we only support signing an unsigned
-                    // zone. We do not ignore DNSKEY RRs as we match given
-                    // keys against those.
-                    //
-                    // TODO: RFC 5155 DNS Security (DNSSEC) Hashed
-                    // Authenticated Denial of Existence says in section 10
-                    // says that to safely transition between NSEC <-> NSEC3
-                    // one must be able to have both RR types in the zone at
-                    // once, while our current implementation only supports
-                    // having either NSEC or NSEC3 in the zone at any one
-                    // time.
-
-                    match record.rtype() {
-                        Rtype::ZONEMD => {
-                            if Some(record.owner()) == origin.as_ref() {
-                                // Skip the ZONEMD record as we will be
-                                // modifying the zone thus invalidating any
-                                // existing ZONEMD record.
-                                continue;
-                            }
-                        }
-
-                        Rtype::NSEC3PARAM => {
-                            if Some(record.owner()) == origin.as_ref() {
-                                // If the user is not hashing the zone, e.g.
-                                // is only ZONEMD hashing the zone, leave any
-                                // existing NSEC3PARAM record in the zone,
-                                // otherwise remove it because either the user
-                                // is switching to NSEC or it will be replaced
-                                // by NSEC3 hashing.
-                                //
-                                // Note: This is incompatible with RFC 5155
-                                // guidance on transitioning from NSEC3 to
-                                // NSEC.
-                                if *signing_mode != SigningMode::None {
-                                    continue;
-                                }
-                            }
-                        }
-
-                        _ => { /* Nothing to do */ }
-                    }
-
-                    if !matches!(record.rtype(), Rtype::NSEC | Rtype::NSEC3 | Rtype::RRSIG) {
+                    // If signing, strip existing RRSIGs, as the original
+                    // ldns-signzone does.
+                    // TODO: Support partial and re-signing.
+                    if signing_mode != SigningMode::HashAndSign || record.rtype() != Rtype::RRSIG {
                         let _ = records.insert(record);
                     }
                 }
