@@ -858,7 +858,7 @@ impl SignZone {
 
                 // Only add the NSEC3PARAM RR if none exists already. This
                 // matches original ldns-signzone behaviour.
-                // 
+                //
                 // Note: If the existing NSEC3PARAM RR has different settings
                 // than the newly created NSEC3 RRs, e.g. different number of
                 // iterations or different salt, then BIND dnssec-verify will
