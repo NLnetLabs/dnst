@@ -722,7 +722,7 @@ impl SignZone {
 
             // Verify that the owner of the public key matches the apex of the
             // zone.
-            if public_key.owner() != soa_rr.owner() {
+            if !self.no_require_keys_match_apex && public_key.owner() != soa_rr.owner() {
                 return Err(format!(
                     "Zone apex ({}) does not match the expected apex ({})",
                     soa_rr.owner(),
