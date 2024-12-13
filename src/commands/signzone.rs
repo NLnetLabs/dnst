@@ -1,3 +1,24 @@
+// Output differences compared to the original ldns-signzone:
+// ----------------------------------------------------------
+// We differ to some example zone content in RFCs and to the output of the
+// original LDNS tools regarding the order or case of some resource record
+// data values that we output. The output format is defined by code in the
+// `domain` crate, it is not defined here. It could in theory be overridden
+// here but both formats are correct because the RFCs are not strict in how
+// they define the presentation format of these fields, e.g.:
+//
+//   - DS digest: RFC 4034 5.3 says "The Digest MUST be represented as a
+//     sequence of case-insensitive hexadecimal digits".
+//   - NSEC3 salt: RFC 5155 3.3 says "The Salt field is represented as a
+//     sequence of case-insensitive hexadecimal digits"
+//   - NSEC3 next hashed owner: RFC 5155 3.3 says "The Next Hashed Owner Name
+//     field is represented as an unpadded sequence of case-insensitive base32
+//     digits, without whitespace."
+//   - NSEC3 type bit maps: RFC 5155 3.3 says "The Type Bit Maps field is
+//     represented as a sequence of RR type mnemonics", so a sequence but
+//     nothing said about the order of that sequence. We output it in
+//     ascending order by RTYPE code.
+
 use core::cmp::Ordering;
 use core::fmt::Write;
 use core::ops::Add;
@@ -2665,24 +2686,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040409183619 20040509183619 38353 
     // TODO: Currently fails due to https://github.com/NLnetLabs/domain/issues/468.
     #[test]
     fn rfc_5155_nsec3_signed_zone_example() {
-        // TODO: RFC 5155 Appendix A Example Zone shows lowercase NSEC3 salt
-        // but we produce uppercase NSEC3 salt - does it matter? LDNS shows it
-        // in lowercase too.
-
-        // TODO: RFC 5155 Appendix A Example Zone shows next NSEC3 hashed
-        // owner in lowercase but we show it in uppercase - does it matter?
-        // LDNS shows it in lowercase too.
-
-        // TODO: RFC 5155 Appendix A Example Zone shows next NSEC3 hashed
-        // owner as the owner of the next record output but we use a different
-        // order - does it matter?
-
-        // TODO: RFC 5155 Appendix A Example Zone shows NSEC3 covered types
-        // in a different order than we do, e.g.
-        //   NS SOA MX RRSIG DNSKEY NSEC3PARAM vs
-        //   MX DNSKEY NS SOA NSEC3PARAM RRSIG
-        // Does it matter?
-
         let expected_signed_zone = r###"
 ; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
 ; H(2t7b4g4vsa5smi47k61mv5bv1a22bojr.example) = kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example
@@ -2832,12 +2835,6 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     fn glue_records_should_not_be_hashed_or_signed() {
         // So there should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at
         // glue owner names.
-        todo!()
-    }
-
-    #[test]
-    fn ds_digest_rdata_should_be_presented_as_lowercase() {
-        // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
         todo!()
     }
 
