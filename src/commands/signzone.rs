@@ -18,6 +18,8 @@
 //     represented as a sequence of RR type mnemonics", so a sequence but
 //     nothing said about the order of that sequence. We output it in
 //     ascending order by RTYPE code.
+//   - ZONEMD hash: RFC 8976 2.3 says "The Digest is represented as a sequence
+//     of case-insensitive hexadecimal digits".
 
 use core::cmp::Ordering;
 use core::fmt::Write;
@@ -2477,10 +2479,6 @@ mod test {
 
     #[test]
     fn rfc_8976_zonemd_complex_example_zone() {
-        // TODO: RFC 8976 Appendix A.2 Complex EXAMPLE Zone shows the ZONEMD
-        // hash in lowercase but we show it in uppercase - does it matter?
-        // LDNS shows it in lowercase too.
-
         let expected_zone = "example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
         example.\t86400\tIN\tNS\tns1.example.\n\
         example.\t86400\tIN\tNS\tns2.example.\n\
