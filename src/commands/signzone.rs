@@ -917,7 +917,9 @@ impl SignZone {
                 Self::create_zonemd_digest_and_records(&records, &apex, &zonemd, soa_serial, ttl)?;
 
             // Add ZONEMD RRs to output records
-            records.extend(zonemd_rrs.clone().into_iter().map(Record::from_record));
+            for zrr in zonemd_rrs.clone() {
+                let _ = records.insert(zrr);
+            }
 
             if signing_mode == SigningMode::HashAndSign {
                 Self::update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
