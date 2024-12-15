@@ -1,7 +1,11 @@
+use core::fmt::{Display, Write};
+
 use std::fmt;
 use std::{error, io};
 
-use crate::env::Env;
+use domain::base::wire::ParseError;
+
+use crate::env::{Env, Stream};
 
 //------------ Error ---------------------------------------------------------
 
@@ -39,6 +43,9 @@ impl fmt::Display for PrimaryError {
 //--- Interaction
 
 impl Error {
+    pub const RED: u8 = 31;
+    pub const YELLOW: u8 = 33;
+
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
         Self(Box::new(Information {
@@ -55,7 +62,6 @@ impl Error {
 
     /// Pretty-print this error.
     pub fn pretty_print(&self, env: impl Env) {
-        use std::io::IsTerminal;
         let mut err = env.stderr();
 
         let error = match &self.0.primary {
@@ -72,16 +78,7 @@ impl Error {
 
         // NOTE: This is a multicall binary, so argv[0] is necessary for
         // program operation.  We would fail very early if it didn't exist.
-        let prog = std::env::args().next().unwrap();
-        let term = std::io::stderr().is_terminal();
-
-        let error_marker = if term {
-            "\x1B[31mERROR:\x1B[0m"
-        } else {
-            "ERROR:"
-        };
-
-        write!(err, "[{prog}] {error_marker} {error}");
+        Self::write_error(&mut err, error);
         for context in &self.0.context {
             writeln!(err, "\n... while {context}");
         }
@@ -100,6 +97,18 @@ impl Error {
         } else {
             1
         }
+    }
+
+    pub fn write_error(writer: &mut Stream<impl Write>, text: impl Display) {
+        let prog = std::env::args().next().unwrap();
+        let marker = writer.colourize(Self::RED, "ERROR:");
+        writeln!(writer, "[{prog}] {marker} {text}");
+    }
+
+    pub fn write_warning(writer: &mut Stream<impl Write>, text: impl Display) {
+        let prog = std::env::args().next().unwrap();
+        let marker = writer.colourize(Self::YELLOW, "WARN:");
+        writeln!(writer, "[{prog}] {marker} {text}");
     }
 }
 
@@ -125,6 +134,12 @@ impl From<fmt::Error> for Error {
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
         Self::new(&error.to_string())
     }
 }
@@ -225,4 +240,12 @@ impl<T> Context for Result<T> {
     fn with_context(self, context: impl FnOnce() -> String) -> Self {
         self.map_err(|err| err.context(&(context)()))
     }
+}
+
+/// Execute the given operation under the given context.
+pub fn in_context<R>(
+    context: impl FnOnce() -> String,
+    function: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    (function)().with_context(context)
 }

@@ -1,7 +1,11 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::Path;
+
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend, UdpConnect};
+use domain::resolv::stub::conf::ResolvConf;
+use domain::resolv::StubResolver;
 
 use super::Env;
 use super::Stream;
@@ -15,15 +19,30 @@ impl Env for RealEnv {
     }
 
     fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stdout()))
+        Stream::new(FmtWriter(io::stdout()), io::stdout().is_terminal())
     }
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stderr()))
+        Stream::new(FmtWriter(io::stderr()), io::stderr().is_terminal())
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {
         path.as_ref().into()
+    }
+
+    fn dgram(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
+        UdpConnect::new(addr)
+    }
+
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
+        StubResolver::from_conf(config)
     }
 }
 

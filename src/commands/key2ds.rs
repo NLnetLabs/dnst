@@ -15,8 +15,9 @@ use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::{Args, DISPLAY_KIND};
 
-use super::LdnsCommand;
+use super::{Command, LdnsCommand};
 
 #[derive(Clone, Debug, Parser, PartialEq, Eq)]
 #[command(version)]
@@ -76,9 +77,11 @@ Options:
 ";
 
 impl LdnsCommand for Key2ds {
+    const NAME: &'static str = "key2ds";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut ignore_sep = false;
         let mut write_to_stdout = false;
         let mut algorithm = None;
@@ -99,6 +102,7 @@ impl LdnsCommand for Key2ds {
                     }
                     keyfile = Some(val);
                 }
+                Arg::Short('v') => return Ok(Self::report_version()),
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())
@@ -110,7 +114,7 @@ impl LdnsCommand for Key2ds {
             return Err("No keyfile given".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Key2ds(Self {
             ignore_sep,
             write_to_stdout,
             algorithm,
@@ -118,7 +122,7 @@ impl LdnsCommand for Key2ds {
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
-        })
+        })))
     }
 }
 
@@ -180,7 +184,7 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(false, true));
+                writeln!(env.stdout(), "{}", rr.display_zonefile(DISPLAY_KIND));
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -210,7 +214,7 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(false, true))
+                writeln!(out_file, "{}", rr.display_zonefile(DISPLAY_KIND))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 writeln!(env.stdout(), "{keyname}");
@@ -248,9 +252,9 @@ mod test {
     use super::Key2ds;
 
     #[track_caller]
-    fn parse(args: FakeCmd) -> Key2ds {
-        let res = args.parse();
-        let Command::Key2ds(x) = res.unwrap().command else {
+    fn parse(cmd: FakeCmd) -> Key2ds {
+        let res = cmd.parse().unwrap();
+        let Command::Key2ds(x) = res.command else {
             panic!("Not a Key2ds!");
         };
         x
@@ -436,7 +440,7 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
-        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136\t15\t2\t52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
     }
 
     #[test]
@@ -450,10 +454,10 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kone.test.+015+38429.ds")).unwrap();
-        assert_eq!(out, "one.test.\t3600\tIN\tDS\t38429\t15\t2\tB85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
+        assert_eq!(out, "one.test.\t3600\tIN\tDS\t38429 15 2 B85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
 
         let out = std::fs::read_to_string(dir.path().join("Ktwo.test.+015+00425.ds")).unwrap();
-        assert_eq!(out, "two.test.\t3600\tIN\tDS\t425\t15\t2\tAA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
+        assert_eq!(out, "two.test.\t3600\tIN\tDS\t425 15 2 AA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
     }
 
     #[test]
@@ -467,7 +471,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "example.test.\t3600\tIN\tDS\t60136\t15\t2\t52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
+            "example.test.\t3600\tIN\tDS\t60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
         );
         assert_eq!(res.stderr, "");
     }

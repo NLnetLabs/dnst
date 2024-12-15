@@ -3,11 +3,16 @@ use std::path::Path;
 
 use clap::Parser;
 use commands::key2ds::Key2ds;
+use commands::keygen::Keygen;
+use commands::notify::Notify;
 use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
+use commands::update::Update;
 use commands::LdnsCommand;
 use env::Env;
 use error::Error;
+
+use domain::base::zonefile_fmt::DisplayKind;
 
 pub use self::args::Args;
 
@@ -15,6 +20,12 @@ pub mod args;
 pub mod commands;
 pub mod env;
 pub mod error;
+pub mod parse;
+pub mod util;
+
+/// Define the way that we output zonefile records once for consistent use
+/// everywhere.
+pub const DISPLAY_KIND: DisplayKind = DisplayKind::Tabbed;
 
 pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
     args: I,
@@ -32,12 +43,15 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
 
     let res = match binary_name {
         "key2ds" => Key2ds::parse_ldns_args(args_iter),
+        "notify" => Notify::parse_ldns_args(args_iter),
+        "keygen" => Keygen::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         "signzone" => SignZone::parse_ldns_args(args_iter),
-        _ => return Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
-    };
+        "update" => Update::parse_ldns_args(args_iter),
+        _ => Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
+    }?;
 
-    Ok(Some(res?))
+    Ok(Some(res))
 }
 
 /// Get the binary name from a [`Path`].

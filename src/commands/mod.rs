@@ -1,30 +1,66 @@
 //! The command of _dnst_.
 pub mod help;
 pub mod key2ds;
+pub mod keygen;
+pub mod notify;
 pub mod nsec3hash;
 pub mod signzone;
+pub mod update;
 
+use clap::crate_version;
 use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
-
-use key2ds::Key2ds;
-use nsec3hash::Nsec3Hash;
-use signzone::SignZone;
 
 use crate::env::Env;
 use crate::Args;
 
 use super::error::Error;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
-    /// Prints the NSEC3 hash of a given domain name
+    /// Generate a new key pair for a given domain name
+    ///
+    /// The following files will be created:
+    ///
+    /// - K<name>+<alg>+<tag>.key: The public key file
+    ///
+    ///   This is a DNSKEY resource record in zone file format.
+    ///
+    /// - K<name>+<alg>+<tag>.private: The private key file
+    ///
+    ///   This is a text file in the conventional BIND format which
+    ///   contains fields describing the private key data.
+    ///
+    /// - K<name>+<alg>+<tag>.ds: The public key digest file
+    ///
+    ///   This is a DS resource record in zone file format.
+    ///   It is only created for key signing keys.
+    ///
+    /// <name> is the fully-qualified owner name for the key (with a trailing dot).
+    /// <alg> is the algorithm number of the key, zero-padded to 3 digits.
+    /// <tag> is the 16-bit tag of the key, zero-padded to 5 digits.
+    ///
+    /// Upon completion, 'K<name>+<alg>+<tag>' will be printed.
+    #[allow(rustdoc::invalid_html_tags)]
+    #[command(name = "keygen", verbatim_doc_comment)]
+    Keygen(self::keygen::Keygen),
+
+    /// Print the NSEC3 hash of a given domain name
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
     /// Sign the zone with the given key(s)
     #[command(name = "signzone")]
     SignZone(self::signzone::SignZone),
+
+    /// Send a NOTIFY packet to DNS servers
+    ///
+    /// This tells them that an updated zone is available at the primaries. It can perform TSIG
+    /// signatures and it can add a SOA serial number of the updated zone. If a server already has
+    /// that serial number it will disregard the message.
+    #[command(name = "notify")]
+    Notify(self::notify::Notify),
 
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
@@ -34,17 +70,35 @@ pub enum Command {
     #[command(name = "key2ds")]
     Key2ds(key2ds::Key2ds),
 
+    /// Send an UPDATE packet
+    #[command(name = "update")]
+    Update(self::update::Update),
+
     /// Show the manual pages
     Help(self::help::Help),
+
+    /// Report a string to stdout
+    ///
+    /// This is used for printing version information and some other
+    /// information.
+    #[command(skip)]
+    Report(String),
 }
 
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
             Self::Key2ds(key2ds) => key2ds.execute(env),
+            Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
+            Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
+            Self::Update(update) => update.execute(env),
             Self::Help(help) => help.execute(),
+            Self::Report(s) => {
+                writeln!(env.stdout(), "{s}");
+                Ok(())
+            }
         }
     }
 }
@@ -57,34 +111,29 @@ impl Command {
 /// The [`LdnsCommand::parse_ldns`] function should parse arguments and
 /// return an error in case of a parsing failure. The help string provided
 /// as [`LdnsCommand::HELP`] is automatically appended to returned errors.
-pub trait LdnsCommand: Into<Command> {
+pub trait LdnsCommand {
+    const NAME: &'static str;
     const HELP: &'static str;
+    const COMPATIBLE_VERSION: &'static str;
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error>;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error>;
 
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        match Self::parse_ldns(args) {
-            Ok(c) => Ok(Args::from(c.into())),
-            Err(e) => Err(format!("Error: {e}\n\n{}", Self::HELP).into()),
-        }
+        Self::parse_ldns(args).map_err(|e| format!("{e}\n\n{}", Self::HELP).into())
     }
-}
 
-impl From<Key2ds> for Command {
-    fn from(val: Key2ds) -> Self {
-        Command::Key2ds(val)
+    fn report_help() -> Args {
+        Args::from(Command::Report(Self::HELP.into()))
     }
-}
 
-impl From<Nsec3Hash> for Command {
-    fn from(val: Nsec3Hash) -> Self {
-        Command::Nsec3Hash(val)
-    }
-}
-
-impl From<SignZone> for Command {
-    fn from(val: SignZone) -> Self {
-        Command::SignZone(val)
+    fn report_version() -> Args {
+        let s = format!(
+            "ldns-{} provided by dnst v{} (compatible with ldns v{})",
+            Self::NAME,
+            crate_version!(),
+            Self::COMPATIBLE_VERSION,
+        );
+        Args::from(Command::Report(s))
     }
 }
 

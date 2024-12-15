@@ -3,15 +3,17 @@ use std::str::FromStr;
 
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::name::{self, Name};
+use domain::base::name::Name;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::parse::parse_name;
+use crate::Args;
 
-use super::{parse_os, parse_os_with, LdnsCommand};
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Nsec3Hash {
@@ -46,7 +48,7 @@ pub struct Nsec3Hash {
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
@@ -59,11 +61,13 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 ";
 
 impl LdnsCommand for Nsec3Hash {
+    const NAME: &'static str = "nsec3-hash";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlg::SHA1;
-        let mut iterations = 1;
+        let mut iterations = 0;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
 
@@ -103,20 +107,16 @@ impl LdnsCommand for Nsec3Hash {
             return Err("Missing domain name argument".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Nsec3Hash(Self {
             algorithm,
             iterations,
             salt,
             name,
-        })
+        })))
     }
 }
 
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, name::FromStrError> {
-        Name::from_str(&arg.to_lowercase())
-    }
-
     // Note: This function is only necessary until
     // https://github.com/NLnetLabs/domain/pull/431 is merged.
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
@@ -190,6 +190,7 @@ mod tests {
                 cmd: FakeCmd::new(["unused"]),
                 stdout: FakeStream::default(),
                 stderr: FakeStream::default(),
+                stelline: None,
             };
 
             // We don't test all permutations as that would take too long (~20 seconds)
@@ -332,10 +333,10 @@ mod tests {
 
         #[test]
         fn accept_good_cli_args() {
-            assert_cmd_eq(&["nlnetlabs.nl"], "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n");
+            assert_cmd_eq(&["nlnetlabs.nl"], "asqe4ap6479d7085ljcs10a2fpb2do94.\n");
             assert_cmd_eq(
                 &["-a", "1", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-t", "0", "nlnetlabs.nl"],
@@ -347,11 +348,11 @@ mod tests {
             );
             assert_cmd_eq(
                 &["-s", "", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-s", "DEADBEEF", "nlnetlabs.nl"],
-                "2h8rboqdrq0ard25vrmc4hjg7m56hnhd.\n",
+                "dfucs7bmmtsil9gij77k1kmocclg5d8a.\n",
             );
         }
 
@@ -390,6 +391,7 @@ mod tests {
             FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 
+        #[track_caller]
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
             let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
             assert_eq!(result.exit_code, 0);
