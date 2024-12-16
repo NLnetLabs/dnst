@@ -1687,12 +1687,15 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
         record: &'a Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
         state: Nsec3CommentState<'b>,
     ) -> Result<(), fmt::Error> {
-        if let Some(hashes) = state.hashes {
             // TODO: For ldns-signzone backward compatibilty we output
             // "  ;{... <domain>.}" but I find the spacing ugly and
             // would prefer for dnst to output " ; {... <domain>. }"
             // instead.
-            writer.write_str(" ;{ flags: ")?;
+
+        // For an existing NSEC3 chain that we didn't generate ourselves but
+        // left intact, still output flags info, but not the from/to owner as
+        // we didn't generate the hash mappings.
+        writer.write_str("  ;{ flags: ")?;
 
             if self.opt_out() {
                 writer.write_str("optout")?;
@@ -1700,6 +1703,7 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
                 writer.write_str("-")?;
             }
 
+        if let Some(hashes) = state.hashes {
             let next_owner_hash_hex = format!("{}", self.next_owner());
             let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, state.apex);
 
@@ -1717,9 +1721,10 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
                 format!("<invalid name: {next_owner_hash_hex}>")
             };
 
-            writer.write_fmt(format_args!(", from: {from} to: {to}}}"))?;
+            writer.write_fmt(format_args!(", from: {from} to: {to}"))?;
         }
-        Ok(())
+
+        writer.write_char('}')
     }
 }
 
