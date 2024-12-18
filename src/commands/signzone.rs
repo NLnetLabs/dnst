@@ -2956,6 +2956,13 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         todo!()
     }
 
+    #[test]
+    fn non_existing_input_file_should_not_create_empty_output_file() {
+        // signzone first creates the output zone file (.signed) before
+        // noticing a non-existent input zonefile
+        todo!()
+    }
+
     // ------------ Helper functions -----------------------------------------
 
     fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
