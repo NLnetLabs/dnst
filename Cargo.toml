@@ -20,7 +20,7 @@ ring = ["domain/ring"]
 bytes  = { version = "1.1", default-features = false }
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "sortedrecords-zonemd-remove-replace-plus-pr444", features = [
+domain = { git = "https://github.com/NLnetLabs/domain", branch = "initial-nsec3-generation", features = [
     "bytes",
     "net",
     "openssl",
@@ -53,7 +53,7 @@ bimap = "0.6.3"
 
 [dev-dependencies]
 const_format = " 0.2.33"
-domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", branch = "sortedrecords-zonemd-remove-replace-plus-pr444", features = [
+domain = { version = "*", git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
