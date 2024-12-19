@@ -49,6 +49,7 @@ jiff = { version = "0.1.15", default-features = false, features = ["alloc"] }
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+bimap = "0.6.3"
 
 [dev-dependencies]
 const_format = " 0.2.33"
