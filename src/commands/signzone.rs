@@ -3223,7 +3223,6 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         todo!()
     }
 
-
     #[test]
     #[ignore = "TODO"]
     fn non_existing_input_file_should_not_create_empty_output_file() {
