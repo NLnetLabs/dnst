@@ -36,6 +36,7 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "sortedrecords-
     "zonefile",
 ] }
 lexopt = "0.3.0"
+rayon = "1.10.0"
 octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
@@ -44,11 +45,11 @@ tokio = "1.40.0"
 # TODO: put these behind a feature gate?
 jiff = { version = "0.1.15", default-features = false, features = ["alloc"] }
 
-
 # This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+bimap = "0.6.3"
 
 [dev-dependencies]
 const_format = " 0.2.33"
