@@ -21,20 +21,21 @@
 //   - ZONEMD hash: RFC 8976 2.3 says "The Digest is represented as a sequence
 //     of case-insensitive hexadecimal digits".
 
+use core::clone::Clone;
 use core::cmp::Ordering;
 use core::fmt::Write;
 use core::ops::Add;
 use core::str::FromStr;
 
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::{self, Display};
 use std::fs::File;
-use std::hash::RandomState;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
+use bimap::BiHashMap;
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
@@ -50,7 +51,8 @@ use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonem
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
     DefaultSigningKeyUsageStrategy, DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose,
-    Nsec3OptOut, Nsec3Records, RecordsIter, Signer, SigningKeyUsageStrategy, SortedRecords,
+    Nsec3HashProvider, Nsec3OptOut, Nsec3Records, OnDemandNsec3HashProvider, RecordsIter, Signer,
+    SigningKeyUsageStrategy, SortedRecords,
 };
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::utils::base64;
@@ -624,14 +626,6 @@ impl SignZone {
                 .map_err(|err| format!("Cannot write to {out_file}: {err}"))?
         };
 
-        let writer = if out_file.as_os_str() == "-" {
-            FileOrStdout::Stdout(env.stdout())
-        } else {
-            let file = File::create(env.in_cwd(&out_file))?;
-            let file = BufWriter::new(file);
-            FileOrStdout::File(file)
-        };
-
         // ldns-signzone only shows these warnings if verbosity < 1 but offers
         // no way to configure the verbosity level. I assume the intent was to
         // add support for a -q (--quiet) option or similar but that was never
@@ -760,38 +754,43 @@ impl SignZone {
         if self.sign_dnskeys_with_all_keys {
             let signer = Signer::<Bytes, KeyPair, AllKeyStrat, MultiThreadedSorter>::new();
             self.go_further(
+                env,
                 signer,
                 records,
                 signing_mode,
                 opt_out,
                 &signing_keys,
-                writer,
+                out_file,
             )
         } else if self.sign_with_every_unique_algorithm {
             let signer = Signer::<Bytes, KeyPair, AllUniqStrat, MultiThreadedSorter>::new();
             self.go_further(
+                env,
                 signer,
                 records,
                 signing_mode,
                 opt_out,
                 &signing_keys,
-                writer,
+                out_file,
             )
         } else {
             let signer = Signer::<Bytes, KeyPair, FallbackStrat, MultiThreadedSorter>::new();
             self.go_further(
+                env,
                 signer,
                 records,
                 signing_mode,
                 opt_out,
                 &signing_keys,
-                writer,
+                out_file,
             )
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn go_further<Strat: SigningKeyUsageStrategy<Bytes, KeyPair>>(
         &self,
+        env: impl Env,
         signer: Signer<Bytes, KeyPair, Strat, MultiThreadedSorter>,
         mut records: SortedRecords<
             Name<Bytes>,
@@ -801,8 +800,16 @@ impl SignZone {
         signing_mode: SigningMode,
         opt_out: Nsec3OptOut,
         signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
-        mut writer: FileOrStdout<BufWriter<File>, impl Write>,
+        out_file: PathBuf,
     ) -> Result<(), Error> {
+        let mut writer = if out_file.as_os_str() == "-" {
+            FileOrStdout::Stdout(env.stdout())
+        } else {
+            let file = File::create(env.in_cwd(&out_file))?;
+            let file = BufWriter::new(file);
+            FileOrStdout::File(file)
+        };
+
         // Make sure, zonemd arguments are unique
         let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
 
@@ -814,12 +821,117 @@ impl SignZone {
         // Find the apex.
         let (apex, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
+        let mut families = records.families();
+        families.skip_before(&apex);
+        let apex_family = families.next().unwrap();
+        let apex_family_name = apex_family.family_name();
+        let apex_owner = Clone::clone(*apex_family_name.owner());
+
+        // The original ldns-signzone filters out (with warnings) NSEC3 RRs,
+        // or RRSIG RRs covering NSEC3 RRs, where the hashed owner name
+        // doesn't correspond to an unhashed owner name in the zone. To work
+        // this out you have to NSEC3 hash every owner name during loading and
+        // filter out any NSEC3 hashed owner name that doesn't appear in the
+        // built NSEC3 hash set. To generate the NSEC3 hashes we have to know
+        // the settings that were used to NSEC3 hash the zone, i.e. we have to
+        // find an NSEC3PARAM RR at the apex, or an NSEC3 RR in the zone. But
+        // we don't know what the apex is until we find the SOA, and checking
+        // DNSKEYs and loading key files is quick so we do that first. Then
+        // once we get here we have the ordered zone, we know the apex, and we
+        // can find the NSEC3PARAM RR.
+        let (mut nsec3_hashes, mut precalculated_nsec3_recs) = if let Some(nsec3param) = apex_family
+            .records()
+            .find(|rr| rr.rtype() == Rtype::NSEC3PARAM)
+        {
+            let ZoneRecordData::Nsec3param(params) = nsec3param.data() else {
+                unreachable!()
+            };
+
+            let mut nsec3_hashes = BidiMapNsec3HashProvider::new(
+                params.hash_algorithm(),
+                params.iterations(),
+                params.salt().clone(),
+                apex_owner.clone(),
+            );
+
+            // TODO: `domain` should work out the correct TTL to use, it
+            // shouldn't be left to a caller to know about the intracies of
+            // RFC 9077 and earlier to work out the correct TTL to use.
+            let nsec3_recs = records
+                .nsec3s::<_, BytesMut, _>(
+                    &apex,
+                    ttl,
+                    params.clone(),
+                    opt_out,
+                    !self.do_not_add_keys_to_zone,
+                    &mut nsec3_hashes,
+                )
+                .unwrap();
+
+            (Some(nsec3_hashes), Some(nsec3_recs))
+        } else if self.use_nsec3 {
+            (
+                Some(BidiMapNsec3HashProvider::new(
+                    self.algorithm,
+                    self.iterations,
+                    self.salt.clone(),
+                    apex_owner.clone(),
+                )),
+                None,
+            )
+        } else {
+            (None, None)
+        };
+
+        let mut records = if let Some(ref hashes) = nsec3_hashes {
+            let mut r = records.into_inner();
+            r.retain(|rr| {
+                let is_hashed_ownername = match rr.data() {
+                    ZoneRecordData::Nsec3(_) => true,
+                    ZoneRecordData::Rrsig(rrsig) => rrsig.type_covered() == Rtype::NSEC3,
+                    _ => false,
+                };
+
+                if is_hashed_ownername && !hashes.contains_hash(rr.owner()) {
+                    Error::write_warning(
+                        &mut env.stderr(),
+                        format!("Hashed owner name {} NOT FOUND", rr.owner()),
+                    );
+                    false
+                } else {
+                    true
+                }
+            });
+
+            SortedRecords::from(r)
+        } else {
+            records
+        };
+
+        if self.use_nsec3 {
+            let hashes = nsec3_hashes.as_ref().unwrap();
+            if self.algorithm != hashes.algorithm()
+                || self.iterations != hashes.iterations()
+                || self.salt != hashes.salt()
+            {
+                nsec3_hashes = Some(BidiMapNsec3HashProvider::new(
+                    self.algorithm,
+                    self.iterations,
+                    self.salt.clone(),
+                    apex_owner.clone(),
+                ));
+
+                precalculated_nsec3_recs = None;
+            }
+        }
+
         if !zonemd.is_empty() {
             Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
         }
 
-        // Hash the zone with NSEC or NSEC3, unless only ZONEMD is done.
-        let mut hashes = None;
+        let mut families = records.families();
+        families.skip_before(&apex);
+        let apex_family = families.next().unwrap();
 
         if matches!(
             signing_mode,
@@ -831,69 +943,77 @@ impl SignZone {
             // transition between NSEC <-> NSEC3 we will need to revisit this.
             // Note that this doesn't match on NSEC3PARAM as AFAIK LDNS didn't
             // match on that either when testing for an existing hash chain.
-            let mut families = records.families();
-            families.skip_before(&apex);
-            let apex_family = families.next().unwrap();
-            let is_nsec_hashed_already = apex_family.records().any(|rr| rr.rtype() == Rtype::NSEC);
+            let is_hashed_already = apex_family.records().find_map(|rr| match rr.rtype() {
+                Rtype::NSEC3 /*| Rtype::NSEC3PARAM*/ => Some(true),
+                Rtype::NSEC => Some(false),
+                _ => None,
+            });
 
-            if is_nsec_hashed_already && !self.use_nsec3 {
-                // Commented out debug statement because we don't (yet) have
-                // logging support. If a dependency were to be added on the
-                // `log` crate note that it wouldn't work for all logs output
-                // by the `domain` crate without first resolving
-                // https://github.com/NLnetLabs/domain/pull/465.
-                //
-                // debug!("Cowardly refusing to NSEC hash already hashed zone.");
-            } else if self.use_nsec3 {
-                let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-                let Nsec3Records {
-                    recs,
-                    param,
-                    hashes: new_hashes,
-                } = records
-                    .nsec3s::<_, BytesMut>(
-                        &apex,
-                        ttl,
-                        params,
-                        opt_out,
-                        !self.do_not_add_keys_to_zone,
-                        self.extra_comments || self.preceed_zone_with_hash_list,
-                    )
-                    .unwrap();
+            match (self.use_nsec3, is_hashed_already) {
+                (true, None) | (true, Some(false)) => {
+                    let params =
+                        Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
 
-                // Only add the NSEC3PARAM RR if none exists already. This
-                // matches original ldns-signzone behaviour.
-                //
-                // Note: If the existing NSEC3PARAM RR has different settings
-                // than the newly created NSEC3 RRs, e.g. different number of
-                // iterations or different salt, then BIND dnssec-verify will
-                // complain that there are missing NSEC3 records. This is
-                // presumably because RFC 5155 section 7.3. Secondary Servers
-                // says:
-                //
-                //   "If there are multiple NSEC3PARAM RRs present, there are
-                //    multiple valid NSEC3 chains present.  The server must
-                //    choose one of them, but may use any criteria to do so."
-                //
-                // ldns-verify-zone does NOT however complain in this case.
-                if apex_family
-                    .records()
-                    .any(|rr| rr.rtype() == Rtype::NSEC3PARAM)
-                {
-                    // See comment above about adding support for debug!().
-                    // debug!("Cowardly refusing to add NSEC3PARAM record as one already exists.");
-                } else {
-                    records.insert(Record::from_record(param)).unwrap();
+                    // TODO: `domain` should work out the correct TTL to use,
+                    // it shouldn't be left to a caller to know about the
+                    // intracies of RFC 9077 and earlier to work out the
+                    // correct TTL to use.
+                    let Nsec3Records { recs, param } = match precalculated_nsec3_recs {
+                        Some(nsec3_recs) => nsec3_recs,
+                        None => records
+                            .nsec3s::<_, BytesMut, _>(
+                                &apex,
+                                ttl,
+                                params,
+                                opt_out,
+                                !self.do_not_add_keys_to_zone,
+                                nsec3_hashes.as_mut().unwrap(),
+                            )
+                            .unwrap(),
+                    };
+
+                    // Only add the NSEC3PARAM RR if none exists already. This
+                    // matches original ldns-signzone behaviour.
+                    //
+                    // Note: If the existing NSEC3PARAM RR has different
+                    // settings than the newly created NSEC3 RRs, e.g.
+                    // different number of iterations or different salt, then
+                    // BIND dnssec-verify will complain that there are missing
+                    // NSEC3 records. This is presumably because RFC 5155
+                    // section 7.3. Secondary Servers says:
+                    //
+                    //   "If there are multiple NSEC3PARAM RRs present, there
+                    //    are multiple valid NSEC3 chains present.  The server
+                    //    must choose one of them, but may use any criteria to
+                    //    do so."
+                    //
+                    // ldns-verify-zone does NOT however complain in this
+                    // case.
+                    if apex_family
+                        .records()
+                        .any(|rr| rr.rtype() == Rtype::NSEC3PARAM)
+                    {
+                        // See comment above about adding support for
+                        // debug!().
+                        // debug!("Cowardly refusing to add NSEC3PARAM record as one already exists.");
+                    } else {
+                        records.insert(Record::from_record(param)).unwrap();
+                    }
+
+                    // Add the generated NSEC3 records.
+                    records.extend(recs.into_iter().map(Record::from_record));
                 }
 
-                // Add the generated NSEC3 records.
-                records.extend(recs.into_iter().map(Record::from_record));
+                (false, None) => {
+                    // TODO: `domain` should work out the correct TTL to use,
+                    // it shouldn't be left to a caller to know about the
+                    // intracies of RFC 9077 and earlier to work out the
+                    // correct TTL to use.
+                    let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
+                    records.extend(nsecs.into_iter().map(Record::from_record));
+                }
 
-                // Remember hash mapping data, if any.
-                hashes = new_hashes;
-            } else {
-                let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
-                records.extend(nsecs.into_iter().map(Record::from_record));
+                _ => { /* Nothing to do */ }
             }
         }
 
@@ -944,25 +1064,27 @@ impl SignZone {
         // data so it's indiividual are not the records themselves.
         let mut families;
         let family_iter: AnyFamiliesIter =
-            if self.order_nsec3_rrs_by_unhashed_owner_name && hashes.is_some() {
+            if self.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
                 families = records.families().collect::<Vec<_>>();
-                let Some(hashes) = hashes.as_ref() else {
+                let Some(hashes) = nsec3_hashes.as_ref() else {
                     unreachable!();
                 };
                 families.sort_unstable_by(|a, b| {
                     let mut hashed_count = 0;
-                    let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
-                        hashed_count += 1;
-                        unhashed_owner
-                    } else {
-                        a.owner()
-                    };
-                    let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
-                        hashed_count += 2;
-                        unhashed_owner
-                    } else {
-                        b.owner()
-                    };
+                    let unhashed_a =
+                        if let Some(unhashed_owner) = hashes.get_owner_for_hash(a.owner()) {
+                            hashed_count += 1;
+                            unhashed_owner
+                        } else {
+                            a.owner()
+                        };
+                    let unhashed_b =
+                        if let Some(unhashed_owner) = hashes.get_owner_for_hash(b.owner()) {
+                            hashed_count += 2;
+                            unhashed_owner
+                        } else {
+                            b.owner()
+                        };
 
                     match unhashed_a.cmp(unhashed_b) {
                         Ordering::Less => Ordering::Less,
@@ -989,11 +1111,11 @@ impl SignZone {
         }
 
         if self.preceed_zone_with_hash_list {
-            if let Some(hashes) = hashes.as_ref() {
+            if let Some(hashes) = nsec3_hashes.as_ref() {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes
-                    .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
-                for (hash, owner) in owner_sorted_hashes {
+                    .sort_by(|(owner_a, _), (owner_b, _)| owner_a.canonical_cmp(owner_b));
+                for (owner, hash) in owner_sorted_hashes {
                     writer.write_fmt(format_args!("; H({owner}) = {hash}\n"))?;
                 }
             }
@@ -1018,18 +1140,18 @@ impl SignZone {
         }
 
         let nsec3_cs = Nsec3CommentState {
-            hashes: hashes.as_ref(),
+            hashes: nsec3_hashes.as_ref(),
             apex: &apex,
         };
 
         for family in family_iter {
             if self.extra_comments {
-                if let Some(hashes) = hashes.as_ref() {
-                    // If this is family contains an NSEC3 RR and the number
+                if let Some(hashes) = nsec3_hashes.as_ref() {
+                    // If this family contains an NSEC3 RR and the number
                     // of RRs in the RRSET of the unhashed owner name is zero,
                     // then the NSEC3 was generated for an empty non-terminal.
                     if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
-                        if let Some(unhashed_name) = hashes.get(family.owner()) {
+                        if let Some(unhashed_name) = hashes.get_owner_for_hash(family.owner()) {
                             if !records
                                 .families()
                                 .any(|family| family.owner() == unhashed_name)
@@ -1170,7 +1292,7 @@ impl SignZone {
 
         // Push records to an unsorted vec, then sort at the end, as this is faster than
         // sorting one record at a time.
-        let mut records = Vec::<Record<_, _>>::new();
+        let mut records = vec![];
 
         for entry in reader {
             let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
@@ -1676,7 +1798,7 @@ impl Commented<()> for Dnskey<Bytes> {
 
 #[derive(Copy, Clone)]
 struct Nsec3CommentState<'a> {
-    hashes: Option<&'a HashMap<Name<Bytes>, Name<Bytes>, RandomState>>,
+    hashes: Option<&'a BidiMapNsec3HashProvider>,
     apex: &'a FamilyName<Name<Bytes>>,
 }
 
@@ -1687,34 +1809,34 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
         record: &'a Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
         state: Nsec3CommentState<'b>,
     ) -> Result<(), fmt::Error> {
-            // TODO: For ldns-signzone backward compatibilty we output
-            // "  ;{... <domain>.}" but I find the spacing ugly and
-            // would prefer for dnst to output " ; {... <domain>. }"
-            // instead.
+        // TODO: For ldns-signzone backward compatibilty we output
+        // "  ;{... <domain>.}" but I find the spacing ugly and
+        // would prefer for dnst to output " ; {... <domain>. }"
+        // instead.
 
         // For an existing NSEC3 chain that we didn't generate ourselves but
         // left intact, still output flags info, but not the from/to owner as
         // we didn't generate the hash mappings.
         writer.write_str("  ;{ flags: ")?;
 
-            if self.opt_out() {
-                writer.write_str("optout")?;
-            } else {
-                writer.write_str("-")?;
-            }
+        if self.opt_out() {
+            writer.write_str("optout")?;
+        } else {
+            writer.write_str("-")?;
+        }
 
         if let Some(hashes) = state.hashes {
             let next_owner_hash_hex = format!("{}", self.next_owner());
             let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, state.apex);
 
             let from = hashes
-                .get(record.owner())
+                .get_hash_for_owner(record.owner())
                 .map(|n| format!("{}", n.fmt_with_dot()))
                 .unwrap_or_default();
 
             let to = if let Ok(next_owner_name) = next_owner_name {
                 hashes
-                    .get(&next_owner_name)
+                    .get_hash_for_owner(&next_owner_name)
                     .map(|n| format!("{}", n.fmt_with_dot()))
                     .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
             } else {
@@ -1958,6 +2080,84 @@ impl<O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'_, O, N> {
 impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     fn rtype(&self) -> Rtype {
         Rtype::RRSIG
+    }
+}
+
+//-------------- BidiMapNsec3HashProvider ------------------------------------
+
+struct BidiMapNsec3HashProvider {
+    /// A provider of NSEC3 hashes.
+    provider: OnDemandNsec3HashProvider<Name<Bytes>, Bytes>,
+
+    /// A mapping of unhashed owner names to hashed owner names and vice
+    /// versa.
+    map: BiHashMap<Name<Bytes>, Name<Bytes>>,
+}
+
+impl BidiMapNsec3HashProvider {
+    fn new(
+        alg: Nsec3HashAlg,
+        iterations: u16,
+        salt: Nsec3Salt<Bytes>,
+        apex_owner: Name<Bytes>,
+    ) -> Self {
+        Self {
+            provider: OnDemandNsec3HashProvider::new(alg, iterations, salt, apex_owner),
+            map: BiHashMap::new(),
+        }
+    }
+}
+
+impl BidiMapNsec3HashProvider {
+    fn contains_hash(&self, hashed_owner_name: &Name<Bytes>) -> bool {
+        self.map.contains_right(hashed_owner_name)
+    }
+
+    fn get_hash_for_owner(&self, unhashed_owner_name: &Name<Bytes>) -> Option<&Name<Bytes>> {
+        self.map.get_by_left(unhashed_owner_name)
+    }
+
+    fn get_owner_for_hash(&self, hashed_owner_name: &Name<Bytes>) -> Option<&Name<Bytes>> {
+        self.map.get_by_right(hashed_owner_name)
+    }
+
+    fn algorithm(&self) -> Nsec3HashAlg {
+        self.provider.algorithm()
+    }
+
+    fn iterations(&self) -> u16 {
+        self.provider.iterations()
+    }
+
+    fn salt(&self) -> &Nsec3Salt<Bytes> {
+        self.provider.salt()
+    }
+
+    fn iter(&self) -> bimap::hash::Iter<'_, Name<Bytes>, Name<Bytes>> {
+        self.map.iter()
+    }
+}
+
+impl std::iter::Extend<(Name<Bytes>, Name<Bytes>)> for BidiMapNsec3HashProvider {
+    fn extend<T: IntoIterator<Item = (Name<Bytes>, Name<Bytes>)>>(&mut self, iter: T) {
+        self.map.extend(iter);
+    }
+}
+
+impl Nsec3HashProvider<Name<Bytes>, Bytes> for BidiMapNsec3HashProvider {
+    fn get_or_create(
+        &mut self,
+        unhashed_owner_name: &Name<Bytes>,
+    ) -> Result<Name<Bytes>, domain::validate::Nsec3HashError> {
+        match self.map.get_by_left(unhashed_owner_name) {
+            Some(hashed_name) => Ok(hashed_name.clone()),
+            None => {
+                let hashed_name = self.provider.get_or_create(unhashed_owner_name)?;
+                self.map
+                    .insert(unhashed_owner_name.clone(), hashed_name.clone());
+                Ok(hashed_name)
+            }
+        }
     }
 }
 
@@ -2639,22 +2839,22 @@ uri.arpa.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAahOTGtQI/HNtJgStghtd8Y4H26mPauZw1UFVSq
 uri.arpa.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAcd4/Jd9UZEHkAtD6IAhkgMqKnhDQR29DRAJBvfymZ2h6hvHRoEk/mLhpmlpdqJ6AWYTGeTu+03Yk4DRyxAbPmWiY3q0+ceezbGEgHzuW53llsu9PFX2zK1yqU6kCJ5V4dNYDwe+G5RoQO0/Qo5IRXzruQIowKZKVdJBi22x6APNul61g22GUk1Et9kO+Wc9g116KBR7eRzmvj/7cprd19sJGDGFCNieyeexIgXstk5u/d+dZ2DXHDn+3hp3QhYQLqbYG7s+9wIzw0Oa1jneujXzI3udkQ6khp1GeIziuI1IWQNNF7/weoHu1LzX/xPCE/aK5eTy1Avu11DTamn163M= ;{id = 42686 (ksk), size = 2048b}
 uri.arpa.\t3600\tIN\tRRSIG\tDNSKEY 8 2 3600 20210217232440 20210120232440 22772 uri.arpa. R2ecLjDnuDyoAJ8KMOhfRJzs0bp9TBWAHZ+vmOKnTMhuW6NqIp8tzO0Z3ti5nxVFqDDX7aL9IXVbYjxE2u5TCSQUYx9Qkr84rpNsvHiz0V9qZfe2/CY02Jy0D/TswLSrW5w/Ph2fdH8kAzZZSlyELadAI69qSE6GUXAW5xml9Abikd5ITX9TeK0z3VmSSpjw/nV5Piui7IRCY1ADKIBJJZJliiSB9iTglkzfTEdtsoFncfsqa/giWP3o8CCLyj9fuwg4oxkbRBoQDtZUmvNqKjXP7GfOqtZa0DNtWH7eGWk6ZJsPtVnq436XNqlbidSJjXclZoUlwGEPjf4X75fE1g==
 uri.arpa.\t3600\tIN\tRRSIG\tDNSKEY 8 2 3600 20210217232440 20210120232440 42686 uri.arpa. hZ97HPDGO8Cfpiz240wxLKvMMHkhh9tLqrXG2w9OXv/DtbovAnG7RnCRMVOjOgZIqLqgxZo3OY72Ctb1ayL7M9fpuhSypOxkZPl/tNlyH0IafcQu2BYed+N3kbHlf784Sy1YlI19VZgDZk7yrXYkuLkSTXOSOydWjDIAUVGSgj8jmL0/pJn5zVv/kTn693ubo7lxpVQhCYeeWz/m2/QMAYRIb9h7vb//EAcqKZQFv5DQvGPQ9r92jN1+0WO/883O+kgTiSXVk79KcbfiQfPVWy9RhOnFGNHEyrC8ro2lEsEz/pKlr7jaqO9jSY2j+v59G70rJHQqSJZtMNlIpAYpuA==
-uri.arpa.\t3600\tIN\tZONEMD\t2018100702 1 1 1C967869EFFD1D773B98C9C51CE8C13E87F4981A1707D47580A3614D2C56065FDBC460A9C0089AA4A54ECC3094151CB3
-uri.arpa.\t3600\tIN\tRRSIG\tZONEMD 8 2 3600 20210217232440 20210120232440 36153 uri.arpa. d9FoWxmsXfO21uhKs35PNKWSAmVsZ5fqquZYZLfgwK2O69Uk3DCORz4ZPVKEuCaohLMv5tt8ib0krbrXbbMI7cagrvF2MmfE+6vel02SCzKWifTHU/FbBL2AGcsvw8U39LcNMyViPvavqj4Z8dYqUAwB7hihQOh7rb4NOH2CsU7EGfa61drDs5nN4MLHPyYtHm6fFoQLImfPSXoY7xjtz4Oe0EImKLwbjbtjWzY8tudkZAbe1AuyhhdkcQVa/kbDr3XvKHbNA5R5e9TZr+ahMu/Eo5ojQOuCODNcPsayiWiWhnXUkB/2MQLY6ar3hVoKiwaBLkpsqBie0es3yw1nCQ==
+uri.arpa.\t3600\tIN\tZONEMD\t2018100702 1 1 BC4DFEC4593BDAE8755E04D5C4009685D5861F92681C3BABA54C102E4215938E4531966EEEC385A1EA2BED0D072122FB
+uri.arpa.\t3600\tIN\tRRSIG\tZONEMD 8 2 3600 20210217232440 20210120232440 36153 uri.arpa. M5dEgDlUPUbWM6DgdUJDfcEh22R8EYutKR8LLijoC/L56+Obt/P+1ZjPs0b1tn3gf0YR7c+210gupbt3AHN9c4MWR+YrpzsyXNnLIKzeb2P+hldEgbcXS2jIqbBPd6B24RpaNzKMurnBSHz+tLBsxsXOk19olzMWDPRYqVsCTsuQGfqTyH9KlEflQrtoDlCPMr9gVnkcgbBfQyMheOmVmA5cWYyHQPF2oyf938q11SmQrSiAuAtv2sezhHyNVZxCOdjNb+jmKJyFuyImKvsVSz+1/zR82fxzxrsEtVOhZ2oVuqWna2AizIHqoDaoGk0BXR1jE4rW2uvbMzMl4uApmQ==
 ftp.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^ftp://([^:/?#]*).*$!\\1!i" .
-ftp.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. dCe5XBXfZ7YcSJ1YanixShOmOh/yEWHcijZcDQajTheSoAYj39z/MkMv6AZlQ+Ef9Its98b5znqMoDEhFSOlu9yq8VFHHEZAo2NsYM4TDFb7vp1wUkMSAyLWWcdgtHF/xyuE0xLCxkz1WNsyNxk051MlhBNYtNKMvL9DPbOxkbf37hBtNyORlYY7CqXnfoaPoYVtyl7myIAXGIF0kd8pDsxwqs6H4sP45d4tYTi45eMgvq738jm/T+qnrwMm+m0nvQXT/aW23Z75aYdfig0n2/EW9ff4Vy80E9oglmxj0GzEFPMXFxxIo1r28B80rvx5vsZqV6bRizDXvENNjMV/iw==
+ftp.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. mPOGEz2vGEfbcqzA8vcFBNeOxNyFVFsOqUBN5foI2hnML1BLgECpU1dkoXAI2HhkdocwA76FinQgFy80/kdbWjNriZ6GBxRIuuy9HIffwSCBIJ7v6OUSyReXEQ9ky8qIIpJSYIxX0BZnMC/ChqmcZnQUeDzar7OKn7LCumGtqObtyBUabP4/Cp7MnpBcaCpsZBzpemjmlmuzkG0hv+b3m8OF1CxcR/Lt6LUK1dfA4/0r3hKdjt/H2Y5hptRUCIyd6OpkQqTy3Y0/CXsJIcDOIohrpiOkwOnS8bdzIc1bVIadkP8e4odoCuUQT5n9XEHECpJYpvMgWSs7kdbG3LLfiw==
 ftp.uri.arpa.\t3600\tIN\tNSEC\thttp.uri.arpa. NAPTR RRSIG NSEC
 ftp.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. cFeGFiIM81B7YFBd9ScDc+rjo12udBgS43mVkSCsw4nlfB7mKW60BuyQjbU2l0UbdcoRxeroXVHwLQfMOIRMKb46h30Hk+/eu4Q6NL5vC0wnwOqrRyYp9THDnL9OIZZX2yrIlGI+cbt3+lGmP/tj6qLwqxIkrOD61EVTLf4NDZS8sUxS32z/Lq6iCngOIUyQDMTMJCtNAD6f4iAJNLuPwBnpMkH7iYUvhLgEOsYE4QAC1AkTwwQWl4zU3QsTDcJ9zliZ7TUroHLBRuhajp5wZjkip6tOwIOmMInsx6KGTTt9Q9guAoVEY+ies1IYdASRjhR/3KnNUiUFMSx4QAM3iQ==
 http.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^http://([^:/?#]*).*$!\\1!i" .
-http.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. RE8YFOMhWanPC6PjA/mmiJK9Pu8j2ojVZ+/VUb16BDV/EmMlmjkBvMcD8vajuBbnAtjwX2LPZgQB6veNSMA8Kv4f350Cmh8MqnptKPcAHE8T4GKNHMGsB0h5dRPOD+pormycR0LF/evV3KWJb7ylAkRKscojlccIhJa4xvmqHhBk8N7/EZoAFkW2xL6PoDab+SXqlmbZrCQ1dWkXsFP1ljwmT0v6kyjsL9+zBamV05hiOUbLhneQcFnici5vgKagYfOI4O6vzqD09DFdaBPgd08mBdLPMfXcX4foa5andwddEryeeo3adJyeKGQ5nf9kMh86N7IVukxHWCDx6mDXEw==
+http.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. kUVuEOTyoX5oEJcO2E3hj022y++hct2yJq3ZK46bPrJnrk6EBHuCGDxEm7QoMKTsI9UJ5YYkwVAQmjfWnId55PgfgerHS+b4qoXY7ECkc2xmNOuHLLog8ewWCm2yRVAy5p9FoiIvWJsV09J4Q6T7FW6qMWJuiwi63QjJwvSbqCrK/lSjtzp+cg41VIW0H6k54ZSO6uhEYtV1gk2APySygcvtqMXOJRtkd4wX19oT5pppCx/DGTsiq955WLuGwtsUmILwj6LSnd6khuOmS+LvYxOTG/RM7e5duhZV0pBwMPhMWD35n9a6zLIFdx6ZIi0JQ5WQTQprA6DK2ADpTCpNBQ==
 http.uri.arpa.\t3600\tIN\tNSEC\tmailto.uri.arpa. NAPTR RRSIG NSEC
 http.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. f9nFsiTzR1ZkcIx7pIW4uRdF4yV8E8823F5nkKsqf8t4oD7K1A6KcqtPaL/0RqYFYeICCstpy/F0bcINgYXxLv+yXDAl8a48D5jXx/MBvurwB3bbLlkAzke5wHMiEFp2ZC917D1/cm5NXwXQusFS0uPkHQ3cUF7FK0coYd+5v0lFl/sByK/fmiBPNfMKnXzwxelCGpR28PhdDUuva+TB/GxbnH9+Z0GoLzZeQ6q023rEVR6yTJ4C7LUeFMX8R3kYK4NfS8/33nKV3SqK70MEnHpkwJClTYTbWMTHuUnTqj402OG45ApA8nXyg6xXnnnm3SjJ69zm6P0aCQCVdkQhfA==
 mailto.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "!^mailto:(.*)@(.*)$!\\2!i" .
-mailto.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. RHNtSKL+6x1k6OrTM8vIVOQgKbGv2DnKfnB1SfipMQisFbUy8avwyGDEpS64Qt1cLf7IgPatbS2eOVUBiMS9ksYszRJy6X1CFHasi+X36vSmNRWGJ18O7fCjs5qJOxOqxm0k067tnp2ompfk49H+yQL+fi83ETg+sd27rAhrRrouSRSeZcztU5IsxFGh/bpugDZI8PIuJ/v3rW9BsEXe6GmNK8uCwK0YD6v4MXd4iADgLWNAcSUapWxkwlZgmpsgy5b7g9TbUQuwGDRPNRZdoqghTcc0AMCKy9o8ehx5F5/eCsA/btojxuanE+pdAFqK9iw62DCBJbAmX4J4GunURQ==
+mailto.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. q6qLEPQQtfCdIGUJrZeHMh+4Wd9ANSMKSnUCcacpfmnyq3jjaJn47K5AYrukTP7kI30x20QlX5zyOU/MsdsgzCXgUtBUB47gGmRZwPHO9KB7Ky7D4PEcnisUl1mEeSfs7um+ujtjDwxZzn40JuEslPUL/nuNLkrZrZyhiTr4JWWDoTV2S2LJgGpbCMg5hjTWirr0LGzksxBz0BE7T9mzECEumwpZlOK/riqF2oiYrImFP42tsV/7z5y44ooCkaw3ftW1HK+lFMqooXBZ/H0Hdn/8CGi+n9U6iC49j+GDFurWMQ+Gjp9CcKMootiQ/08DaNQ1UGOz7CPWRhxJmzhlUQ==
 mailto.uri.arpa.\t3600\tIN\tNSEC\turn.uri.arpa. NAPTR RRSIG NSEC
 mailto.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. BR3Qv9BRZPcmLz3yN8JO0Q+xzx82NKks+Qx3NYTA1mFKGgrgzNCJfGFHqderL/D4YVGTsFijS8u9GIY5IvvGTtpoCQ5buh6yvdcMZsvv1gIZv32/ipVPxUBq1mAdZVQN5S/tnkKMnNhRR7oyZb8Plx8NPgdrggb5RUFCBu23barqZwdcphDFDPaKATt0MKrVqhSe3iQWhNXepje/k8AYy3A1oFPcIn2NRN9Ajx5CO6wf3uw1MvTRthAxCv+xA1wq0R6i49ByNkyIDc3YnGnOHJdPNmd1KDMkzbeI7VaeIKW+N40z0Vj1FYsnLh3BYQOkNvhtBFGHjdqxxLnIwWY8yg==
 urn.uri.arpa.\t604800\tIN\tNAPTR\t0 0 "" "" "/urn:([^:]+)/\\1/i" .
-urn.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. YsC6vReikTQ28QvnUNvudb03vL9fdLsDYwvd6JTyLmmzaQfXbIFcCE9ig3wUJ4qQC/OsS43SCftlJSDv4LsTtwwoEnO2u5gSwRK+ZVUd44OOEBFFy6QR9sVu92efyZ5C6AeaWN8ywwvBYleif6c04/iZQG21F6zJ7dCWVJAt3ixd/h0WzqtAa65GXYmgehN2kw1rsgV363iyRHIDlJlauZfmCVNkkVo5DZsOPWp53TwMjn5VIG76WV54lARaeZtkH2PYzD2O+MgRh0Stb6NdhjrRUIzVSDsj7festbvZhDNV4cm9UImIkGCIVXQKlKtvliDGQv29PdGfahpD+VpWTQ==
+urn.uri.arpa.\t604800\tIN\tRRSIG\tNAPTR 8 3 604800 20210217232440 20210120232440 36153 uri.arpa. SO2V2fKM2dd8oyXjAaC9M1eMvaUmq0O748ntBYMycajNgeCRIz6VU10QYapMZoLb5Ky/JIQAWDgHYZr2AyJ7v4wzAsoQc8UBCAVLzqf3KwpDENJ0rHmwLRROjIv2j4nFHzBqyJiMP2dTBd3odwhTqXznlaZ4JORAQyG81v10Cw4Chybl1xGo/ig/FiHlVMuWT9hiN4mwPTsLDYRzu4q2o/p6KWgdH2DyZioBfVuFPYzEw4ZhKKxpO/+/31j35LcKncqWwKRsBd1CGtbFO3yGUi+J2+2djPC0CjlKD8ka+IN3l4dkLjgPfgXOu82kXLsqEtrgbIcng+YBOZUMl9U9cg==
 urn.uri.arpa.\t3600\tIN\tNSEC\turi.arpa. NAPTR RRSIG NSEC
 urn.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 36153 uri.arpa. V597e3piSVuLUu/sqyZCcKvS9FvB44DTfwrszA0FNmBiIi3LyIaObUN91F5wQshFP8et0GetNN38EpZeuA2JzapgIS7Oby2ZPFijBPXZg+9rRIjeB6UhSkQ7hO94ZrnWsNCcuGtsryT/Fz4HXShwogeks2nSODl5cqclhGnAtdiAnBVve4oMzZMTBJWxOb3wTq9kF7PmWnBDdDAZ0T1x9aJW7XKiJj4fSDvHpeWWQKv5lBbCkIRri3DF5lBeC/0qZC4H7/TTVP2HLI7oTAgRU7c7eE62tidtE0VC0EYV3HLZoOmw8lg7U9ZophqhJy5OjtiV8BGnopP3wZwmpYlLaw==
 "###.replace("\\t", "\t");
@@ -2987,6 +3187,7 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
+    #[ignore = "TODO"]
     fn glue_records_should_not_be_hashed_or_signed() {
         // So there should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at
         // glue owner names.
@@ -2994,13 +3195,31 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
+    #[ignore = "TODO"]
     fn next_owner_hash_in_nsec3_rdata_should_be_lowercase_in_ldns_mode() {
         // For compatibility with LDNS, so when invoked as LDNS, but for speed maybe not when invoked as DNST.
         todo!()
     }
 
     #[test]
+    #[ignore = "TODO"]
     fn nsec3param_should_appear_once_per_nsec3_chain() {
+        todo!()
+    }
+
+    #[test]
+    #[ignore = "TODO"]
+    fn use_correct_ttl_for_added_dnskeys() {
+        // E.g. RFC 1033 says use same TTL as the RRSET or SOA minimum by
+        // default.
+        todo!()
+    }
+
+    #[test]
+    #[ignore = "TODO"]
+    fn rfc_9077_nsec_ttls_are_applied() {
+        // AFAICT this is already done, but it would be good to show
+        // explicitly that we do it.
         todo!()
     }
 
