@@ -2757,6 +2757,71 @@ urn.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 3615
     }
 
     #[test]
+    fn rfc_8976_zonemd_the_root_servers_dot_net_zone() {
+        let expected_zone = r###"root-servers.net.\t3600000\tIN\tSOA\ta.root-servers.net. nstld.verisign-grs.com. 2018091100 14400 7200 1209600 3600000
+root-servers.net.\t3600000\tIN\tNS\ta.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tb.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tc.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\td.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\te.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tf.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tg.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\th.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\ti.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tj.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tk.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tl.root-servers.net.
+root-servers.net.\t3600000\tIN\tNS\tm.root-servers.net.
+root-servers.net.\t3600000\tIN\tZONEMD\t2018091100 1 1 F1CA0CCD91BD5573D9F431C00EE0101B2545C97602BE0A978A3B11DBFC1C776D5B3E86AE3D973D6B5349BA7F04340F79
+a.root-servers.net.\t3600000\tIN\tA\t198.41.0.4
+a.root-servers.net.\t3600000\tIN\tAAAA\t2001:503:ba3e::2:30
+b.root-servers.net.\t3600000\tIN\tA\t199.9.14.201
+b.root-servers.net.\t3600000\tIN\tMX\t20 mail.isi.edu.
+b.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:200::b
+c.root-servers.net.\t3600000\tIN\tA\t192.33.4.12
+c.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:2::c
+d.root-servers.net.\t3600000\tIN\tA\t199.7.91.13
+d.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:2d::d
+e.root-servers.net.\t3600000\tIN\tA\t192.203.230.10
+e.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:a8::e
+f.root-servers.net.\t3600000\tIN\tA\t192.5.5.241
+f.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:2f::f
+g.root-servers.net.\t3600000\tIN\tA\t192.112.36.4
+g.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:12::d0d
+h.root-servers.net.\t3600000\tIN\tA\t198.97.190.53
+h.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:1::53
+i.root-servers.net.\t3600000\tIN\tA\t192.36.148.17
+i.root-servers.net.\t3600000\tIN\tMX\t10 mx.i.root-servers.org.
+i.root-servers.net.\t3600000\tIN\tAAAA\t2001:7fe::53
+j.root-servers.net.\t3600000\tIN\tA\t192.58.128.30
+j.root-servers.net.\t3600000\tIN\tAAAA\t2001:503:c27::2:30
+k.root-servers.net.\t3600000\tIN\tA\t193.0.14.129
+k.root-servers.net.\t3600000\tIN\tAAAA\t2001:7fd::1
+l.root-servers.net.\t3600000\tIN\tA\t199.7.83.42
+l.root-servers.net.\t3600000\tIN\tAAAA\t2001:500:9f::42
+m.root-servers.net.\t3600000\tIN\tA\t202.12.27.33
+m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/root-servers.net.rfc8976");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oroot-servers.net",
+            "-f-",
+            "-z1:1",
+            "-Z",
+            &zone_file_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
     /// Test NSEC3 optout behaviour with signing
     fn ldns_nsec3_optout() {
         // TODO: maybe make these strings a regex match of some kind for better flexibility with
