@@ -146,12 +146,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bimap"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "230c5f1ca6a325a32553f8640d31ac9b49f2411e901e427570154868b46da4f7"
-
-[[package]]
 name = "bitflags"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,7 +332,6 @@ checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 name = "dnst"
 version = "0.1.0"
 dependencies = [
- "bimap",
  "bytes",
  "chrono",
  "clap",
@@ -360,7 +353,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#ea56b58d46f722606fe076ee1871697c9c431fd9"
+source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#e0cd6870179f859bcbf47173d1faf7753aa78e72"
 dependencies = [
  "arc-swap",
  "bytes",

@@ -28,14 +28,13 @@ use core::ops::Add;
 use core::str::FromStr;
 
 use std::cmp::min;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Display};
 use std::fs::File;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
-use bimap::BiHashMap;
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
@@ -638,7 +637,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let records = self.load_zone(&env.in_cwd(&self.zonefile_path), signing_mode)?;
+        let records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -838,182 +837,74 @@ impl SignZone {
         // we don't know what the apex is until we find the SOA, and checking
         // DNSKEYs and loading key files is quick so we do that first. Then
         // once we get here we have the ordered zone, we know the apex, and we
-        // can find the NSEC3PARAM RR.
-        let (mut nsec3_hashes, mut precalculated_nsec3_recs) = if let Some(nsec3param) = apex_family
-            .records()
-            .find(|rr| rr.rtype() == Rtype::NSEC3PARAM)
-        {
-            let ZoneRecordData::Nsec3param(params) = nsec3param.data() else {
-                unreachable!()
-            };
-
-            let mut nsec3_hashes = BidiMapNsec3HashProvider::new(
-                params.hash_algorithm(),
-                params.iterations(),
-                params.salt().clone(),
-                apex_owner.clone(),
-            );
-
-            // TODO: `domain` should work out the correct TTL to use, it
-            // shouldn't be left to a caller to know about the intracies of
-            // RFC 9077 and earlier to work out the correct TTL to use.
-            let nsec3_recs = records
-                .nsec3s::<_, BytesMut, _>(
-                    &apex,
-                    ttl,
-                    params.clone(),
-                    opt_out,
-                    !self.do_not_add_keys_to_zone,
-                    &mut nsec3_hashes,
-                )
-                .unwrap();
-
-            (Some(nsec3_hashes), Some(nsec3_recs))
-        } else if self.use_nsec3 {
-            (
-                Some(BidiMapNsec3HashProvider::new(
-                    self.algorithm,
-                    self.iterations,
-                    self.salt.clone(),
-                    apex_owner.clone(),
-                )),
-                None,
-            )
-        } else {
-            (None, None)
-        };
-
-        let mut records = if let Some(ref hashes) = nsec3_hashes {
-            let mut r = records.into_inner();
-            r.retain(|rr| {
-                let is_hashed_ownername = match rr.data() {
-                    ZoneRecordData::Nsec3(_) => true,
-                    ZoneRecordData::Rrsig(rrsig) => rrsig.type_covered() == Rtype::NSEC3,
-                    _ => false,
-                };
-
-                if is_hashed_ownername && !hashes.contains_hash(rr.owner()) {
-                    Error::write_warning(
-                        &mut env.stderr(),
-                        format!("Hashed owner name {} NOT FOUND", rr.owner()),
-                    );
-                    false
-                } else {
-                    true
-                }
-            });
-
-            SortedRecords::from(r)
-        } else {
-            records
-        };
-
-        if self.use_nsec3 {
-            let hashes = nsec3_hashes.as_ref().unwrap();
-            if self.algorithm != hashes.algorithm()
-                || self.iterations != hashes.iterations()
-                || self.salt != hashes.salt()
-            {
-                nsec3_hashes = Some(BidiMapNsec3HashProvider::new(
-                    self.algorithm,
-                    self.iterations,
-                    self.salt.clone(),
-                    apex_owner.clone(),
-                ));
-
-                precalculated_nsec3_recs = None;
-            }
-        }
+        // can find the NSEC3PARAM RR. Then we can generate NSEC3 hashes for
+        // owner names.
+        //
+        // However, WE DON'T DO THIS as it was (a) discovered that
+        // ldns-signzone is too simplistic in its approach as it would wrongly
+        // conclude that NSEC3 hashes for empty non-terminals lack a matching
+        // owner name in the zone because it only determined ENTs _after_
+        // ignoring and warning about hashed owner names that don't correspond
+        // to an unhashed owner name in the zone, and (b) that it would be
+        // better for ldns-signzone to strip out NSEC(3)s on loading anyway as
+        // it should only operate on unsigned zone input.
 
         if !zonemd.is_empty() {
             Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
         }
 
+        let mut nsec3_hashes = None;
         let mut families = records.families();
         families.skip_before(&apex);
-        let apex_family = families.next().unwrap();
 
         if matches!(
             signing_mode,
             SigningMode::HashOnly | SigningMode::HashAndSign
         ) {
             // LDNS doesn't add NSECs to a zone that already has NSECs or
-            // NSEC3s so we don't either. It *does* add NSEC3 if the zone has
-            // NSECs. Assuming that we want to later be able to support
-            // transition between NSEC <-> NSEC3 we will need to revisit this.
-            // Note that this doesn't match on NSEC3PARAM as AFAIK LDNS didn't
-            // match on that either when testing for an existing hash chain.
-            let is_hashed_already = apex_family.records().find_map(|rr| match rr.rtype() {
-                Rtype::NSEC3 /*| Rtype::NSEC3PARAM*/ => Some(true),
-                Rtype::NSEC => Some(false),
-                _ => None,
-            });
+            // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
+            // load_zone() we instead, as LDNS should, strip NSEC(3)s on load
+            // and thus always add NSEC(3)s when hashing.
+            //
+            // Note: Assuming that we want to later be able to support
+            // transition between NSEC <-> NSEC3 we will need to be able to
+            // sign with more than one hashing configuration at once.
+            if self.use_nsec3 {
+                let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
 
-            match (self.use_nsec3, is_hashed_already) {
-                (true, None) | (true, Some(false)) => {
-                    let params =
-                        Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+                // TODO: `domain` should work out the correct TTL to use,
+                // it shouldn't be left to a caller to know about the
+                // intracies of RFC 9077 and earlier to work out the
+                // correct TTL to use.
+                nsec3_hashes = Some(CapturingNsec3HashProvider::new(
+                    self.algorithm,
+                    self.iterations,
+                    self.salt.clone(),
+                    apex_owner.clone(),
+                ));
 
-                    // TODO: `domain` should work out the correct TTL to use,
-                    // it shouldn't be left to a caller to know about the
-                    // intracies of RFC 9077 and earlier to work out the
-                    // correct TTL to use.
-                    let Nsec3Records { recs, param } = match precalculated_nsec3_recs {
-                        Some(nsec3_recs) => nsec3_recs,
-                        None => records
-                            .nsec3s::<_, BytesMut, _>(
-                                &apex,
-                                ttl,
-                                params,
-                                opt_out,
-                                !self.do_not_add_keys_to_zone,
-                                nsec3_hashes.as_mut().unwrap(),
-                            )
-                            .unwrap(),
-                    };
+                let Nsec3Records { recs, param } = records
+                    .nsec3s::<_, BytesMut, _>(
+                        &apex,
+                        ttl,
+                        params,
+                        opt_out,
+                        !self.do_not_add_keys_to_zone,
+                        nsec3_hashes.as_mut().unwrap(),
+                    )
+                    .map_err(|err| format!("NSEC3 hashing error: {err}"))?;
 
-                    // Only add the NSEC3PARAM RR if none exists already. This
-                    // matches original ldns-signzone behaviour.
-                    //
-                    // Note: If the existing NSEC3PARAM RR has different
-                    // settings than the newly created NSEC3 RRs, e.g.
-                    // different number of iterations or different salt, then
-                    // BIND dnssec-verify will complain that there are missing
-                    // NSEC3 records. This is presumably because RFC 5155
-                    // section 7.3. Secondary Servers says:
-                    //
-                    //   "If there are multiple NSEC3PARAM RRs present, there
-                    //    are multiple valid NSEC3 chains present.  The server
-                    //    must choose one of them, but may use any criteria to
-                    //    do so."
-                    //
-                    // ldns-verify-zone does NOT however complain in this
-                    // case.
-                    if apex_family
-                        .records()
-                        .any(|rr| rr.rtype() == Rtype::NSEC3PARAM)
-                    {
-                        // See comment above about adding support for
-                        // debug!().
-                        // debug!("Cowardly refusing to add NSEC3PARAM record as one already exists.");
-                    } else {
-                        records.insert(Record::from_record(param)).unwrap();
-                    }
+                records.insert(Record::from_record(param)).unwrap();
 
-                    // Add the generated NSEC3 records.
-                    records.extend(recs.into_iter().map(Record::from_record));
-                }
-
-                (false, None) => {
-                    // TODO: `domain` should work out the correct TTL to use,
-                    // it shouldn't be left to a caller to know about the
-                    // intracies of RFC 9077 and earlier to work out the
-                    // correct TTL to use.
-                    let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
-                    records.extend(nsecs.into_iter().map(Record::from_record));
-                }
-
-                _ => { /* Nothing to do */ }
+                // Add the generated NSEC3 records.
+                records.extend(recs.into_iter().map(Record::from_record));
+            } else {
+                // TODO: `domain` should work out the correct TTL to use,
+                // it shouldn't be left to a caller to know about the
+                // intracies of RFC 9077 and earlier to work out the
+                // correct TTL to use.
+                let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
+                records.extend(nsecs.into_iter().map(Record::from_record));
             }
         }
 
@@ -1071,20 +962,18 @@ impl SignZone {
                 };
                 families.sort_unstable_by(|a, b| {
                     let mut hashed_count = 0;
-                    let unhashed_a =
-                        if let Some(unhashed_owner) = hashes.get_owner_for_hash(a.owner()) {
-                            hashed_count += 1;
-                            unhashed_owner
-                        } else {
-                            a.owner()
-                        };
-                    let unhashed_b =
-                        if let Some(unhashed_owner) = hashes.get_owner_for_hash(b.owner()) {
-                            hashed_count += 2;
-                            unhashed_owner
-                        } else {
-                            b.owner()
-                        };
+                    let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
+                        hashed_count += 1;
+                        unhashed_owner
+                    } else {
+                        a.owner()
+                    };
+                    let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
+                        hashed_count += 2;
+                        unhashed_owner
+                    } else {
+                        b.owner()
+                    };
 
                     match unhashed_a.cmp(unhashed_b) {
                         Ordering::Less => Ordering::Less,
@@ -1114,8 +1003,8 @@ impl SignZone {
             if let Some(hashes) = nsec3_hashes.as_ref() {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes
-                    .sort_by(|(owner_a, _), (owner_b, _)| owner_a.canonical_cmp(owner_b));
-                for (owner, hash) in owner_sorted_hashes {
+                    .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
+                for (hash, owner) in owner_sorted_hashes {
                     writer.write_fmt(format_args!("; H({owner}) = {hash}\n"))?;
                 }
             }
@@ -1151,7 +1040,7 @@ impl SignZone {
                     // of RRs in the RRSET of the unhashed owner name is zero,
                     // then the NSEC3 was generated for an empty non-terminal.
                     if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
-                        if let Some(unhashed_name) = hashes.get_owner_for_hash(family.owner()) {
+                        if let Some(unhashed_name) = hashes.get(family.owner()) {
                             if !records
                                 .families()
                                 .any(|family| family.owner() == unhashed_name)
@@ -1269,7 +1158,6 @@ impl SignZone {
     fn load_zone(
         &self,
         zonefile_path: &Path,
-        signing_mode: SigningMode,
     ) -> Result<SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
@@ -1300,10 +1188,22 @@ impl SignZone {
                 Entry::Record(record) => {
                     let record: StoredRecord = record.flatten_into();
 
-                    // If signing, strip existing RRSIGs, as the original
-                    // ldns-signzone does.
+                    // Strip existing RRSIGs, as the original ldns-signzone
+                    // does. Also strip NSEC(3)s as the original ldns-signzone
+                    // should do instead of its current behaviour of (a)
+                    // trying (imperfectly) to warn about hashed owner names
+                    // for which a corresponding unhashed owner name is
+                    // missing, and (b) hashing only if not already hashed.
+                    //
+                    // TODO: Create an issue for the original ldns-signzone or
+                    // release a fixed version of ldns-signzone that strips
+                    // NSEC(3)s.
+                    //
                     // TODO: Support partial and re-signing.
-                    if signing_mode != SigningMode::HashAndSign || record.rtype() != Rtype::RRSIG {
+                    if !matches!(
+                        record.rtype(),
+                        Rtype::RRSIG | Rtype::NSEC | Rtype::NSEC3 | Rtype::NSEC3PARAM
+                    ) {
                         records.push(record);
                     }
                 }
@@ -1798,7 +1698,7 @@ impl Commented<()> for Dnskey<Bytes> {
 
 #[derive(Copy, Clone)]
 struct Nsec3CommentState<'a> {
-    hashes: Option<&'a BidiMapNsec3HashProvider>,
+    hashes: Option<&'a CapturingNsec3HashProvider>,
     apex: &'a FamilyName<Name<Bytes>>,
 }
 
@@ -1830,13 +1730,13 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
             let next_owner_name = next_owner_hash_to_name(&next_owner_hash_hex, state.apex);
 
             let from = hashes
-                .get_hash_for_owner(record.owner())
+                .get(record.owner())
                 .map(|n| format!("{}", n.fmt_with_dot()))
                 .unwrap_or_default();
 
             let to = if let Ok(next_owner_name) = next_owner_name {
                 hashes
-                    .get_hash_for_owner(&next_owner_name)
+                    .get(&next_owner_name)
                     .map(|n| format!("{}", n.fmt_with_dot()))
                     .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
             } else {
@@ -2083,18 +1983,17 @@ impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     }
 }
 
-//-------------- BidiMapNsec3HashProvider ------------------------------------
+//-------------- CapturingNsec3HashProvider ----------------------------------
 
-struct BidiMapNsec3HashProvider {
+struct CapturingNsec3HashProvider {
     /// A provider of NSEC3 hashes.
     provider: OnDemandNsec3HashProvider<Name<Bytes>, Bytes>,
 
-    /// A mapping of unhashed owner names to hashed owner names and vice
-    /// versa.
-    map: BiHashMap<Name<Bytes>, Name<Bytes>>,
+    /// A record of hashed owner names to unhashed owner names.
+    hashes_by_unhashed_owner: HashMap<Name<Bytes>, Name<Bytes>>,
 }
 
-impl BidiMapNsec3HashProvider {
+impl CapturingNsec3HashProvider {
     fn new(
         alg: Nsec3HashAlg,
         iterations: u16,
@@ -2103,61 +2002,30 @@ impl BidiMapNsec3HashProvider {
     ) -> Self {
         Self {
             provider: OnDemandNsec3HashProvider::new(alg, iterations, salt, apex_owner),
-            map: BiHashMap::new(),
+            hashes_by_unhashed_owner: HashMap::new(),
         }
     }
 }
 
-impl BidiMapNsec3HashProvider {
-    fn contains_hash(&self, hashed_owner_name: &Name<Bytes>) -> bool {
-        self.map.contains_right(hashed_owner_name)
-    }
+impl std::ops::Deref for CapturingNsec3HashProvider {
+    type Target = HashMap<Name<Bytes>, Name<Bytes>>;
 
-    fn get_hash_for_owner(&self, unhashed_owner_name: &Name<Bytes>) -> Option<&Name<Bytes>> {
-        self.map.get_by_left(unhashed_owner_name)
-    }
-
-    fn get_owner_for_hash(&self, hashed_owner_name: &Name<Bytes>) -> Option<&Name<Bytes>> {
-        self.map.get_by_right(hashed_owner_name)
-    }
-
-    fn algorithm(&self) -> Nsec3HashAlg {
-        self.provider.algorithm()
-    }
-
-    fn iterations(&self) -> u16 {
-        self.provider.iterations()
-    }
-
-    fn salt(&self) -> &Nsec3Salt<Bytes> {
-        self.provider.salt()
-    }
-
-    fn iter(&self) -> bimap::hash::Iter<'_, Name<Bytes>, Name<Bytes>> {
-        self.map.iter()
+    fn deref(&self) -> &Self::Target {
+        &self.hashes_by_unhashed_owner
     }
 }
 
-impl std::iter::Extend<(Name<Bytes>, Name<Bytes>)> for BidiMapNsec3HashProvider {
-    fn extend<T: IntoIterator<Item = (Name<Bytes>, Name<Bytes>)>>(&mut self, iter: T) {
-        self.map.extend(iter);
-    }
-}
-
-impl Nsec3HashProvider<Name<Bytes>, Bytes> for BidiMapNsec3HashProvider {
+impl Nsec3HashProvider<Name<Bytes>, Bytes> for CapturingNsec3HashProvider {
     fn get_or_create(
         &mut self,
         unhashed_owner_name: &Name<Bytes>,
     ) -> Result<Name<Bytes>, domain::validate::Nsec3HashError> {
-        match self.map.get_by_left(unhashed_owner_name) {
-            Some(hashed_name) => Ok(hashed_name.clone()),
-            None => {
-                let hashed_name = self.provider.get_or_create(unhashed_owner_name)?;
-                self.map
-                    .insert(unhashed_owner_name.clone(), hashed_name.clone());
-                Ok(hashed_name)
-            }
-        }
+        let hashed_owner_name = self.provider.get_or_create(unhashed_owner_name)?;
+        let _ = self
+            .hashes_by_unhashed_owner
+            .entry(hashed_owner_name.clone())
+            .or_insert(unhashed_owner_name.clone());
+        Ok(hashed_owner_name)
     }
 }
 
