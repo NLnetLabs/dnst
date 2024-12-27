@@ -3099,6 +3099,16 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         todo!()
     }
 
+    #[test]
+    #[ignore = "TODO"]
+    fn nsec3_signed_input_file_should_be_resigned_with_nsec() {
+        // Note that our behaviour differs to that of original LDNS as the
+        // original will leave behind the NSEC3PARAM record if one is present
+        // in the input zone, while we strip all NSEC(3) and NSEC3PARAM
+        // records out on loading of the zone.
+        todo!()
+    }
+
     // ------------ Helper functions -----------------------------------------
 
     fn create_file_with_content(dir: &TempDir, filename: &str, content: &[u8]) {
