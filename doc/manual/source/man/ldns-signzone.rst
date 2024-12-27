@@ -157,9 +157,9 @@ settings used.
 
       Set the number of extra hash iterations. Defaults to 0.
 
-      Note: The default value differs to that of LDNS which has a default of
-      1. The default is now zero in accordance with RFC 9276 "Guidance for
-      NSEC3 Parameter Settings".
+      Note: The default value differs to that of the original LDNS which has a
+      default of 1. The new default value is in accordance with RFC 9276
+      "Guidance for NSEC3 Parameter Settings".
 
 .. option:: -s <STRING>
 
