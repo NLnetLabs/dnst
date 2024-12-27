@@ -23,6 +23,9 @@ Arguments
 
       The zonefile to sign.
 
+      Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
+      RRSIG resource records will be skipped when loading the zonefile.
+
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.
