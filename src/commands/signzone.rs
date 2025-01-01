@@ -2110,6 +2110,8 @@ mod test {
             .unwrap_err();
     }
 
+    // TODO: This test is fragile as the inception and expiration timestamp
+    // comparison can fail in CI if off by one second.
     #[test]
     fn dnst_parse_successes() {
         let cmd = FakeCmd::new(["dnst", "signzone"]);
