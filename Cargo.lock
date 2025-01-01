@@ -353,7 +353,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#e0cd6870179f859bcbf47173d1faf7753aa78e72"
+source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#880f3349bc45128e856a076097bfe4049ce5683c"
 dependencies = [
  "arc-swap",
  "bytes",

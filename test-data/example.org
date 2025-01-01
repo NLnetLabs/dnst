@@ -1,0 +1,19 @@
+; The provenance of this zone is unknown, it is assumed to be hand crafted as
+; example.org is an RFC 2606 reserved second level domain.
+;
+; This example includes various kinds of record that are useful for testing
+; DNSSEC corner cases, including occluded and glue RRs, and insecure and secure
+; delegations.
+example.org.                          240 IN SOA  example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
+example.org.                          240 IN NS   example.net.
+example.org.                          240 IN A    128.140.76.106
+insecure-deleg.example.org.           240 IN NS   example.com.
+occluded.insecure-deleg.example.org.  240 IN A    1.2.3.4
+secure-deleg.example.org.             240 IN NS   example.com.
+secure-deleg.example.org.             240 IN DS   3120 15 2 0675d8c4a90ecd25492e4c4c6583afcef7c3b910b7a39162803058e6e7393a19
+secure-deleg.example.org.             240 IN NS   secure-deleg.example.org.
+secure-deleg.example.org.             240 IN A    1.1.1.1
+secure-deleg.example.org.             240 IN AAAA ::1
+insecure-deleg.example.org.           240 IN NS   insecure-deleg.example.org.
+insecure-deleg.example.org.           240 IN A    1.1.1.1
+insecure-deleg.example.org.           240 IN AAAA ::1

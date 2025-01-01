@@ -49,7 +49,7 @@ use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
 use domain::sign::common::{FromBytesError, KeyPair};
 use domain::sign::records::{
-    DefaultSigningKeyUsageStrategy, DnssecSigningKey, Family, FamilyName, IntendedKeyPurpose,
+    DefaultSigningKeyUsageStrategy, DesignatedSigningKey, DnssecSigningKey, Family, FamilyName,
     Nsec3HashProvider, Nsec3OptOut, Nsec3Records, OnDemandNsec3HashProvider, RecordsIter, Signer,
     SigningKeyUsageStrategy, SortedRecords,
 };
@@ -704,7 +704,7 @@ impl SignZone {
                     //     public_key.key_tag(),
                     //     private_key_path.display()
                     // );
-                    signing_keys.push(DnssecSigningKey::inferred(signing_key));
+                    signing_keys.push(DnssecSigningKey::from(signing_key));
                     continue 'next_key_path;
                 }
             }
@@ -739,7 +739,7 @@ impl SignZone {
                 })?;
 
             // Store the created signing key.
-            signing_keys.push(DnssecSigningKey::inferred(signing_key));
+            signing_keys.push(DnssecSigningKey::from(signing_key));
 
             // TODO: Log
             // println!(
@@ -801,6 +801,11 @@ impl SignZone {
         signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
         out_file: PathBuf,
     ) -> Result<(), Error> {
+        let signing_keys = signing_keys
+            .iter()
+            .map(|k| k.as_designated_signing_key())
+            .collect::<Vec<_>>();
+
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
@@ -914,7 +919,7 @@ impl SignZone {
                 .sign(
                     &apex,
                     records.families(),
-                    signing_keys,
+                    &signing_keys,
                     !self.do_not_add_keys_to_zone,
                 )
                 .map_err(|_| "Signing failed")?;
@@ -938,7 +943,7 @@ impl SignZone {
             }
 
             if signing_mode == SigningMode::HashAndSign {
-                Self::update_zonemd_rrsig(&signer, &mut records, &apex, signing_keys, zonemd_rrs);
+                Self::update_zonemd_rrsig(&signer, &mut records, &apex, &signing_keys, zonemd_rrs);
             }
         }
 
@@ -1578,7 +1583,7 @@ impl SignZone {
             MultiThreadedSorter,
         >,
         apex: &FamilyName<Name<Bytes>>,
-        keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
         zonemd_rrs: Vec<Record<StoredName, StoredRecordData>>,
     ) where
         KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
@@ -1824,7 +1829,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
     const NAME: &'static str = "Fallback to ZSKs/KSKs if the other is empty";
 
     fn select_signing_keys_for_rtype(
-        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
@@ -1874,7 +1879,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     const NAME: &'static str = "All keys (KSK and ZSK)";
 
     fn select_signing_keys_for_rtype(
-        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
@@ -1904,7 +1909,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK)";
 
     fn select_signing_keys_for_rtype(
-        candidate_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
@@ -1914,13 +1919,8 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, k)| {
-                        let new_alg = seen_algs.insert(k.key().algorithm());
-                        match k.purpose() {
-                            IntendedKeyPurpose::KSK | IntendedKeyPurpose::CSK => true,
-                            IntendedKeyPurpose::ZSK => new_alg,
-                            _ => false,
-                        }
-                        .then_some(i)
+                        let new_alg = seen_algs.insert(k.algorithm());
+                        (k.signs_keys() || (k.signs_zone_data() && new_alg)).then_some(i)
                     })
                     .collect::<HashSet<_>>()
             }
