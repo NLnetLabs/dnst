@@ -888,7 +888,7 @@ impl SignZone {
                     apex_owner.clone(),
                 ));
 
-                let Nsec3Records { recs, param } = records
+                let Nsec3Records { recs, mut param } = records
                     .nsec3s::<_, BytesMut, _>(
                         &apex,
                         ttl,
@@ -898,6 +898,16 @@ impl SignZone {
                         nsec3_hashes.as_mut().unwrap(),
                     )
                     .map_err(|err| format!("NSEC3 hashing error: {err}"))?;
+
+                if self.invoked_as_ldns {
+                    // Force the NSEC3PARAM TTL to be 3600 to match the
+                    // behaviour of the original ldns-signzone.
+                    param.set_ttl(Ttl::from_secs(3600));
+                } else {
+                    // Force the NSEC3PARAM TTL to be 0 in common with the
+                    // default behaviour of BIND and OpenDNSSEC.
+                    param.set_ttl(Ttl::from_secs(0));
+                }
 
                 records.insert(Record::from_record(param)).unwrap();
 
@@ -2830,8 +2840,8 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
 
         // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
-            example.org.\t240\tIN\tRRSIG\tNSEC3PARAM 15 2 240 20241127162422 20241127162422 38873 example.org. dOrhLIWhrQm2OunlTWrSsELkx1kKYo4jTkF5pEwrvZxjhUI9DBKdkloaVsTKcdrmffidC5pE9GoY9ckaoHpGCA==\n\
-            example.org.\t240\tIN\tNSEC3PARAM\t1 0 1 -\n\
+            example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. DBke1xrDb7cdNvjJChJEdtVGfr+9Xdo6ozbXgYmkPHienXyJnlw2/YFu/XfVsMfg0wd/5JR2SGfQsu5qekNtAQ==\n\
+            example.org.\t3600\tIN\tNSEC3PARAM\t1 0 1 -\n\
             93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. z4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
             93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1 1 1 - K71KU6AICR5JPDJOE9J7CDNLK6D5C3UE A NS SOA RRSIG DNSKEY NSEC3PARAM\n\
             k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. HUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
@@ -2997,8 +3007,8 @@ example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20150420235959 20051021000000 38353 examp
 example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
 example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
-example.\t3600\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
-example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. jb9Dw0kO4hEMpxqo1veI6HmYQGMo3bbahItqjBwLuQ4y1eKQEhGok/Ar6VPrXpPNDQgLnPQafmA6ziI3WoMLtA+vfT7wzLx0UK3ZGqcWPQp00MGNwYQfJ/QezIJteHtVDWBwXWj2xR3f/eUxJAxhPzgj4kOPHMnYMYF4o2ZVsD0=
+example.\t0\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
+example.\t0\tIN\tRRSIG\tNSEC3PARAM 8 1 0 20150420235959 20051021000000 38353 example. a8JAUWUfssvV/jTXx/+A38hpHpmsetcFLvwyMBJ/0izNuERjKvYeK120eKoSR4KqOz6r0yvASPDJOxm6jAwJRQ43rX9dUthIJfZ+wcGRNKkPFIWpzxW9ylFlgYx4T0DSxLubioqNSmGiy1iBF0YnmWtRFlQWbAO4iwlZANpfg4Y=
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
