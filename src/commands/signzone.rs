@@ -3130,11 +3130,120 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
-    #[ignore = "TODO"]
-    fn glue_records_should_not_be_hashed_or_signed() {
-        // So there should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at
-        // glue owner names.
-        todo!()
+    fn glue_records_should_not_be_nsec_hashed_or_signed() {
+        // There should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at glue
+        // owner names.
+        let expected_zone = r###"example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
+example.org.\t240\tIN\tRRSIG\tSOA 8 2 240 20040409183619 20040509183619 28954 example.org. dQWXDP5U+n5pv4OSoPBvWAPF9HFzHYTjtXpVeEsOVfOdIoO3b5U9ffYhpJmlHezgMhOXqSanivOOQ/HPObrjUYgACNdBNiIjIyGKK+1wp9Kzyi6OxiyEfsEB2F7sk8Pq5i2sAh8ZYKEbqF1SWw7vZ8/WIRCbCMmSOGVnT/YDXnU=
+example.org.\t240\tIN\tA\t128.140.76.106
+example.org.\t240\tIN\tRRSIG\tA 8 2 240 20040409183619 20040509183619 28954 example.org. ZKSwsh+dlh7McTnmll6zYMcFkaRS2bJtS5ytyzjYqW2NZD/4bJ7jsZ865klKOAl0tY+EOskRxUnqlfKOK9KXYGYMc6v37dUIpn8VCr0rHwRp8og0S6on0F7WG2D5kCMPs8ZwBWP3s8a1F6iw3FUeBgNE4RvcnakEpIrpL0kwhBQ=
+example.org.\t240\tIN\tNS\texample.net.
+example.org.\t240\tIN\tRRSIG\tNS 8 2 240 20040409183619 20040509183619 28954 example.org. r64YR2AoUdTGAbNXrvvAViJgY4WEQ2rJzWxR1pSGkk15vmkDRYg65hQumfh6RjSQGIF2irInUDXiPlZLQ2+6d5nmcdQ5zIv5k/NFmCG555VlD3GSkITRRukwpgoGTxT0Yjqpc7wYnLpwDZdVtotbCcHEPRGPELtIRdQq0vqMxws=
+example.org.\t240\tIN\tNSEC\tinsecure-deleg.example.org. A NS SOA RRSIG NSEC DNSKEY
+example.org.\t240\tIN\tRRSIG\tNSEC 8 2 240 20040409183619 20040509183619 28954 example.org. DjuPys3NzrwzIZ627jaJf5XkUJHg9o2bX/jGlcZUiucOIFDjyfVuXZNRYSRdn0Q2ZPp0pElUDICRYO+0Ys/1XfsPFZwd+hkMmQG3PhvedrZn1pEleW5Ry/LVJv+uYuFCmOXpelDq86eep+nmF2TM0oVEX1tu0o86QaU76jdtNT4=
+example.org.\t240\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t240\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t240\tIN\tRRSIG\tDNSKEY 8 2 240 20040409183619 20040509183619 51331 example.org. QXdRi2qXC/fQqMqKCHPVR6n8X5SaBlDcjXBQJY/aNIgHCrMGM88nZYQEs14/ZABQyiuotw6cAev842RrO+wA15PKSneP/wQstNVBwf/0RWSK4iNxmEyV7imWTzFpG/ZkO4zOUzJaEZ2xPAgmUW/T3qLgQJw3kpa9CHHwbmpmuc4=
+insecure-deleg.example.org.\t240\tIN\tA\t1.1.1.1
+insecure-deleg.example.org.\t240\tIN\tNS\texample.com.
+insecure-deleg.example.org.\t240\tIN\tNS\tinsecure-deleg.example.org.
+insecure-deleg.example.org.\t240\tIN\tAAAA\t::1
+insecure-deleg.example.org.\t240\tIN\tNSEC\tsecure-deleg.example.org. NS RRSIG NSEC
+insecure-deleg.example.org.\t240\tIN\tRRSIG\tNSEC 8 3 240 20040409183619 20040509183619 28954 example.org. DZYddEb9JQdb81C64bX+Ki9upOrXncyF0uzBSbCUmw8vhREDaax3HvkJFGpG+fjRPS1+kQ98zOnoDsloWhFAAD8Y6KiE94oFb4oUOtVGTxa0evXlcUUJuJbJdnQnC4+FjM2DecfEz0c5YtJ++9zNVI+ialw6iAgYC5c+SR2/mjQ=
+occluded.insecure-deleg.example.org.\t240\tIN\tA\t1.2.3.4
+secure-deleg.example.org.\t240\tIN\tA\t1.1.1.1
+secure-deleg.example.org.\t240\tIN\tNS\texample.com.
+secure-deleg.example.org.\t240\tIN\tNS\tsecure-deleg.example.org.
+secure-deleg.example.org.\t240\tIN\tAAAA\t::1
+secure-deleg.example.org.\t240\tIN\tDS\t3120 15 2 0675D8C4A90ECD25492E4C4C6583AFCEF7C3B910B7A39162803058E6E7393A19
+secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20040409183619 20040509183619 28954 example.org. TbYM7IyxYsRkXV01I2qEt2SlPUSyGnVQgrConRf+LWD2sxSbplmDghnU/e3LP6PTvJTYj/VZtnaNLoJs8oFvvbOeOoEZN+U3PL/uHA7pDLbq322dw/p7AabFE8dptYMp/0IRwU7oZMvpJbJxEGZ77d5zsQue1BTM6GoUes+n5e4=
+secure-deleg.example.org.\t240\tIN\tNSEC\texample.org. NS DS RRSIG NSEC
+secure-deleg.example.org.\t240\tIN\tRRSIG\tNSEC 8 3 240 20040409183619 20040509183619 28954 example.org. f1T6on1ycfWoJJohV+g3VbT6FVAvccChFDP/LsXc8phyhA7NMov6TGQwMhinejJj35mIb2tvXEwHoUQPvlDSClNRPWG6MGf9tkwwsc/hw+snc1kkDuQYyqzwE+J/ANbKW2Vb4ZVeC/2f4goNJ1y6ZtQLAQATB4/R8l5AfUK3OOc=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20040409183619",
+            "-i",
+            "20040509183619",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn glue_records_should_not_be_nsec3_hashed_or_signed() {
+        // There should not be NSEC, NSEC3 or RRSIG RRs for A/AAAA RRs at glue
+        // owner names.
+        let expected_zone = r###"example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
+example.org.\t240\tIN\tRRSIG\tSOA 8 2 240 20240101010101 20240101010101 28954 example.org. YaNm4bn+Yeee1QHQiZwfqgF+NNHNcdo9Ro+RdDSUhfqxo4QaGDN7vMnSeVWQClN8L8GnT/dE1uOJiuYRRRiB9GvoCNyik8V2kRQsz0E8OBZxMMyR7iirFJFQYFg61RsnXDglgblHX8DyltL3TWV1ynyEMDeDVrlatLkguZDG3/Y=
+example.org.\t240\tIN\tA\t128.140.76.106
+example.org.\t240\tIN\tRRSIG\tA 8 2 240 20240101010101 20240101010101 28954 example.org. Nc33Gu7E46O6+3/VjGySyu4c3X+E7gyrD9xDvfy2T0WY/z4Hgh7ia9adToN5IA6antpJqdaYW3qBrBZ1aEb8c0wfZygkD//PJCRKwZxDNrwCTOc4AK37xk6WH72Acs/0w20zhk8PUuCxCerVAdNpr0FRgIpiOq9nD1RjEtbsd6g=
+example.org.\t240\tIN\tNS\texample.net.
+example.org.\t240\tIN\tRRSIG\tNS 8 2 240 20240101010101 20240101010101 28954 example.org. KBYtRlPhYxUDphfbF0HqBQThGcu1BZN4n2Gl5Hhxiyc6qtZHLoXi1lehgQuS1ucgPD2UpBokRjboQQKIpGBLR0et2BZz5WCzIBLdlBnPuHTxK5HPMjLHtxYpfQ3tje2IktqTFkIgY+RdMTEyVzUFhW2QqzbCxYZravV+qqK9+oE=
+example.org.\t240\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t240\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t240\tIN\tRRSIG\tDNSKEY 8 2 240 20240101010101 20240101010101 51331 example.org. ZJ64iFFKl4qhbwegRyTOsBW62RYImbPydKe1MhU2gIvXEki2ahO3Bf7VknfP3yQo1BKY/ZTmqN0OxQvEU+B5PZ77hoh9zO6ZMjjromzaD0+nD89v0zXL4OyP5kXNnwiCfWb15YJkPKpECYgfWRiV+fXetjxUByRFjaRVbbADCUI=
+example.org.\t0\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t0\tIN\tRRSIG\tNSEC3PARAM 8 2 0 20240101010101 20240101010101 28954 example.org. anSBpcp+us2IBOLQHZCS1RgQkYppLMCljpsxVlbsumxu1hGLcrEzZ1U57MFSO2faCx00I7YHTLJGqCKZs6O90Bke8jLvwiwisfNtKcEVWI4HkYe0/75T2YI984woSPCymIhmkVFDltW/c+4uvL+byZyuJreStWgd3CDuv1cSy7Q=
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tNSEC3\t1 0 0 - 91IALF4LB2F492UF8G331EVVRT8HQU5T A NS SOA RRSIG DNSKEY NSEC3PARAM
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. NHrEoRMICyRylbO+QiTKClmKD/UDRarJELSm+GlJgtkGE7FOv7xGtymmvmACQ1Fbc6lUA1eluHBS34c82P44TAUuNHcx4J8/X6YfkIzneDIaU+xaCDIxVc1Kw3JaCdPHrKRi+YsVDts65Eqj2fIEP5Rd2FPhAY+MUu0yWmupgOs=
+91ialf4lb2f492uf8g331evvrt8hqu5t.example.org.\t240\tIN\tNSEC3\t1 0 0 - R35JQEBBC97RPOGPEPDIFHMBSJV6ISND NS DS RRSIG
+91ialf4lb2f492uf8g331evvrt8hqu5t.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. dy4IMBFtMjOjciQqUD4Ocydq1F0bUdQcUv/Qv7BPrOAv3jc3a5get/D9Z67fGKQT+to2Ew9oF1DZnM34oP5FzXlRaa6EiKf0YyO8sJbZ0yfl2UBNS2YZJVKTHSPo++mDgbpN/SoPMgFpYdCs+37iNjaK+6bXso2sZojhWkVx2zE=
+insecure-deleg.example.org.\t240\tIN\tA\t1.1.1.1
+insecure-deleg.example.org.\t240\tIN\tNS\texample.com.
+insecure-deleg.example.org.\t240\tIN\tNS\tinsecure-deleg.example.org.
+insecure-deleg.example.org.\t240\tIN\tAAAA\t::1
+occluded.insecure-deleg.example.org.\t240\tIN\tA\t1.2.3.4
+r35jqebbc97rpogpepdifhmbsjv6isnd.example.org.\t240\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J NS
+r35jqebbc97rpogpepdifhmbsjv6isnd.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. uMPMCti8Yn3jbUI8/XzJKWZ4DcTxTS6HNTCO/MgpfXV9AmxidI21fQr6SL9MTP5heFV71sNC5B0fVQwunroTZQNvB+/j3C4xVb0KmzG/ZwR5jxQANPyfb0YzYV+1hXmpVyJgqsr2SoFcQ1jrKvlKDCHqhDP0ocTnvH2lGAzkyOk=
+secure-deleg.example.org.\t240\tIN\tA\t1.1.1.1
+secure-deleg.example.org.\t240\tIN\tNS\texample.com.
+secure-deleg.example.org.\t240\tIN\tNS\tsecure-deleg.example.org.
+secure-deleg.example.org.\t240\tIN\tAAAA\t::1
+secure-deleg.example.org.\t240\tIN\tDS\t3120 15 2 0675D8C4A90ECD25492E4C4C6583AFCEF7C3B910B7A39162803058E6E7393A19
+secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010101 28954 example.org. FWhpg9GySyXsu//5l2jcnzIEx6e7pBnn1IqIR/oAUvosSKefOo41o7T+F0WUOOkcAa4VB7UvfRFp9fMdqzyRHMFqLeTjopBFg8qfE+lUaOxhOOp+AckGhWl1GLBX/A3nt+EKZJ75rYikEs6CYdX8co3Xn0/S9Z1CwEkzUtKK/fU=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            "-n",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
     }
 
     #[test]
