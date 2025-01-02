@@ -107,7 +107,7 @@ pub struct SignZone {
     #[arg(
         short = 'e',
         value_name = "date",
-        default_value_t = Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+        default_value_t = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
     )]
@@ -126,7 +126,7 @@ pub struct SignZone {
     #[arg(
         short = 'i',
         value_name = "date",
-        default_value_t = Timestamp::now(),
+        default_value_t = TestableTimestamp::now(),
         hide_default_value = true,
         value_parser = ValueParser::new(SignZone::parse_timestamp),
     )]
@@ -338,9 +338,9 @@ impl LdnsCommand for SignZone {
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut extra_comments = false;
         let mut do_not_add_keys_to_zone = false;
-        let mut expiration = Timestamp::now().into_int().add(FOUR_WEEKS).into();
+        let mut expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
         let mut out_file = Option::<PathBuf>::None;
-        let mut inception = Timestamp::now();
+        let mut inception = TestableTimestamp::now();
         let mut origin = Option::<Name<Bytes>>::None;
         let mut set_soa_serial_to_epoch_time = false;
         let mut zonemd = Vec::new();
@@ -2039,6 +2039,29 @@ impl Nsec3HashProvider<Name<Bytes>, Bytes> for CapturingNsec3HashProvider {
     }
 }
 
+//------------ TestableTimestamp ---------------------------------------------
+
+struct TestableTimestamp;
+
+impl TestableTimestamp {
+    fn now() -> Timestamp {
+        if cfg!(test) {
+            // Don't use Timestamp::now() because that will use the actual
+            // SystemTime::now() even in tests which, if there are any
+            // unexpected delays as can happen in a CI environment, can cause
+            // two nearby calls to Timestamp::now() to return a different
+            // number of seconds since the epoch which will thus fail to
+            // compare as equal in a test. Ironically the underlying Timestamp
+            // implementation supports mocking of time, but the test flag is
+            // not set by Cargo for dependencies, only for our own code, so we
+            // have to manually construct a predictable Timestamp ourselves.
+            Timestamp::from(0)
+        } else {
+            Timestamp::now()
+        }
+    }
+}
+
 //------------ Tests ---------------------------------------------------------
 
 // TODO: Maybe resolve the Timestamp issue differently? When running the tests
@@ -2064,7 +2087,7 @@ mod test {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use crate::commands::signzone::{ZonemdTuple, FOUR_WEEKS};
+    use crate::commands::signzone::{TestableTimestamp, ZonemdTuple, FOUR_WEEKS};
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
 
@@ -2110,18 +2133,19 @@ mod test {
             .unwrap_err();
     }
 
-    // TODO: This test is fragile as the inception and expiration timestamp
-    // comparison can fail in CI if off by one second.
     #[test]
     fn dnst_parse_successes() {
         let cmd = FakeCmd::new(["dnst", "signzone"]);
 
+        let expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
+        let inception = TestableTimestamp::now();
+
         let base = SignZone {
             extra_comments: false,
             do_not_add_keys_to_zone: false,
-            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+            expiration,
             out_file: None,
-            inception: Timestamp::now(),
+            inception,
             origin: None,
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
@@ -2160,8 +2184,8 @@ mod test {
                 no_require_keys_match_apex: true,
                 order_rrsigs_after_the_rtype_they_cover: true,
                 order_nsec3_rrs_by_unhashed_owner_name: true,
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2170,8 +2194,8 @@ mod test {
             SignZone {
                 hash_only: true,
                 key_paths: Vec::new(),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2181,8 +2205,8 @@ mod test {
             parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2190,8 +2214,8 @@ mod test {
             parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2199,8 +2223,8 @@ mod test {
             parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2220,8 +2244,8 @@ mod test {
                 use_nsec3: true,
                 salt: Nsec3Salt::from_str("BABABA").unwrap(),
                 iterations: 15,
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2248,8 +2272,8 @@ mod test {
             parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2257,8 +2281,8 @@ mod test {
             parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2268,8 +2292,8 @@ mod test {
             parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
             SignZone {
                 origin: Some(Name::from_str("origin.test.").unwrap()),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2304,12 +2328,15 @@ mod test {
     fn ldns_parse_successes() {
         let cmd = FakeCmd::new(["ldns-signzone"]);
 
+        let expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
+        let inception = TestableTimestamp::now();
+
         let base = SignZone {
             extra_comments: false,
             do_not_add_keys_to_zone: false,
-            expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
+            expiration,
             out_file: None,
-            inception: Timestamp::now(),
+            inception,
             origin: None,
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
@@ -2347,8 +2374,8 @@ mod test {
                 nsec3_opt_out_flags_only: true,
                 order_rrsigs_after_the_rtype_they_cover: true,
                 order_nsec3_rrs_by_unhashed_owner_name: true,
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2358,8 +2385,8 @@ mod test {
             parse(cmd.args(["-Z", "example.org.zone", "anykey"])),
             SignZone {
                 allow_zonemd_without_signing: true,
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2367,8 +2394,8 @@ mod test {
             parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2376,8 +2403,8 @@ mod test {
             parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2385,8 +2412,8 @@ mod test {
             parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA512)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2394,8 +2421,8 @@ mod test {
             parse(cmd.args(["-z", "1", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlg::SHA384)]),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2415,8 +2442,8 @@ mod test {
                 use_nsec3: true,
                 salt: Nsec3Salt::from_str("BABABA").unwrap(),
                 iterations: 15,
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2443,8 +2470,8 @@ mod test {
             parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2452,8 +2479,8 @@ mod test {
             parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
@@ -2463,8 +2490,8 @@ mod test {
             parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
             SignZone {
                 origin: Some(Name::from_str("origin.test.").unwrap()),
-                expiration: Timestamp::now().into_int().add(FOUR_WEEKS).into(),
-                inception: Timestamp::now(),
+                expiration,
+                inception,
                 ..base.clone()
             }
         );
