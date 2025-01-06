@@ -35,7 +35,7 @@ use std::fs::File;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
@@ -895,7 +895,7 @@ impl SignZone {
         };
 
         records
-            .sign_zone::<_, _, _, _, BytesMut>(&mut signing_config, &signing_keys)
+            .sign_zone(&mut signing_config, &signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
