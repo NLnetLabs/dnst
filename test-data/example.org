@@ -4,8 +4,9 @@
 ; This example includes various kinds of record that are useful for testing
 ; DNSSEC corner cases, including occluded and glue RRs, and insecure and secure
 ; delegations.
-example.org.                          240 IN SOA  example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
-example.org.                          240 IN NS   example.net.
+example.org.                          239 IN SOA  example.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+$TTL 1000
+example.org.                              IN NS   example.net.
 example.org.                          240 IN A    128.140.76.106
 insecure-deleg.example.org.           240 IN NS   example.com.
 occluded.insecure-deleg.example.org.  240 IN A    1.2.3.4
