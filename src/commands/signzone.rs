@@ -54,11 +54,10 @@ use domain::sign::hashing::nsec3::{
 };
 use domain::sign::keys::keymeta::{DesignatedSigningKey, DnssecSigningKey};
 use domain::sign::keys::keypair::{FromBytesError, KeyPair};
-use domain::sign::records::{Family, FamilyName, RecordsIter, SortedRecords};
+use domain::sign::records::{Family, FamilyName, RecordsIter, Rrset, SortedRecords};
 use domain::sign::signing::config::SigningConfig;
-use domain::sign::signing::rrsigs::generate_rrsigs;
 use domain::sign::signing::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
-use domain::sign::signing::traits::SignableZoneInPlace;
+use domain::sign::signing::traits::{Signable, SignableZoneInPlace};
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::utils::base64;
 use domain::validate::Key;
@@ -895,7 +894,7 @@ impl SignZone {
         };
 
         records
-            .sign::<_, _, _, _, BytesMut>(&mut signing_config, &signing_keys)
+            .sign_zone::<_, _, _, _, BytesMut>(&mut signing_config, &signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
@@ -915,10 +914,9 @@ impl SignZone {
             }
 
             if signing_mode == SigningMode::HashAndSign {
-                Self::update_zonemd_rrsig(
+                Self::update_zonemd_rrsig::<KeyStrat>(
                     &apex,
                     &mut records,
-                    &mut signing_config,
                     &signing_keys,
                     &zonemd_rrs,
                 )
@@ -1566,31 +1564,18 @@ impl SignZone {
     fn update_zonemd_rrsig<KeyStrat>(
         apex: &FamilyName<StoredName>,
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-        signing_config: &mut SigningConfig<
-            Name<Bytes>,
-            Bytes,
-            KeyPair,
-            KeyStrat,
-            MultiThreadedSorter,
-            CapturingNsec3HashProvider,
-        >,
         keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
-        zonemd_rrset: &[Record<StoredName, StoredRecordData>],
+        zonemd_rrs: &[Record<StoredName, StoredRecordData>],
     ) -> Result<(), SigningError>
     where
         KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
     {
-        if !zonemd_rrset.is_empty() {
-            let families = RecordsIter::new(zonemd_rrset);
-            let new_rrsig = generate_rrsigs::<_, _, _, KeyStrat, MultiThreadedSorter>(
-                apex,
-                families,
-                keys,
-                signing_config.add_used_dnskeys,
-            )?
-            .pop()
-            .unwrap();
-            records.update_data(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex.owner() && rrsig.type_covered() == Rtype::ZONEMD), new_rrsig.into_data());
+        if !zonemd_rrs.is_empty() {
+            let zonemd_rrset = Rrset::new(zonemd_rrs);
+            let new_rrsig = zonemd_rrset.sign::<KeyStrat>(apex, keys)?.pop().unwrap();
+            records.update_data(|rr| {
+                matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex.owner() && rrsig.type_covered() == Rtype::ZONEMD)
+            }, new_rrsig.into_data());
         }
 
         Ok(())
