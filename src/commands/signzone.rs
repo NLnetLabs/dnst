@@ -47,12 +47,18 @@ use domain::base::{
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
-use domain::sign::common::{FromBytesError, KeyPair};
-use domain::sign::records::{
-    DefaultSigningKeyUsageStrategy, DesignatedSigningKey, DnssecSigningKey, Family, FamilyName,
-    Nsec3HashProvider, Nsec3OptOut, Nsec3Records, OnDemandNsec3HashProvider, RecordsIter, Signer,
-    SigningKeyUsageStrategy, SortedRecords,
+use domain::sign::error::SigningError;
+use domain::sign::hashing::config::HashingConfig;
+use domain::sign::hashing::nsec3::{
+    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
 };
+use domain::sign::keys::keymeta::{DesignatedSigningKey, DnssecSigningKey};
+use domain::sign::keys::keypair::{FromBytesError, KeyPair};
+use domain::sign::records::{Family, FamilyName, RecordsIter, SortedRecords};
+use domain::sign::signing::config::SigningConfig;
+use domain::sign::signing::rrsigs::generate_rrsigs;
+use domain::sign::signing::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
+use domain::sign::signing::traits::SignableZoneInPlace;
 use domain::sign::{SecretKeyBytes, SigningKey};
 use domain::utils::base64;
 use domain::validate::Key;
@@ -751,10 +757,8 @@ impl SignZone {
         }
 
         if self.sign_dnskeys_with_all_keys {
-            let signer = Signer::<Bytes, KeyPair, AllKeyStrat, MultiThreadedSorter>::new();
-            self.go_further(
+            self.go_further::<AllKeyStrat>(
                 env,
-                signer,
                 records,
                 signing_mode,
                 opt_out,
@@ -762,10 +766,8 @@ impl SignZone {
                 out_file,
             )
         } else if self.sign_with_every_unique_algorithm {
-            let signer = Signer::<Bytes, KeyPair, AllUniqStrat, MultiThreadedSorter>::new();
-            self.go_further(
+            self.go_further::<AllUniqStrat>(
                 env,
-                signer,
                 records,
                 signing_mode,
                 opt_out,
@@ -773,10 +775,8 @@ impl SignZone {
                 out_file,
             )
         } else {
-            let signer = Signer::<Bytes, KeyPair, FallbackStrat, MultiThreadedSorter>::new();
-            self.go_further(
+            self.go_further::<FallbackStrat>(
                 env,
-                signer,
                 records,
                 signing_mode,
                 opt_out,
@@ -787,10 +787,9 @@ impl SignZone {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn go_further<Strat: SigningKeyUsageStrategy<Bytes, KeyPair>>(
+    fn go_further<KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>>(
         &self,
         env: impl Env,
-        signer: Signer<Bytes, KeyPair, Strat, MultiThreadedSorter>,
         mut records: SortedRecords<
             Name<Bytes>,
             ZoneRecordData<Bytes, Name<Bytes>>,
@@ -825,12 +824,6 @@ impl SignZone {
         // Find the apex.
         let (apex, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
-        let mut families = records.families();
-        families.skip_before(&apex);
-        let apex_family = families.next().unwrap();
-        let apex_family_name = apex_family.family_name();
-        let apex_owner = Clone::clone(*apex_family_name.owner());
-
         // The original ldns-signzone filters out (with warnings) NSEC3 RRs,
         // or RRSIG RRs covering NSEC3 RRs, where the hashed owner name
         // doesn't correspond to an unhashed owner name in the zone. To work
@@ -858,83 +851,52 @@ impl SignZone {
             Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
         }
 
-        let mut nsec3_hashes = None;
-        let mut families = records.families();
-        families.skip_before(&apex);
-
-        if matches!(
-            signing_mode,
-            SigningMode::HashOnly | SigningMode::HashAndSign
-        ) {
-            // LDNS doesn't add NSECs to a zone that already has NSECs or
-            // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
-            // load_zone() we instead, as LDNS should, strip NSEC(3)s on load
-            // and thus always add NSEC(3)s when hashing.
-            //
-            // Note: Assuming that we want to later be able to support
-            // transition between NSEC <-> NSEC3 we will need to be able to
-            // sign with more than one hashing configuration at once.
-            if self.use_nsec3 {
-                let params = Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-
-                // TODO: `domain` should work out the correct TTL to use,
-                // it shouldn't be left to a caller to know about the
-                // intracies of RFC 9077 and earlier to work out the
-                // correct TTL to use.
-                nsec3_hashes = Some(CapturingNsec3HashProvider::new(
-                    self.algorithm,
-                    self.iterations,
-                    self.salt.clone(),
-                    apex_owner.clone(),
-                ));
-
-                let Nsec3Records { recs, mut param } = records
-                    .nsec3s::<_, BytesMut, _>(
-                        &apex,
-                        ttl,
-                        params,
-                        opt_out,
+        let mut signing_config: SigningConfig<
+            Name<Bytes>,
+            Bytes,
+            KeyPair,
+            KeyStrat,
+            MultiThreadedSorter,
+            CapturingNsec3HashProvider,
+        > = match signing_mode {
+            SigningMode::HashOnly | SigningMode::HashAndSign => {
+                // LDNS doesn't add NSECs to a zone that already has NSECs or
+                // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
+                // load_zone() we instead, as LDNS should, strip NSEC(3)s on load
+                // and thus always add NSEC(3)s when hashing.
+                //
+                // Note: Assuming that we want to later be able to support
+                // transition between NSEC <-> NSEC3 we will need to be able to
+                // sign with more than one hashing configuration at once.
+                if self.use_nsec3 {
+                    let hash_provider = CapturingNsec3HashProvider::new(
+                        self.algorithm,
+                        self.iterations,
+                        self.salt.clone(),
+                    );
+                    let params =
+                        Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+                    let mut nsec3_config = Nsec3Config::new(params, opt_out, hash_provider);
+                    if self.invoked_as_ldns {
+                        nsec3_config = nsec3_config.with_ttl_mode(Nsec3ParamTtlMode::ldns_like());
+                    }
+                    SigningConfig::new(
+                        HashingConfig::Nsec3(nsec3_config, vec![]),
                         !self.do_not_add_keys_to_zone,
-                        nsec3_hashes.as_mut().unwrap(),
                     )
-                    .map_err(|err| format!("NSEC3 hashing error: {err}"))?;
-
-                if self.invoked_as_ldns {
-                    // Force the NSEC3PARAM TTL to be 3600 to match the
-                    // behaviour of the original ldns-signzone.
-                    param.set_ttl(Ttl::from_secs(3600));
                 } else {
-                    // Force the NSEC3PARAM TTL to be 0 in common with the
-                    // default behaviour of BIND and OpenDNSSEC.
-                    param.set_ttl(Ttl::from_secs(0));
+                    SigningConfig::new(HashingConfig::Nsec, !self.do_not_add_keys_to_zone)
                 }
-
-                records.insert(Record::from_record(param)).unwrap();
-
-                // Add the generated NSEC3 records.
-                records.extend(recs.into_iter().map(Record::from_record));
-            } else {
-                // TODO: `domain` should work out the correct TTL to use,
-                // it shouldn't be left to a caller to know about the
-                // intracies of RFC 9077 and earlier to work out the
-                // correct TTL to use.
-                let nsecs = records.nsecs::<Bytes>(&apex, ttl, !self.do_not_add_keys_to_zone);
-                records.extend(nsecs.into_iter().map(Record::from_record));
             }
-        }
 
-        // Sign the zone unless disabled.
-        if signing_mode == SigningMode::HashAndSign {
-            let extra_records = signer
-                .sign(
-                    &apex,
-                    records.families(),
-                    &signing_keys,
-                    !self.do_not_add_keys_to_zone,
-                )
-                .map_err(|_| "Signing failed")?;
-            records.extend(extra_records.into_iter().map(Record::from_record));
-        }
+            SigningMode::None => {
+                SigningConfig::new(HashingConfig::Prehashed, !self.do_not_add_keys_to_zone)
+            }
+        };
+
+        records
+            .sign::<_, _, _, _, BytesMut>(&mut signing_config, &signing_keys)
+            .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
@@ -953,9 +915,24 @@ impl SignZone {
             }
 
             if signing_mode == SigningMode::HashAndSign {
-                Self::update_zonemd_rrsig(&signer, &mut records, &apex, &signing_keys, zonemd_rrs);
+                Self::update_zonemd_rrsig(
+                    &apex,
+                    &mut records,
+                    &mut signing_config,
+                    &signing_keys,
+                    &zonemd_rrs,
+                )
+                .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
         }
+
+        let nsec3_hashes = match signing_config.hashing {
+            HashingConfig::Prehashed => None,
+            HashingConfig::Nsec => None,
+            HashingConfig::Nsec3(nsec3_config, _) => Some(nsec3_config.hash_provider),
+            HashingConfig::TransitioningNsecToNsec3(..) => todo!(),
+            HashingConfig::TransitioningNsec3ToNsec(..) => todo!(),
+        };
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
         // compatibility with ldns-signzone, re-order them to be in canonical
@@ -1015,7 +992,7 @@ impl SignZone {
         }
 
         if self.preceed_zone_with_hash_list {
-            if let Some(hashes) = nsec3_hashes.as_ref() {
+            if let Some(hashes) = &nsec3_hashes {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes
                     .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
@@ -1290,7 +1267,7 @@ impl SignZone {
             old_soa.serial().add(1)
         };
 
-        let new_soa = Soa::new(
+        let new_soa = ZoneRecordData::Soa(Soa::new(
             old_soa.mname().clone(),
             old_soa.rname().clone(),
             new_serial,
@@ -1298,8 +1275,9 @@ impl SignZone {
             old_soa.retry(),
             old_soa.expire(),
             old_soa.minimum(),
-        );
-        records.replace_soa(new_soa);
+        ));
+
+        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
 
         Ok(())
     }
@@ -1586,31 +1564,36 @@ impl SignZone {
     }
 
     fn update_zonemd_rrsig<KeyStrat>(
-        signer: &Signer<Bytes, KeyPair, KeyStrat, MultiThreadedSorter>,
-        records: &mut SortedRecords<
+        apex: &FamilyName<StoredName>,
+        records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
+        signing_config: &mut SigningConfig<
             Name<Bytes>,
-            ZoneRecordData<Bytes, Name<Bytes>>,
+            Bytes,
+            KeyPair,
+            KeyStrat,
             MultiThreadedSorter,
+            CapturingNsec3HashProvider,
         >,
-        apex: &FamilyName<Name<Bytes>>,
         keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
-        zonemd_rrs: Vec<Record<StoredName, StoredRecordData>>,
-    ) where
+        zonemd_rrset: &[Record<StoredName, StoredRecordData>],
+    ) -> Result<(), SigningError>
+    where
         KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
     {
-        // Sign only ZONEMD RRs
-        let zonemd_rrs: SortedRecords<StoredName, StoredRecordData> =
-            SortedRecords::from(zonemd_rrs);
-        let mut zonemd_rrsig = signer
-            .sign(apex, zonemd_rrs.families(), keys, false)
+        if !zonemd_rrset.is_empty() {
+            let families = RecordsIter::new(zonemd_rrset);
+            let new_rrsig = generate_rrsigs::<_, _, _, KeyStrat, MultiThreadedSorter>(
+                apex,
+                families,
+                keys,
+                signing_config.add_used_dnskeys,
+            )?
+            .pop()
             .unwrap();
-
-        // Replace original ZONEMD RRSIG with newly generated one
-        if let Some(rrsig) = zonemd_rrsig.pop() {
-            if let ZoneRecordData::Rrsig(rrsig) = rrsig.data() {
-                records.replace_rrsig_for_apex_zonemd(rrsig.clone(), apex);
-            }
+            records.update_data(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex.owner() && rrsig.type_covered() == Rtype::ZONEMD), new_rrsig.into_data());
         }
+
+        Ok(())
     }
 }
 
@@ -1997,21 +1980,16 @@ impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
 
 struct CapturingNsec3HashProvider {
     /// A provider of NSEC3 hashes.
-    provider: OnDemandNsec3HashProvider<Name<Bytes>, Bytes>,
+    provider: OnDemandNsec3HashProvider<Bytes>,
 
     /// A record of hashed owner names to unhashed owner names.
     hashes_by_unhashed_owner: HashMap<Name<Bytes>, Name<Bytes>>,
 }
 
 impl CapturingNsec3HashProvider {
-    fn new(
-        alg: Nsec3HashAlg,
-        iterations: u16,
-        salt: Nsec3Salt<Bytes>,
-        apex_owner: Name<Bytes>,
-    ) -> Self {
+    fn new(alg: Nsec3HashAlg, iterations: u16, salt: Nsec3Salt<Bytes>) -> Self {
         Self {
-            provider: OnDemandNsec3HashProvider::new(alg, iterations, salt, apex_owner),
+            provider: OnDemandNsec3HashProvider::new(alg, iterations, salt),
             hashes_by_unhashed_owner: HashMap::new(),
         }
     }
@@ -2028,9 +2006,12 @@ impl std::ops::Deref for CapturingNsec3HashProvider {
 impl Nsec3HashProvider<Name<Bytes>, Bytes> for CapturingNsec3HashProvider {
     fn get_or_create(
         &mut self,
+        apex_owner: &Name<Bytes>,
         unhashed_owner_name: &Name<Bytes>,
     ) -> Result<Name<Bytes>, domain::validate::Nsec3HashError> {
-        let hashed_owner_name = self.provider.get_or_create(unhashed_owner_name)?;
+        let hashed_owner_name = self
+            .provider
+            .get_or_create(apex_owner, unhashed_owner_name)?;
         let _ = self
             .hashes_by_unhashed_owner
             .entry(hashed_owner_name.clone())
@@ -3036,8 +3017,8 @@ example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20150420235959 20051021000000 38353 examp
 example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
 example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
-example.\t0\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
-example.\t0\tIN\tRRSIG\tNSEC3PARAM 8 1 0 20150420235959 20051021000000 38353 example. a8JAUWUfssvV/jTXx/+A38hpHpmsetcFLvwyMBJ/0izNuERjKvYeK120eKoSR4KqOz6r0yvASPDJOxm6jAwJRQ43rX9dUthIJfZ+wcGRNKkPFIWpzxW9ylFlgYx4T0DSxLubioqNSmGiy1iBF0YnmWtRFlQWbAO4iwlZANpfg4Y=
+example.\t3600\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
+example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. jb9Dw0kO4hEMpxqo1veI6HmYQGMo3bbahItqjBwLuQ4y1eKQEhGok/Ar6VPrXpPNDQgLnPQafmA6ziI3WoMLtA+vfT7wzLx0UK3ZGqcWPQp00MGNwYQfJ/QezIJteHtVDWBwXWj2xR3f/eUxJAxhPzgj4kOPHMnYMYF4o2ZVsD0=
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
@@ -3228,8 +3209,8 @@ example.org.\t240\tIN\tRRSIG\tNS 8 2 240 20240101010101 20240101010101 28954 exa
 example.org.\t240\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
 example.org.\t240\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
 example.org.\t240\tIN\tRRSIG\tDNSKEY 8 2 240 20240101010101 20240101010101 51331 example.org. ZJ64iFFKl4qhbwegRyTOsBW62RYImbPydKe1MhU2gIvXEki2ahO3Bf7VknfP3yQo1BKY/ZTmqN0OxQvEU+B5PZ77hoh9zO6ZMjjromzaD0+nD89v0zXL4OyP5kXNnwiCfWb15YJkPKpECYgfWRiV+fXetjxUByRFjaRVbbADCUI=
-example.org.\t0\tIN\tNSEC3PARAM\t1 0 0 -
-example.org.\t0\tIN\tRRSIG\tNSEC3PARAM 8 2 0 20240101010101 20240101010101 28954 example.org. anSBpcp+us2IBOLQHZCS1RgQkYppLMCljpsxVlbsumxu1hGLcrEzZ1U57MFSO2faCx00I7YHTLJGqCKZs6O90Bke8jLvwiwisfNtKcEVWI4HkYe0/75T2YI984woSPCymIhmkVFDltW/c+4uvL+byZyuJreStWgd3CDuv1cSy7Q=
+example.org.\t240\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t240\tIN\tRRSIG\tNSEC3PARAM 8 2 240 20240101010101 20240101010101 28954 example.org. LZ138ablhNW6CPWS8YRveDrhLKR+ykZIgr/GlI+7T+waP+E0o8apTao/cKwhzkimuDh847CodPK1pSA+YwJwcqVv+GSk7pyO8qVpBhZ0xzVCTbrMCGnCXQeR5br9inRD012EOYKsQ7hyK10qL2Wgtl20rbbGyGHEL4eXB1/0GE8=
 8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tNSEC3\t1 0 0 - 91IALF4LB2F492UF8G331EVVRT8HQU5T A NS SOA RRSIG DNSKEY NSEC3PARAM
 8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. NHrEoRMICyRylbO+QiTKClmKD/UDRarJELSm+GlJgtkGE7FOv7xGtymmvmACQ1Fbc6lUA1eluHBS34c82P44TAUuNHcx4J8/X6YfkIzneDIaU+xaCDIxVc1Kw3JaCdPHrKRi+YsVDts65Eqj2fIEP5Rd2FPhAY+MUu0yWmupgOs=
 91ialf4lb2f492uf8g331evvrt8hqu5t.example.org.\t240\tIN\tNSEC3\t1 0 0 - R35JQEBBC97RPOGPEPDIFHMBSJV6ISND NS DS RRSIG

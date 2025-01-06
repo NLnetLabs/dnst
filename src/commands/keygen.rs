@@ -7,7 +7,8 @@ use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::{common, GenerateParams};
+use domain::sign::keys::keypair;
+use domain::sign::GenerateParams;
 use domain::validate::Key;
 use lexopt::Arg;
 
@@ -299,7 +300,7 @@ impl Keygen {
 
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::generate(params)
+        let (secret_key, public_key) = keypair::generate(params)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
         // TODO: Add a high-level operation in 'domain' to select flags?
