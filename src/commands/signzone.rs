@@ -877,7 +877,8 @@ impl SignZone {
                         Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
                     let mut nsec3_config = Nsec3Config::new(params, opt_out, hash_provider);
                     if self.invoked_as_ldns {
-                        nsec3_config = nsec3_config.with_ttl_mode(Nsec3ParamTtlMode::ldns_like());
+                        nsec3_config = nsec3_config
+                            .with_ttl_mode(Nsec3ParamTtlMode::fixed(Ttl::from_secs(3600)));
                     }
                     SigningConfig::new(
                         HashingConfig::Nsec3(nsec3_config, vec![]),
