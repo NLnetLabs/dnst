@@ -3259,19 +3259,203 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
     }
 
     #[test]
-    #[ignore = "TODO"]
-    fn use_correct_ttl_for_added_dnskeys() {
-        // E.g. RFC 1033 says use same TTL as the RRSET or SOA minimum by
-        // default.
-        todo!()
+    fn rfc_9077_nsec_ttl_minimum_select_soa_ttl() {
+        // https://www.rfc-editor.org/rfc/rfc9077.html#section-3.2
+        // 3.2.  Updates to RFC 4035
+        //   ...
+        //   "The TTL of the NSEC RR that is returned MUST be the lesser of
+        //   the MINIMUM field of the SOA record and the TTL of the SOA
+        //   itself. This matches the definition of the TTL for negative
+        //   responses in [RFC2308]. Because some signers incrementally update
+        //   the NSEC chain, a transient inconsistency between the observed
+        //   and expected TTL MAY exist."
+        let expected_zone = r###"example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 239
+example.org.\t238\tIN\tRRSIG\tSOA 8 2 238 20240101010101 20240101010101 28954 example.org. C8kaFDeolgI0zDIKRext43cpcJlYPUxxxxK9e9aW75amnLXgaG+IWRqbKmky7bIAaV6FaLPOyj2e85C7iXF+KMhWdfYpIUZdqrWwMcLZawja/7ExzYhKgtetTTdnPEjVdKnzh7a/opreicQbsVl2RLkEvgIQYH19O96fUPU7dzI=
+example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 20240101010101 20240101010101 28954 example.org. svHOYxh5ix5ArcHQX/AdPRpfJN/hBWXw66u2JJpBXYl3Ee/r8o8Sf7aTWHZgjveWQvIuARnxNeIbTYbh9Lhi2HyIlOIK5XPh3Q/ehfHIyqLB9gQRCocPrel6VGVk6yp/4urM2Dc+5DJr19Hq1DfICiYA+zrLdM5xcu77e8bqfXg=
+example.org.\t238\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t238\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t238\tIN\tRRSIG\tDNSKEY 8 2 238 20240101010101 20240101010101 51331 example.org. Q74Mi168vo15haY1hUwWx1TcFsR0VwxSncMtAvF26OeIuTKVuM6J/m2ZqJ30zJe1jDYmZgLoD+m14VMING+CSrUDGnX/g30W5SGMY3iw6Xk4KnMTaAjEpcWD1bGYWlIch1vlK1Mkf7gJSE0GmLJbwBZ4yt5HkWxy7nrKEssQcrA=
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20240101010101 20240101010101 28954 example.org. tJysnYa9fLWD0g9dhR24i/uVv9hNi+GdqTgUm6H9UvXgOoJverUQYSFd+Q5b8h94QwlykG0FEQ5BITIkIpwrIoMPs4Y2m4cID3C1bGeLPD3FOFFZhia7z8+6JsppF0VmDBPbozgbpVhWwO8vWxpKdxYynfkfQnwKe7tkzUdjn1U=
+some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28954 example.org. ZS1zp9zED/2nFX6bej6bRuzi0E0fQ97RpmfNSWlCZb9GsxQJa7NP+IX61pQJmLHwbhg6evGblkzHK6YdhzzH4Qy2eRuk8OmwFiyNiwUVswHsTsW5zPpGUMJe41MvYi22oSTUhtyJ2Xo4hfZ+wMfUnKV00GRrWXUQohXbbpOnHAo=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
     }
 
     #[test]
-    #[ignore = "TODO"]
-    fn rfc_9077_nsec_ttls_are_applied() {
-        // AFAICT this is already done, but it would be good to show
-        // explicitly that we do it.
-        todo!()
+    fn rfc_9077_nsec_ttl_minimum_select_soa_minimum() {
+        // https://www.rfc-editor.org/rfc/rfc9077.html#section-3.2
+        // 3.2.  Updates to RFC 4035
+        //   ...
+        //   "The TTL of the NSEC RR that is returned MUST be the lesser of
+        //   the MINIMUM field of the SOA record and the TTL of the SOA
+        //   itself. This matches the definition of the TTL for negative
+        //   responses in [RFC2308]. Because some signers incrementally update
+        //   the NSEC chain, a transient inconsistency between the observed
+        //   and expected TTL MAY exist."
+        let expected_zone = r###"example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 20240101010101 20240101010101 28954 example.org. EYeXeqDlGLECQSXWnwBDQlN7DaNejYhQ2whkBkhhQMl5JGGRqCGuWDK0VwUykTQnMkjqL1rbJaDlBvD6/9kZW+IoxEe7lMGksXCUjl0TGAg/qZvgHRSJ26z8BWfbCDqHlwQeIbqZBeg0W7fJBniGNnbp29hJJUbjaYPVg1RLNW8=
+example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 20240101010101 20240101010101 28954 example.org. svHOYxh5ix5ArcHQX/AdPRpfJN/hBWXw66u2JJpBXYl3Ee/r8o8Sf7aTWHZgjveWQvIuARnxNeIbTYbh9Lhi2HyIlOIK5XPh3Q/ehfHIyqLB9gQRCocPrel6VGVk6yp/4urM2Dc+5DJr19Hq1DfICiYA+zrLdM5xcu77e8bqfXg=
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 20240101010101 20240101010101 51331 example.org. aWRFnYg77f8mAG0iSaHSBSJPNk5ZeAU3KVeQH6mPPOzP6FKA8Me5LkYi+cPhbaoJxVkYQEWtFo8DKSx4PBG+daB3dQdfRoR7o2gVawMr9r+SDEKnXfO0q92cb7m1oSWw9Xc512LViuPyKH2Yll4tSGZTOLQJzJ1CIhMYkm/M0HQ=
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20240101010101 20240101010101 28954 example.org. tJysnYa9fLWD0g9dhR24i/uVv9hNi+GdqTgUm6H9UvXgOoJverUQYSFd+Q5b8h94QwlykG0FEQ5BITIkIpwrIoMPs4Y2m4cID3C1bGeLPD3FOFFZhia7z8+6JsppF0VmDBPbozgbpVhWwO8vWxpKdxYynfkfQnwKe7tkzUdjn1U=
+some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28954 example.org. ZS1zp9zED/2nFX6bej6bRuzi0E0fQ97RpmfNSWlCZb9GsxQJa7NP+IX61pQJmLHwbhg6evGblkzHK6YdhzzH4Qy2eRuk8OmwFiyNiwUVswHsTsW5zPpGUMJe41MvYi22oSTUhtyJ2Xo4hfZ+wMfUnKV00GRrWXUQohXbbpOnHAo=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn rfc_9077_nsec3_ttl_minimum_select_soa_ttl() {
+        // https://www.rfc-editor.org/rfc/rfc9077.html#section-3.2
+        // 3.3.  Updates to RFC 5155
+        //   ...
+        //   "The TTL value for each NSEC3 RR MUST be the lesser of the
+        //   MINIMUM field of the zone SOA RR and the TTL of the zone SOA RR
+        //   itself. Because some signers incrementally update the NSEC3
+        //   chain, a transient inconsistency between the observed and
+        //   expected TTL MAY exist."
+        let expected_zone = r###"example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 239
+example.org.\t238\tIN\tRRSIG\tSOA 8 2 238 20240101010101 20240101010101 28954 example.org. C8kaFDeolgI0zDIKRext43cpcJlYPUxxxxK9e9aW75amnLXgaG+IWRqbKmky7bIAaV6FaLPOyj2e85C7iXF+KMhWdfYpIUZdqrWwMcLZawja/7ExzYhKgtetTTdnPEjVdKnzh7a/opreicQbsVl2RLkEvgIQYH19O96fUPU7dzI=
+example.org.\t238\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t238\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t238\tIN\tRRSIG\tDNSKEY 8 2 238 20240101010101 20240101010101 51331 example.org. Q74Mi168vo15haY1hUwWx1TcFsR0VwxSncMtAvF26OeIuTKVuM6J/m2ZqJ30zJe1jDYmZgLoD+m14VMING+CSrUDGnX/g30W5SGMY3iw6Xk4KnMTaAjEpcWD1bGYWlIch1vlK1Mkf7gJSE0GmLJbwBZ4yt5HkWxy7nrKEssQcrA=
+example.org.\t238\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t238\tIN\tRRSIG\tNSEC3PARAM 8 2 238 20240101010101 20240101010101 28954 example.org. ulr1pnf3/Um1/2KYz20+AT3aEtTlQPVBzZiDrgi87pEjiXOLm6gg2tfQ/trDGWRg3TYUbGsSrU8k6cPWB/R242gMCiKxJvgLfw9jmF8K6fDCstFLfiNB9GGNu5tyvaowglN3aVPIqsCeHRADPXNRd9QKRDX0pDft8mc/McqTM2Y=
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 SOA RRSIG DNSKEY NSEC3PARAM
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. UAWDADL4eJ8eva4RDOlMaR+ronXYRWD+m1yrm5O+/h6tOToOLAovl5vra0kVOp5Bo5hxs2+KCtnh62yrG7LnJRFlDkNHfVmP4NekfCl6E7xsLKcB98ry1vu/G+KSqOl6AMq74hRbV0p9xLcYEOzW8Vpj8cEJgB4UIJFYBpFbMI4=
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20240101010101 20240101010101 28954 example.org. tJysnYa9fLWD0g9dhR24i/uVv9hNi+GdqTgUm6H9UvXgOoJverUQYSFd+Q5b8h94QwlykG0FEQ5BITIkIpwrIoMPs4Y2m4cID3C1bGeLPD3FOFFZhia7z8+6JsppF0VmDBPbozgbpVhWwO8vWxpKdxYynfkfQnwKe7tkzUdjn1U=
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. QOql1jm9CY+x/2p9F2eRz+7VwT6aojPqqKqAOHPYfUwYHS9lMWpIdfkxqWVFA9Q7Azo/B8yYw5FvE+A5LL2hpmtPk4hlwpQgOuh8RpNjyTNzryvFfP8xFzMZqDnOP+I6oDn+fDTWBHzjs2IkTPJz3Q5fEcqLPqfZHEyxMUjY3Aw=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            "-n",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn rfc_9077_nsec3_ttl_minimum_select_soa_minimum() {
+        // https://www.rfc-editor.org/rfc/rfc9077.html#section-3.2
+        // 3.3.  Updates to RFC 5155
+        //   ...
+        //   "The TTL value for each NSEC3 RR MUST be the lesser of the
+        //   MINIMUM field of the zone SOA RR and the TTL of the zone SOA RR
+        //   itself. Because some signers incrementally update the NSEC3
+        //   chain, a transient inconsistency between the observed and
+        //   expected TTL MAY exist."
+        let expected_zone = r###"example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 20240101010101 20240101010101 28954 example.org. EYeXeqDlGLECQSXWnwBDQlN7DaNejYhQ2whkBkhhQMl5JGGRqCGuWDK0VwUykTQnMkjqL1rbJaDlBvD6/9kZW+IoxEe7lMGksXCUjl0TGAg/qZvgHRSJ26z8BWfbCDqHlwQeIbqZBeg0W7fJBniGNnbp29hJJUbjaYPVg1RLNW8=
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 20240101010101 20240101010101 51331 example.org. aWRFnYg77f8mAG0iSaHSBSJPNk5ZeAU3KVeQH6mPPOzP6FKA8Me5LkYi+cPhbaoJxVkYQEWtFo8DKSx4PBG+daB3dQdfRoR7o2gVawMr9r+SDEKnXfO0q92cb7m1oSWw9Xc512LViuPyKH2Yll4tSGZTOLQJzJ1CIhMYkm/M0HQ=
+example.org.\t239\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t239\tIN\tRRSIG\tNSEC3PARAM 8 2 239 20240101010101 20240101010101 28954 example.org. SYie+jTjLhj8VNuq9dQEqDZ2RgMxvdmcPf2u/Ox4YsQYFzFDYReY8+viw2zMhQQmwwDE2UqbX1i4edhyYKymKqOlII14tg0AXMF9JOsus1wdTGARO0EpbEeCXhACrcdbps3WloUrpH54QkKwX1ykRrgXFEPmV4FQUXrboF+S1gs=
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 SOA RRSIG DNSKEY NSEC3PARAM
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. UAWDADL4eJ8eva4RDOlMaR+ronXYRWD+m1yrm5O+/h6tOToOLAovl5vra0kVOp5Bo5hxs2+KCtnh62yrG7LnJRFlDkNHfVmP4NekfCl6E7xsLKcB98ry1vu/G+KSqOl6AMq74hRbV0p9xLcYEOzW8Vpj8cEJgB4UIJFYBpFbMI4=
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20240101010101 20240101010101 28954 example.org. tJysnYa9fLWD0g9dhR24i/uVv9hNi+GdqTgUm6H9UvXgOoJverUQYSFd+Q5b8h94QwlykG0FEQ5BITIkIpwrIoMPs4Y2m4cID3C1bGeLPD3FOFFZhia7z8+6JsppF0VmDBPbozgbpVhWwO8vWxpKdxYynfkfQnwKe7tkzUdjn1U=
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. QOql1jm9CY+x/2p9F2eRz+7VwT6aojPqqKqAOHPYfUwYHS9lMWpIdfkxqWVFA9Q7Azo/B8yYw5FvE+A5LL2hpmtPk4hlwpQgOuh8RpNjyTNzryvFfP8xFzMZqDnOP+I6oDn+fDTWBHzjs2IkTPJz3Q5fEcqLPqfZHEyxMUjY3Aw=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            "-n",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
     }
 
     #[test]
