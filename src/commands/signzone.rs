@@ -3253,12 +3253,6 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
     }
 
     #[test]
-    #[ignore = "TODO"]
-    fn nsec3param_should_appear_once_per_nsec3_chain() {
-        todo!()
-    }
-
-    #[test]
     fn rfc_9077_nsec_ttl_minimum_select_soa_ttl() {
         // https://www.rfc-editor.org/rfc/rfc9077.html#section-3.2
         // 3.2.  Updates to RFC 4035
