@@ -3463,11 +3463,11 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            &dir.path()
+            dir.path()
                 .join("missing_zonefile")
                 .to_string_lossy()
-                .to_string(),
-            &dir.path().join("missing_key").to_string_lossy().to_string(),
+                .as_ref(),
+            dir.path().join("missing_key").to_string_lossy().as_ref(),
         ])
         .run();
 
