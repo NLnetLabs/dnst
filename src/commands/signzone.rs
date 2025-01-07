@@ -3282,7 +3282,8 @@ some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
 some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28954 example.org. ZS1zp9zED/2nFX6bej6bRuzi0E0fQ97RpmfNSWlCZb9GsxQJa7NP+IX61pQJmLHwbhg6evGblkzHK6YdhzzH4Qy2eRuk8OmwFiyNiwUVswHsTsW5zPpGUMJe41MvYi22oSTUhtyJ2Xo4hfZ+wMfUnKV00GRrWXUQohXbbpOnHAo=
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
@@ -3331,7 +3332,8 @@ some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
 some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28954 example.org. ZS1zp9zED/2nFX6bej6bRuzi0E0fQ97RpmfNSWlCZb9GsxQJa7NP+IX61pQJmLHwbhg6evGblkzHK6YdhzzH4Qy2eRuk8OmwFiyNiwUVswHsTsW5zPpGUMJe41MvYi22oSTUhtyJ2Xo4hfZ+wMfUnKV00GRrWXUQohXbbpOnHAo=
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
@@ -3381,7 +3383,8 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
 vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. QOql1jm9CY+x/2p9F2eRz+7VwT6aojPqqKqAOHPYfUwYHS9lMWpIdfkxqWVFA9Q7Azo/B8yYw5FvE+A5LL2hpmtPk4hlwpQgOuh8RpNjyTNzryvFfP8xFzMZqDnOP+I6oDn+fDTWBHzjs2IkTPJz3Q5fEcqLPqfZHEyxMUjY3Aw=
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
@@ -3432,7 +3435,8 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
 vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 20240101010101 20240101010101 28954 example.org. QOql1jm9CY+x/2p9F2eRz+7VwT6aojPqqKqAOHPYfUwYHS9lMWpIdfkxqWVFA9Q7Azo/B8yYw5FvE+A5LL2hpmtPk4hlwpQgOuh8RpNjyTNzryvFfP8xFzMZqDnOP+I6oDn+fDTWBHzjs2IkTPJz3Q5fEcqLPqfZHEyxMUjY3Aw=
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
