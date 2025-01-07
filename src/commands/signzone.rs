@@ -3463,21 +3463,25 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
     }
 
     #[test]
-    #[ignore = "TODO"]
     fn non_existing_input_file_should_not_create_empty_output_file() {
-        // signzone first creates the output zone file (.signed) before
-        // noticing a non-existent input zonefile
-        todo!()
-    }
+        let dir = tempfile::TempDir::new().unwrap();
 
-    #[test]
-    #[ignore = "TODO"]
-    fn nsec3_signed_input_file_should_be_resigned_with_nsec() {
-        // Note that our behaviour differs to that of original LDNS as the
-        // original will leave behind the NSEC3PARAM record if one is present
-        // in the input zone, while we strip all NSEC(3) and NSEC3PARAM
-        // records out on loading of the zone.
-        todo!()
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            &dir.path()
+                .join("missing_zonefile")
+                .to_string_lossy()
+                .to_string(),
+            &dir.path().join("missing_key").to_string_lossy().to_string(),
+        ])
+        .run();
+
+        assert!(res.stderr.contains("No such file or directory"));
+        assert_eq!(res.stdout, "");
+        assert_eq!(res.exit_code, 1);
+
+        assert!(!dir.path().join("missing_zonefile.signed").exists());
     }
 
     // ------------ Helper functions -----------------------------------------
