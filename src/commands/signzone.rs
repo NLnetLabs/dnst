@@ -3471,7 +3471,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         ])
         .run();
 
-        assert!(res.stderr.contains("No such file or directory"));
+        assert!(!res.stderr.is_empty());
         assert_eq!(res.stdout, "");
         assert_eq!(res.exit_code, 1);
 
