@@ -1,3 +1,4 @@
+use core::fmt;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
@@ -18,6 +19,9 @@ use crate::{util, Args};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
+#[cfg(not(any(feature = "openssl", feature = "ring")))]
+compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
+
 #[derive(Clone, Debug, PartialEq, Eq, clap::Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
@@ -27,7 +31,10 @@ pub struct Keygen {
     /// - ECDSAP256SHA256:    An ECDSA P-256 SHA-256 key (algorithm 13)
     /// - ECDSAP384SHA384:    An ECDSA P-384 SHA-384 key (algorithm 14)
     /// - ED25519:            An Ed25519 key (algorithm 15)
-    /// - ED448:              An Ed448 key (algorithm 16)
+    #[cfg_attr(
+        feature = "openssl",
+        doc = " - ED448:              An Ed448 key (algorithm 16)"
+    )]
     #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
@@ -112,14 +119,24 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
   The base name (K<name>+<alg>+<id>) will be printed to stdout
 ";
 
-const LDNS_ALGS_HELP: &str = "\
-Supported algorithms:
-- RSASHA256 (8)
-- ECDSAP256SHA256 (13)
-- ECDSAP384SHA384 (14)
-- ED25519 (15)
-- ED448 (16)\
-";
+fn ldns_algs_help() -> String {
+    struct Printer;
+
+    impl fmt::Display for Printer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("Supported algorithms:")?;
+            f.write_str("\n- RSASHA256 (8)")?;
+            f.write_str("\n- ECDSAP256SHA256 (13)")?;
+            f.write_str("\n- ECDSAP384SHA384 (14)")?;
+            f.write_str("\n- ED25519 (15)")?;
+            #[cfg(feature = "openssl")]
+            f.write_str("\n- ED448 (16)")?;
+            Ok(())
+        }
+    }
+
+    format!("{}", Printer)
+}
 
 impl LdnsCommand for Keygen {
     const NAME: &'static str = "keygen";
@@ -146,7 +163,7 @@ impl LdnsCommand for Keygen {
                     let value = parser.value()?;
 
                     if value == "list" {
-                        return Ok(Args::from(Command::Report(LDNS_ALGS_HELP.into())));
+                        return Ok(Args::from(Command::Report(ldns_algs_help())));
                     }
 
                     algorithm = parse_os_with("algorithm (-a)", &value, |s| {
