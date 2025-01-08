@@ -801,7 +801,7 @@ impl SignZone {
     ) -> Result<(), Error> {
         let signing_keys = signing_keys
             .iter()
-            .map(|k| k.as_designated_signing_key())
+            .map(|k| k as &dyn DesignatedSigningKey<Bytes, KeyPair>)
             .collect::<Vec<_>>();
 
         let mut writer = if out_file.as_os_str() == "-" {
