@@ -800,11 +800,6 @@ impl SignZone {
         signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
         out_file: PathBuf,
     ) -> Result<(), Error> {
-        let signing_keys = signing_keys
-            .iter()
-            .map(|k| k as &dyn DesignatedSigningKey<Bytes, KeyPair>)
-            .collect::<Vec<_>>();
-
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
@@ -1559,7 +1554,7 @@ impl SignZone {
     fn update_zonemd_rrsig<KeyStrat>(
         apex: &FamilyName<StoredName>,
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-        keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
+        keys: &[DnssecSigningKey<Bytes, KeyPair>],
         zonemd_rrs: &[Record<StoredName, StoredRecordData>],
     ) -> Result<(), SigningError>
     where
@@ -1801,8 +1796,8 @@ struct FallbackStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
     const NAME: &'static str = "Fallback to ZSKs/KSKs if the other is empty";
 
-    fn select_signing_keys_for_rtype(
-        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
+    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
+        candidate_keys: &[DSK],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
@@ -1851,8 +1846,8 @@ struct AllKeyStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     const NAME: &'static str = "All keys (KSK and ZSK)";
 
-    fn select_signing_keys_for_rtype(
-        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
+    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
+        candidate_keys: &[DSK],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
@@ -1881,8 +1876,8 @@ struct AllUniqStrat;
 impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK)";
 
-    fn select_signing_keys_for_rtype(
-        candidate_keys: &[&dyn DesignatedSigningKey<Bytes, KeyPair>],
+    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
+        candidate_keys: &[DSK],
         rtype: Option<Rtype>,
     ) -> HashSet<usize> {
         match rtype {
