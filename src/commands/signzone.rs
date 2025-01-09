@@ -884,7 +884,7 @@ impl SignZone {
         };
 
         records
-            .sign_zone(&mut signing_config, &signing_keys)
+            .sign_zone(&mut signing_config, signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
@@ -907,7 +907,7 @@ impl SignZone {
                 Self::update_zonemd_rrsig::<KeyStrat>(
                     &apex,
                     &mut records,
-                    &signing_keys,
+                    signing_keys,
                     &zonemd_rrs,
                 )
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
