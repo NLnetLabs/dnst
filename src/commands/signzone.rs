@@ -39,6 +39,7 @@ use bytes::{BufMut, Bytes};
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
+use domain::base::iana::Class;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
@@ -74,7 +75,6 @@ use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::base::iana::Class;
 
 //------------ Constants -----------------------------------------------------
 
@@ -932,28 +932,25 @@ impl SignZone {
         //
         // INCOMAPATIBILITY WARNING: Unlike ldns-signzone, we only apply this
         // ordering if `-b` is specified.
-        //
-        // Note: Family refers to the underlying record data, so while we are
-        // creating a new Vec, it only contains references to the original
-        // data so it's indiividual are not the records themselves.
-        let mut families;
-        let family_iter: AnyOwnerRrsIter =
+        let mut owner_rrs;
+        let owner_rrs_iter: AnyOwnerRrsIter =
             if self.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
-                families = records.families().collect::<Vec<_>>();
+                owner_rrs = records.owner_rrs().collect::<Vec<_>>();
                 let Some(hashes) = nsec3_hashes.as_ref() else {
                     unreachable!();
                 };
-                families.par_sort_unstable_by(|a, b| {
+
+                owner_rrs.par_sort_unstable_by(|a, b| {
                     let mut hashed_count = 0;
-                    let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
+                    let unhashed_a = if let Some(name) = hashes.get(a.owner()).map(|v| v.name()) {
                         hashed_count += 1;
-                        unhashed_owner
+                        name
                     } else {
                         a.owner()
                     };
-                    let unhashed_b = if let Some(unhashed_owner) = hashes.get(b.owner()) {
+                    let unhashed_b = if let Some(name) = hashes.get(b.owner()).map(|v| v.name()) {
                         hashed_count += 2;
-                        unhashed_owner
+                        name
                     } else {
                         b.owner()
                     };
@@ -969,9 +966,9 @@ impl SignZone {
                         Ordering::Greater => Ordering::Greater,
                     }
                 });
-                families.iter().into()
+                owner_rrs.iter().into()
             } else {
-                records.families().into()
+                records.owner_rrs().into()
             };
 
         // Output the resulting zone, with comments if enabled.
@@ -982,10 +979,9 @@ impl SignZone {
         if self.preceed_zone_with_hash_list {
             if let Some(hashes) = &nsec3_hashes {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
-                owner_sorted_hashes
-                    .par_sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
-                for (hash, owner) in owner_sorted_hashes {
-                    writer.write_fmt(format_args!("; H({owner}) = {hash}\n"))?;
+                owner_sorted_hashes.par_sort_by(|(_, a), (_, b)| a.name().canonical_cmp(b.name()));
+                for (hash, info) in owner_sorted_hashes {
+                    writer.write_fmt(format_args!("; H({}) = {hash}\n", info.name()))?;
                 }
             }
         }
@@ -1013,27 +1009,13 @@ impl SignZone {
             apex: &apex,
         };
 
-        for family in family_iter {
+        for owner_rrs in owner_rrs_iter {
             if self.extra_comments {
                 if let Some(hashes) = nsec3_hashes.as_ref() {
-                    // If this family contains an NSEC3 RR and the number
-                    // of RRs in the RRSET of the unhashed owner name is zero,
-                    // then the NSEC3 was generated for an empty non-terminal.
-                    if family.rrsets().any(|rrset| rrset.rtype() == Rtype::NSEC3) {
-                        if let Some(unhashed_name) = hashes.get(family.owner()) {
-                            if !records
-                                .families()
-                                .any(|family| family.owner() == unhashed_name)
-                            {
-                                writer.write_fmt(format_args!(
-                                    ";; Empty nonterminal: {unhashed_name}\n"
-                                ))?;
-                            }
-                        } else {
-                            // ??? Every hashed name must correspond to an
-                            // unhashed name?
-                            unreachable!();
-                        }
+                    if let Some(unhashed_owner_name) = hashes.get_if_ent(owner_rrs.owner()) {
+                        writer.write_fmt(format_args!(
+                            ";; Empty nonterminal: {unhashed_owner_name}\n"
+                        ))?;
                     }
                 }
             }
@@ -1042,7 +1024,7 @@ impl SignZone {
             // we skip that, and we skip RRSIGs as they are output only after
             // the RRset that they cover.
             if self.order_rrsigs_after_the_rtype_they_cover {
-                for rrset in family
+                for rrset in owner_rrs
                     .rrsets()
                     .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
                 {
@@ -1067,7 +1049,7 @@ impl SignZone {
                     }
 
                     // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
-                    for covering_rrsigs in family
+                    for covering_rrsigs in owner_rrs
                         .rrsets()
                         .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
                         .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
@@ -1081,7 +1063,10 @@ impl SignZone {
                     writer.write_str(";\n")?;
                 }
             } else {
-                for rrset in family.rrsets().filter(|rrset| rrset.rtype() != Rtype::SOA) {
+                for rrset in owner_rrs
+                    .rrsets()
+                    .filter(|rrset| rrset.rtype() != Rtype::SOA)
+                {
                     for rr in rrset.iter() {
                         // Only output the key tag comment if running as LDNS.
                         // When running as DNST we assume without `-b` that speed
@@ -1441,8 +1426,8 @@ impl SignZone {
             }
         };
 
-        for family in records.families() {
-            if !family.is_in_zone(apex) {
+        for owner_rr in records.owner_rrs() {
+            if !owner_rr.is_in_zone(apex) {
                 continue;
             }
 
@@ -1461,7 +1446,7 @@ impl SignZone {
             //     calculated.
             // ```
             // The first three rules are currently implemented by the SortedRecords type.
-            for record in family.records() {
+            for record in owner_rr.records() {
                 buf.clear();
                 if record.rtype() == Rtype::ZONEMD && record.owner() == apex {
                     // Skip placeholder ZONEMD at apex
@@ -1693,32 +1678,35 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
 
             let from = hashes
                 .get(record.owner())
-                .map(|n| format!("{}", n.fmt_with_dot()))
-                .unwrap_or_default();
+                .map(|v| v.unhashed_owner_name.fmt_with_dot());
 
-            let to = if let Ok(next_owner_name) = next_owner_name {
-                hashes
-                    .get(&next_owner_name)
-                    .map(|n| format!("{}", n.fmt_with_dot()))
-                    .unwrap_or_else(|| format!("<unknown hash: {next_owner_hash_hex}>"))
-            } else {
-                format!("<invalid name: {next_owner_hash_hex}>")
-            };
+            let to = next_owner_name
+                .ok()
+                .map(|n| hashes.get(&n).map(|v| v.unhashed_owner_name.fmt_with_dot()))
+                .flatten();
 
-            writer.write_fmt(format_args!(", from: {from} to: {to}"))?;
+            match (from, to) {
+                (None, _) => writer.write_str(", from: <internal error>, to: <internal error>"),
+                (Some(from), None) => writer.write_fmt(format_args!(
+                    ", from: {from}, to: <unknown hash: {next_owner_hash_hex}>"
+                )),
+                (Some(from), Some(to)) => {
+                    writer.write_fmt(format_args!(", from: {from}, to: {to}"))
+                }
+            }?;
         }
 
         writer.write_char('}')
     }
 }
 
-//------------ AnyFamiliesIter -----------------------------------------------
+//------------ AnyOwnerRrsIter -----------------------------------------------
 
 type OwnerRrsIterByValue<'a> =
     std::slice::Iter<'a, OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>;
 type OwnerRrsIterByRef<'a> = RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>;
 
-/// An iterator over a collection of [`Family`], whether by reference or not.
+/// An iterator over a collection of [`OwnerRrs`], whether by reference or not.
 enum AnyOwnerRrsIter<'a> {
     VecIter(OwnerRrsIterByValue<'a>),
     OwnerRrsIter(OwnerRrsIterByRef<'a>),
@@ -1738,7 +1726,7 @@ where
     }
 }
 
-//--- From<std::slice::Iter<'a, Family<'a, N, D>>>
+//--- From<std::slice::Iter<'a, OwnerRrs<'a, N, D>>>
 
 impl<'a> From<std::slice::Iter<'a, OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>>
     for AnyOwnerRrsIter<'a>
@@ -1942,12 +1930,33 @@ impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
 
 //-------------- CapturingNsec3HashProvider ----------------------------------
 
+struct CapturedNsec3HashInfo {
+    unhashed_owner_name: StoredName,
+    is_empty_non_terminal: bool,
+}
+
+impl CapturedNsec3HashInfo {
+    fn new(unhashed_owner_name: StoredName, is_empty_non_terminal: bool) -> Self {
+        Self {
+            unhashed_owner_name,
+            is_empty_non_terminal,
+        }
+    }
+
+    fn name(&self) -> &StoredName {
+        &self.unhashed_owner_name
+    }
+}
+
 struct CapturingNsec3HashProvider {
     /// A provider of NSEC3 hashes.
     provider: OnDemandNsec3HashProvider<Bytes>,
 
     /// A record of hashed owner names to unhashed owner names.
-    hashes_by_unhashed_owner: HashMap<StoredName, StoredName>,
+    ///
+    /// We also record if the unhashed owner name was an empty non-terminal or
+    /// not.
+    hashes_by_unhashed_owner: HashMap<StoredName, CapturedNsec3HashInfo>,
 }
 
 impl CapturingNsec3HashProvider {
@@ -1957,10 +1966,17 @@ impl CapturingNsec3HashProvider {
             hashes_by_unhashed_owner: HashMap::new(),
         }
     }
+
+    fn get_if_ent(&self, k: &StoredName) -> Option<&StoredName> {
+        self.hashes_by_unhashed_owner
+            .get(k)
+            .filter(|v| v.is_empty_non_terminal)
+            .map(|v| &v.unhashed_owner_name)
+    }
 }
 
 impl std::ops::Deref for CapturingNsec3HashProvider {
-    type Target = HashMap<StoredName, StoredName>;
+    type Target = HashMap<StoredName, CapturedNsec3HashInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.hashes_by_unhashed_owner
@@ -1972,14 +1988,20 @@ impl Nsec3HashProvider<StoredName, Bytes> for CapturingNsec3HashProvider {
         &mut self,
         apex_owner: &StoredName,
         unhashed_owner_name: &StoredName,
+        is_ent: bool,
     ) -> Result<StoredName, domain::validate::Nsec3HashError> {
-        let hashed_owner_name = self
-            .provider
-            .get_or_create(apex_owner, unhashed_owner_name)?;
-        let _ = self
+        let hashed_owner_name =
+            self.provider
+                .get_or_create(apex_owner, unhashed_owner_name, is_ent)?;
+        if !self
             .hashes_by_unhashed_owner
-            .entry(hashed_owner_name.clone())
-            .or_insert(unhashed_owner_name.clone());
+            .contains_key(&hashed_owner_name)
+        {
+            self.hashes_by_unhashed_owner.insert(
+                hashed_owner_name.clone(),
+                CapturedNsec3HashInfo::new(unhashed_owner_name.clone(), is_ent),
+            );
+        }
         Ok(hashed_owner_name)
     }
 }
