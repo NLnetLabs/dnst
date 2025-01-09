@@ -1677,8 +1677,7 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
 
             let to = next_owner_name
                 .ok()
-                .map(|n| hashes.get(&n).map(|v| v.unhashed_owner_name.fmt_with_dot()))
-                .flatten();
+                .and_then(|n| hashes.get(&n).map(|v| v.unhashed_owner_name.fmt_with_dot()));
 
             match (from, to) {
                 (None, _) => writer.write_str(", from: <internal error>, to: <internal error>"),
