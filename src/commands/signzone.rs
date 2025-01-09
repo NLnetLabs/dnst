@@ -54,11 +54,12 @@ use domain::sign::hashing::nsec3::{
 };
 use domain::sign::keys::keymeta::{DesignatedSigningKey, DnssecSigningKey};
 use domain::sign::keys::keypair::{FromBytesError, KeyPair};
+use domain::sign::keys::signingkey::SigningKey;
 use domain::sign::records::{Family, FamilyName, RecordsIter, Rrset, SortedRecords};
 use domain::sign::signing::config::SigningConfig;
 use domain::sign::signing::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
 use domain::sign::signing::traits::{Signable, SignableZoneInPlace};
-use domain::sign::{SecretKeyBytes, SigningKey};
+use domain::sign::SecretKeyBytes;
 use domain::utils::base64;
 use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
@@ -850,14 +851,7 @@ impl SignZone {
             Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
         }
 
-        let mut signing_config: SigningConfig<
-            Name<Bytes>,
-            Bytes,
-            KeyPair,
-            KeyStrat,
-            MultiThreadedSorter,
-            CapturingNsec3HashProvider,
-        > = match signing_mode {
+        let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -1793,8 +1787,8 @@ struct MultiThreadedSorter;
 impl domain::sign::records::Sorter for MultiThreadedSorter {
     fn sort_by<N, D, F>(records: &mut Vec<Record<N, D>>, compare: F)
     where
-        Record<N, D>: Send,
         F: Fn(&Record<N, D>, &Record<N, D>) -> Ordering + Sync,
+        Record<N, D>: CanonicalOrd + Send,
     {
         records.par_sort_by(compare);
     }

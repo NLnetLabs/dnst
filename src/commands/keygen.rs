@@ -7,8 +7,7 @@ use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::keys::keypair;
-use domain::sign::GenerateParams;
+use domain::sign::keys::keypair::{self, GenerateParams};
 use domain::validate::Key;
 use lexopt::Arg;
 
@@ -394,13 +393,13 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
-    use domain::sign::GenerateParams;
     use regex::Regex;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
+    use domain::sign::keys::keypair::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
