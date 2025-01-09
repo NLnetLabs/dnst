@@ -945,7 +945,7 @@ impl SignZone {
                 let Some(hashes) = nsec3_hashes.as_ref() else {
                     unreachable!();
                 };
-                families.sort_unstable_by(|a, b| {
+                families.par_sort_unstable_by(|a, b| {
                     let mut hashed_count = 0;
                     let unhashed_a = if let Some(unhashed_owner) = hashes.get(a.owner()) {
                         hashed_count += 1;
@@ -988,7 +988,7 @@ impl SignZone {
             if let Some(hashes) = &nsec3_hashes {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes
-                    .sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
+                    .par_sort_by(|(_, owner_a), (_, owner_b)| owner_a.canonical_cmp(owner_b));
                 for (hash, owner) in owner_sorted_hashes {
                     writer.write_fmt(format_args!("; H({owner}) = {hash}\n"))?;
                 }
