@@ -41,9 +41,7 @@ use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
-use domain::base::{
-    CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
-};
+use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
@@ -55,7 +53,7 @@ use domain::sign::hashing::nsec3::{
 use domain::sign::keys::keymeta::{DesignatedSigningKey, DnssecSigningKey};
 use domain::sign::keys::keypair::{FromBytesError, KeyPair};
 use domain::sign::keys::signingkey::SigningKey;
-use domain::sign::records::{Family, FamilyName, RecordsIter, Rrset, SortedRecords};
+use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
 use domain::sign::signing::config::SigningConfig;
 use domain::sign::signing::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
 use domain::sign::signing::traits::{Signable, SignableZoneInPlace};
@@ -76,6 +74,7 @@ use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+use domain::base::iana::Class;
 
 //------------ Constants -----------------------------------------------------
 
@@ -140,7 +139,7 @@ pub struct SignZone {
 
     /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
     #[arg(short = 'o', value_name = "domain")]
-    origin: Option<Name<Bytes>>,
+    origin: Option<StoredName>,
 
     /// Set SOA serial to the number of seconds since Jan 1st 1970
     ///
@@ -347,7 +346,7 @@ impl LdnsCommand for SignZone {
         let mut expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
         let mut out_file = Option::<PathBuf>::None;
         let mut inception = TestableTimestamp::now();
-        let mut origin = Option::<Name<Bytes>>::None;
+        let mut origin = Option::<StoredName>::None;
         let mut set_soa_serial_to_epoch_time = false;
         let mut zonemd = Vec::new();
         let mut allow_zonemd_without_signing = false;
@@ -791,8 +790,8 @@ impl SignZone {
         &self,
         env: impl Env,
         mut records: SortedRecords<
-            Name<Bytes>,
-            ZoneRecordData<Bytes, Name<Bytes>>,
+            StoredName,
+            ZoneRecordData<Bytes, StoredName>,
             MultiThreadedSorter,
         >,
         signing_mode: SigningMode,
@@ -817,7 +816,7 @@ impl SignZone {
         }
 
         // Find the apex.
-        let (apex, ttl, soa_serial) = Self::find_apex(&records).unwrap();
+        let (apex, zone_class, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
         // The original ldns-signzone filters out (with warnings) NSEC3 RRs,
         // or RRSIG RRs covering NSEC3 RRs, where the hashed owner name
@@ -843,7 +842,13 @@ impl SignZone {
         // it should only operate on unsigned zone input.
 
         if !zonemd.is_empty() {
-            Self::replace_apex_zonemd_with_placeholder(&mut records, &apex, soa_serial, ttl);
+            Self::replace_apex_zonemd_with_placeholder(
+                &mut records,
+                &apex,
+                zone_class,
+                soa_serial,
+                ttl,
+            );
         }
 
         let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _> = match signing_mode {
@@ -889,14 +894,12 @@ impl SignZone {
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
-            let _ = records.remove_first_by_name_class_rtype(
-                apex.owner().clone(),
-                None,
-                Some(Rtype::ZONEMD),
-            );
+            let _ =
+                records.remove_first_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
 
-            let zonemd_rrs =
-                Self::create_zonemd_digest_and_records(&records, &apex, &zonemd, soa_serial, ttl)?;
+            let zonemd_rrs = Self::create_zonemd_digest_and_records(
+                &records, &apex, zone_class, &zonemd, soa_serial, ttl,
+            )?;
 
             // Add ZONEMD RRs to output records
             for zrr in zonemd_rrs.clone() {
@@ -934,7 +937,7 @@ impl SignZone {
         // creating a new Vec, it only contains references to the original
         // data so it's indiividual are not the records themselves.
         let mut families;
-        let family_iter: AnyFamiliesIter =
+        let family_iter: AnyOwnerRrsIter =
             if self.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
                 families = records.families().collect::<Vec<_>>();
                 let Some(hashes) = nsec3_hashes.as_ref() else {
@@ -973,10 +976,7 @@ impl SignZone {
 
         // Output the resulting zone, with comments if enabled.
         if self.extra_comments {
-            writer.write_fmt(format_args!(
-                ";; Zone: {}\n;\n",
-                apex.owner().fmt_with_dot()
-            ))?;
+            writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.fmt_with_dot()))?;
         }
 
         if self.preceed_zone_with_hash_list {
@@ -1204,7 +1204,7 @@ impl SignZone {
 
     fn find_apex(
         records: &SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-    ) -> Result<(FamilyName<Name<Bytes>>, Ttl, Serial), Error> {
+    ) -> Result<(StoredName, Class, Ttl, Serial), Error> {
         let soa = match records.find_soa() {
             Some(soa) => soa,
             None => {
@@ -1223,13 +1223,13 @@ impl SignZone {
             _ => unreachable!(),
         };
 
-        Ok((soa.family_name().cloned(), ttl, serial))
+        Ok((soa.owner().clone(), soa.class(), ttl, serial))
     }
 
     fn bump_soa_serial(
         records: &mut SortedRecords<
-            Name<Bytes>,
-            ZoneRecordData<Bytes, Name<Bytes>>,
+            StoredName,
+            ZoneRecordData<Bytes, StoredName>,
             MultiThreadedSorter,
         >,
     ) -> Result<(), Error> {
@@ -1424,7 +1424,7 @@ impl SignZone {
     /// [RFC 8976]: https://www.rfc-editor.org/rfc/rfc8976.html
     /// [RFC 4034]: https://www.rfc-editor.org/rfc/rfc4034.html
     fn create_zonemd_digest_simple(
-        apex: &FamilyName<Name<Bytes>>,
+        apex: &StoredName,
         records: &SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         algorithm: ZonemdAlg,
     ) -> Result<digest::Digest, Error> {
@@ -1463,10 +1463,10 @@ impl SignZone {
             // The first three rules are currently implemented by the SortedRecords type.
             for record in family.records() {
                 buf.clear();
-                if record.rtype() == Rtype::ZONEMD && record.owner() == apex.owner() {
+                if record.rtype() == Rtype::ZONEMD && record.owner() == apex {
                     // Skip placeholder ZONEMD at apex
                     continue;
-                } else if record.rtype() == Rtype::RRSIG && record.owner() == apex.owner() {
+                } else if record.rtype() == Rtype::RRSIG && record.owner() == apex {
                     // Skip RRSIG for ZONEMD at apex
                     if let ZoneRecordData::Rrsig(rrsig) = record.data() {
                         if rrsig.type_covered() == Rtype::ZONEMD {
@@ -1485,17 +1485,17 @@ impl SignZone {
 
     fn replace_apex_zonemd_with_placeholder(
         records: &mut SortedRecords<
-            Name<Bytes>,
-            ZoneRecordData<Bytes, Name<Bytes>>,
+            StoredName,
+            ZoneRecordData<Bytes, StoredName>,
             MultiThreadedSorter,
         >,
-        apex: &FamilyName<Name<Bytes>>,
+        apex: &StoredName,
+        zone_class: Class,
         soa_serial: Serial,
         ttl: Ttl,
     ) {
         // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-        let _ =
-            records.remove_all_by_name_class_rtype(apex.owner().clone(), None, Some(Rtype::ZONEMD));
+        let _ = records.remove_all_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
 
         // Insert a single placeholder ZONEMD at apex for creating the
         // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).
@@ -1506,20 +1506,17 @@ impl SignZone {
             Bytes::default(),
         ));
         let _ = records.insert(Record::new(
-            apex.owner().clone(),
-            apex.class(),
+            apex.clone(),
+            zone_class,
             ttl,
             placeholder_zonemd,
         ));
     }
 
     fn create_zonemd_digest_and_records(
-        records: &SortedRecords<
-            Name<Bytes>,
-            ZoneRecordData<Bytes, Name<Bytes>>,
-            MultiThreadedSorter,
-        >,
-        apex: &FamilyName<Name<Bytes>>,
+        records: &SortedRecords<StoredName, ZoneRecordData<Bytes, StoredName>, MultiThreadedSorter>,
+        apex: &StoredName,
+        zone_class: Class,
         zonemd: &HashSet<ZonemdTuple>,
         soa_serial: Serial,
         ttl: Ttl,
@@ -1540,19 +1537,14 @@ impl SignZone {
                 z.1,
                 Bytes::copy_from_slice(digest.as_ref()),
             ));
-            zonemd_rrs.push(Record::new(
-                apex.owner().clone(),
-                apex.class(),
-                ttl,
-                tmp_zrr,
-            ));
+            zonemd_rrs.push(Record::new(apex.clone(), zone_class, ttl, tmp_zrr));
         }
 
         Ok(zonemd_rrs)
     }
 
     fn update_zonemd_rrsig<KeyStrat>(
-        apex: &FamilyName<StoredName>,
+        apex: &StoredName,
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         keys: &[DnssecSigningKey<Bytes, KeyPair>],
         zonemd_rrs: &[Record<StoredName, StoredRecordData>],
@@ -1564,7 +1556,7 @@ impl SignZone {
             let zonemd_rrset = Rrset::new(zonemd_rrs);
             let new_rrsig = zonemd_rrset.sign::<KeyStrat>(apex, keys)?.pop().unwrap();
             records.update_data(|rr| {
-                matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex.owner() && rrsig.type_covered() == Rtype::ZONEMD)
+                matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
             }, new_rrsig.into_data());
         }
 
@@ -1572,15 +1564,12 @@ impl SignZone {
     }
 }
 
-fn next_owner_hash_to_name(
-    next_owner_hash_hex: &str,
-    apex: &FamilyName<Name<Bytes>>,
-) -> Result<Name<Bytes>, ()> {
+fn next_owner_hash_to_name(next_owner_hash_hex: &str, apex: &StoredName) -> Result<StoredName, ()> {
     let mut builder = NameBuilder::new_bytes();
     builder
         .append_chars(next_owner_hash_hex.chars())
         .map_err(|_| ())?;
-    let next_owner_name = builder.append_origin(apex.owner()).map_err(|_| ())?;
+    let next_owner_name = builder.append_origin(apex).map_err(|_| ())?;
     Ok(next_owner_name)
 }
 
@@ -1644,7 +1633,7 @@ trait Commented<T> {
     fn comment<W: fmt::Write>(
         &self,
         writer: &mut W,
-        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        record: &Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
         metadata: T,
     ) -> Result<(), fmt::Error>;
 }
@@ -1653,7 +1642,7 @@ impl Commented<()> for Dnskey<Bytes> {
     fn comment<W: fmt::Write>(
         &self,
         writer: &mut W,
-        record: &Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        record: &Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
         _metadata: (),
     ) -> Result<(), fmt::Error> {
         writer.write_fmt(format_args!(" ;{{id = {}", self.key_tag()))?;
@@ -1672,14 +1661,14 @@ impl Commented<()> for Dnskey<Bytes> {
 #[derive(Copy, Clone)]
 struct Nsec3CommentState<'a> {
     hashes: Option<&'a CapturingNsec3HashProvider>,
-    apex: &'a FamilyName<Name<Bytes>>,
+    apex: &'a StoredName,
 }
 
 impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
     fn comment<'a, W: fmt::Write>(
         &self,
         writer: &mut W,
-        record: &'a Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+        record: &'a Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
         state: Nsec3CommentState<'b>,
     ) -> Result<(), fmt::Error> {
         // TODO: For ldns-signzone backward compatibilty we output
@@ -1725,37 +1714,37 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
 
 //------------ AnyFamiliesIter -----------------------------------------------
 
-type FamilyIterByValue<'a> =
-    std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>;
-type FamilyIterByRef<'a> = RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+type OwnerRrsIterByValue<'a> =
+    std::slice::Iter<'a, OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>;
+type OwnerRrsIterByRef<'a> = RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>;
 
 /// An iterator over a collection of [`Family`], whether by reference or not.
-enum AnyFamiliesIter<'a> {
-    VecIter(FamilyIterByValue<'a>),
-    FamiliesIter(FamilyIterByRef<'a>),
+enum AnyOwnerRrsIter<'a> {
+    VecIter(OwnerRrsIterByValue<'a>),
+    OwnerRrsIter(OwnerRrsIterByRef<'a>),
 }
 
-impl<'a> Iterator for AnyFamiliesIter<'a>
+impl<'a> Iterator for AnyOwnerRrsIter<'a>
 where
-    Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>: Clone,
+    OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>: Clone,
 {
-    type Item = Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+    type Item = OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            AnyFamiliesIter::VecIter(it) => it.next().cloned(),
-            AnyFamiliesIter::FamiliesIter(it) => it.next(),
+            AnyOwnerRrsIter::VecIter(it) => it.next().cloned(),
+            AnyOwnerRrsIter::OwnerRrsIter(it) => it.next(),
         }
     }
 }
 
 //--- From<std::slice::Iter<'a, Family<'a, N, D>>>
 
-impl<'a> From<std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>>
-    for AnyFamiliesIter<'a>
+impl<'a> From<std::slice::Iter<'a, OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>>
+    for AnyOwnerRrsIter<'a>
 {
     fn from(
-        iter: std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>,
+        iter: std::slice::Iter<'a, OwnerRrs<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>,
     ) -> Self {
         Self::VecIter(iter)
     }
@@ -1763,11 +1752,11 @@ impl<'a> From<std::slice::Iter<'a, Family<'a, Name<Bytes>, ZoneRecordData<Bytes,
 
 //--- From<RecordsIter<'a, N, D>>
 
-impl<'a> From<RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>>
-    for AnyFamiliesIter<'a>
+impl<'a> From<RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>
+    for AnyOwnerRrsIter<'a>
 {
-    fn from(iter: RecordsIter<'a, Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>) -> Self {
-        Self::FamiliesIter(iter)
+    fn from(iter: RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>) -> Self {
+        Self::OwnerRrsIter(iter)
     }
 }
 
@@ -1958,7 +1947,7 @@ struct CapturingNsec3HashProvider {
     provider: OnDemandNsec3HashProvider<Bytes>,
 
     /// A record of hashed owner names to unhashed owner names.
-    hashes_by_unhashed_owner: HashMap<Name<Bytes>, Name<Bytes>>,
+    hashes_by_unhashed_owner: HashMap<StoredName, StoredName>,
 }
 
 impl CapturingNsec3HashProvider {
@@ -1971,19 +1960,19 @@ impl CapturingNsec3HashProvider {
 }
 
 impl std::ops::Deref for CapturingNsec3HashProvider {
-    type Target = HashMap<Name<Bytes>, Name<Bytes>>;
+    type Target = HashMap<StoredName, StoredName>;
 
     fn deref(&self) -> &Self::Target {
         &self.hashes_by_unhashed_owner
     }
 }
 
-impl Nsec3HashProvider<Name<Bytes>, Bytes> for CapturingNsec3HashProvider {
+impl Nsec3HashProvider<StoredName, Bytes> for CapturingNsec3HashProvider {
     fn get_or_create(
         &mut self,
-        apex_owner: &Name<Bytes>,
-        unhashed_owner_name: &Name<Bytes>,
-    ) -> Result<Name<Bytes>, domain::validate::Nsec3HashError> {
+        apex_owner: &StoredName,
+        unhashed_owner_name: &StoredName,
+    ) -> Result<StoredName, domain::validate::Nsec3HashError> {
         let hashed_owner_name = self
             .provider
             .get_or_create(apex_owner, unhashed_owner_name)?;
