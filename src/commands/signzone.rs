@@ -1656,11 +1656,6 @@ impl<'b, O: AsRef<[u8]>> Commented<Nsec3CommentState<'b>> for Nsec3<O> {
         record: &'a Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
         state: Nsec3CommentState<'b>,
     ) -> Result<(), fmt::Error> {
-        // TODO: For ldns-signzone backward compatibilty we output
-        // "  ;{... <domain>.}" but I find the spacing ugly and
-        // would prefer for dnst to output " ; {... <domain>. }"
-        // instead.
-
         // For an existing NSEC3 chain that we didn't generate ourselves but
         // left intact, still output flags info, but not the from/to owner as
         // we didn't generate the hash mappings.
