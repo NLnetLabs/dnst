@@ -83,9 +83,9 @@ pub enum Command {
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
+            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Notify(notify) => notify.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Help(help) => help.execute(),
