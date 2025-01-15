@@ -333,7 +333,6 @@ dependencies = [
  "pretty_assertions",
  "rayon",
  "regex",
- "ring",
  "tempfile",
  "test_bin",
  "tokio",
@@ -342,7 +341,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#3fc8c010487b9b1bbd1563fb990c1dfb4ad58fdb"
+source = "git+https://github.com/NLnetLabs/domain?branch=initial-nsec3-generation#d26d62092217078db54c6207268d13cfeef9b683"
 dependencies = [
  "arc-swap",
  "bytes",

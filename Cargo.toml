@@ -21,11 +21,7 @@ bytes  = { version = "1.1", default-features = false }
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
 domain = { git = "https://github.com/NLnetLabs/domain", branch = "initial-nsec3-generation", features = [
-    "bytes",
-    "net",
-    "openssl",
     "resolv",
-    "ring",
     "tokio-stream",
     "tsig",
     "unstable-client-transport",
@@ -33,7 +29,6 @@ domain = { git = "https://github.com/NLnetLabs/domain", branch = "initial-nsec3-
     "unstable-validate",
     "unstable-validator",
     "unstable-zonetree",
-    "zonefile",
 ] }
 lexopt = "0.3.0"
 rayon = "1.10.0"
