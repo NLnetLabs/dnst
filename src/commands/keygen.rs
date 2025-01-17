@@ -8,7 +8,6 @@ use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::keys::keypair::{self, GenerateParams};
 use domain::validate::Key;
 use lexopt::Arg;
 
@@ -18,6 +17,7 @@ use crate::parse::parse_name;
 use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+use domain::sign::crypto::common::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -316,7 +316,7 @@ impl Keygen {
 
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = keypair::generate(params)
+        let (secret_key, public_key) = common::generate(params)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
         // TODO: Add a high-level operation in 'domain' to select flags?
@@ -416,7 +416,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
-    use domain::sign::keys::keypair::GenerateParams;
+    use domain::sign::crypto::common::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
