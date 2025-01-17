@@ -46,19 +46,8 @@ use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial,
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
-use domain::sign::error::SigningError;
-use domain::sign::hashing::config::HashingConfig;
-use domain::sign::hashing::nsec3::{
-    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
-};
-use domain::sign::keys::keymeta::{DesignatedSigningKey, DnssecSigningKey};
-use domain::sign::keys::keypair::{FromBytesError, KeyPair};
-use domain::sign::keys::signingkey::SigningKey;
-use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
-use domain::sign::signing::config::SigningConfig;
-use domain::sign::signing::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
-use domain::sign::signing::traits::{Signable, SignableZoneInPlace};
-use domain::sign::SecretKeyBytes;
+use domain::sign::error::{FromBytesError, SigningError};
+use domain::sign::{SecretKeyBytes, SigningConfig};
 use domain::utils::base64;
 use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
@@ -75,6 +64,16 @@ use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+use domain::sign::crypto::common::KeyPair;
+use domain::sign::denial::config::DenialConfig;
+use domain::sign::denial::nsec3::{
+    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
+};
+use domain::sign::keys::keymeta::DesignatedSigningKey;
+use domain::sign::keys::{DnssecSigningKey, SigningKey};
+use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::sign::signatures::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
+use domain::sign::traits::{Signable, SignableZoneInPlace};
 
 //------------ Constants -----------------------------------------------------
 
