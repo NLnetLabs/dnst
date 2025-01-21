@@ -46,7 +46,17 @@ use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial,
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
+use domain::sign::crypto::common::KeyPair;
+use domain::sign::denial::config::DenialConfig;
+use domain::sign::denial::nsec3::{
+    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
+};
 use domain::sign::error::{FromBytesError, SigningError};
+use domain::sign::keys::keymeta::DesignatedSigningKey;
+use domain::sign::keys::{DnssecSigningKey, SigningKey};
+use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::sign::signatures::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
+use domain::sign::traits::{Signable, SignableZoneInPlace};
 use domain::sign::{SecretKeyBytes, SigningConfig};
 use domain::utils::base64;
 use domain::validate::Key;
@@ -57,6 +67,7 @@ use lexopt::Arg;
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
+use smallvec::SmallVec;
 
 use crate::env::{Env, Stream};
 use crate::error::{Context, Error};
@@ -64,16 +75,6 @@ use crate::{Args, DISPLAY_KIND};
 
 use super::nsec3hash::Nsec3Hash;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::sign::crypto::common::KeyPair;
-use domain::sign::denial::config::DenialConfig;
-use domain::sign::denial::nsec3::{
-    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
-};
-use domain::sign::keys::keymeta::DesignatedSigningKey;
-use domain::sign::keys::{DnssecSigningKey, SigningKey};
-use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
-use domain::sign::signatures::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
-use domain::sign::traits::{Signable, SignableZoneInPlace};
 
 //------------ Constants -----------------------------------------------------
 
@@ -1769,7 +1770,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
     fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
         candidate_keys: &[DSK],
         rtype: Option<Rtype>,
-    ) -> HashSet<usize> {
+    ) -> SmallVec<[usize; 4]> {
         match rtype {
             // TODO: Do we need to treat CDS and CDNSKEY RRs like DNSKEY RRs?
             Some(Rtype::DNSKEY) => {
@@ -1819,7 +1820,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
     fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
         candidate_keys: &[DSK],
         rtype: Option<Rtype>,
-    ) -> HashSet<usize> {
+    ) -> SmallVec<[usize; 4]> {
         match rtype {
             Some(Rtype::DNSKEY) => {
                 let mut keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
@@ -1849,7 +1850,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
     fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
         candidate_keys: &[DSK],
         rtype: Option<Rtype>,
-    ) -> HashSet<usize> {
+    ) -> SmallVec<[usize; 4]> {
         match rtype {
             Some(Rtype::DNSKEY) => {
                 let mut seen_algs = HashSet::new();
@@ -1860,7 +1861,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
                         let new_alg = seen_algs.insert(k.algorithm());
                         (k.signs_keys() || (k.signs_zone_data() && new_alg)).then_some(i)
                     })
-                    .collect::<HashSet<_>>()
+                    .collect()
             }
 
             _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
@@ -3470,6 +3471,8 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
 
         assert!(!dir.path().join("missing_zonefile.signed").exists());
     }
+
+    // TODO: Add a test for https://rfc-annotations.research.icann.org/rfc6840.html#section-5.1?
 
     // ------------ Helper functions -----------------------------------------
 
