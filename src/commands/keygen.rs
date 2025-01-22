@@ -8,16 +8,16 @@ use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::{common, GenerateParams};
 use domain::validate::Key;
 use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args};
+use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+use domain::sign::crypto::common::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -357,9 +357,9 @@ impl Keygen {
         let public_key = public_key.display_as_bind().to_string();
         let digest = digest.map(|digest| {
             format!(
-                "{} IN DS {}\n",
+                "{}\tIN\tDS\t{}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(false)
+                digest.display_zonefile(DISPLAY_KIND)
             )
         });
 
@@ -410,13 +410,13 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
-    use domain::sign::GenerateParams;
     use regex::Regex;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
+    use domain::sign::crypto::common::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
@@ -638,7 +638,7 @@ mod test {
         let public_key_regex =
             Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
         let digest_key_regex =
-            Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
+            Regex::new(r"^example.org.\tIN\tDS\t[0-9]+\t15 2 [0-9a-fA-F]+\n$").unwrap();
 
         assert_eq!(res.exit_code, 0, "{res:?}");
         assert_eq!(res.stderr, "");
@@ -650,7 +650,10 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(digest_key_regex.is_match(&digest_key));
+        assert!(
+            digest_key_regex.is_match(&digest_key),
+            "{digest_key} not matched"
+        );
 
         assert!(dir
             .path()
