@@ -7,8 +7,9 @@ use clap::builder::ValueParser;
 use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::{common, GenerateParams};
+use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
+use domain::sign::crypto::common;
+use domain::sign::crypto::common::GenerateParams;
 use domain::validate::Key;
 use lexopt::Arg;
 
@@ -359,7 +360,7 @@ impl Keygen {
             format!(
                 "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(false)
+                digest.display_zonefile(DisplayKind::Simple)
             )
         });
 
@@ -410,7 +411,7 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
-    use domain::sign::GenerateParams;
+    use domain::sign::crypto::common::GenerateParams;
     use regex::Regex;
 
     use crate::commands::Command;

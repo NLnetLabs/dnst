@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::builder::ValueParser;
 use clap::Parser;
 use domain::base::iana::{DigestAlg, SecAlg};
-use domain::base::zonefile_fmt::ZonefileFmt;
+use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::Record;
 use domain::rdata::Ds;
 use domain::validate::DnskeyExt;
@@ -184,7 +184,7 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(false));
+                writeln!(env.stdout(), "{}", rr.display_zonefile(DisplayKind::Simple));
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -214,7 +214,7 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(false))
+                writeln!(out_file, "{}", rr.display_zonefile(DisplayKind::Simple))
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
 
                 writeln!(env.stdout(), "{keyname}");
