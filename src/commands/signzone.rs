@@ -48,14 +48,18 @@ use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
 use domain::sign::crypto::common::KeyPair;
 use domain::sign::denial::config::DenialConfig;
+use domain::sign::denial::nsec::GenerateNsecConfig;
 use domain::sign::denial::nsec3::{
-    Nsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
+    GenerateNsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode,
+    OnDemandNsec3HashProvider,
 };
 use domain::sign::error::{FromBytesError, SigningError};
 use domain::sign::keys::keymeta::DesignatedSigningKey;
 use domain::sign::keys::{DnssecSigningKey, SigningKey};
 use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
-use domain::sign::signatures::strategy::{DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy};
+use domain::sign::signatures::strategy::{
+    DefaultSigningKeyUsageStrategy, FixedRrsigValidityPeriodStrategy, SigningKeyUsageStrategy,
+};
 use domain::sign::traits::{Signable, SignableZoneInPlace};
 use domain::sign::{SecretKeyBytes, SigningConfig};
 use domain::utils::base64;
@@ -851,7 +855,10 @@ impl SignZone {
             );
         }
 
-        let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _> = match signing_mode {
+        let rrsig_validity_strategy =
+            FixedRrsigValidityPeriodStrategy::new(self.inception, self.expiration);
+
+        let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -869,7 +876,7 @@ impl SignZone {
                     );
                     let params =
                         Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-                    let mut nsec3_config = Nsec3Config::new(params, opt_out, hash_provider);
+                    let mut nsec3_config = GenerateNsec3Config::new(params, opt_out, hash_provider);
                     if self.invoked_as_ldns {
                         nsec3_config = nsec3_config
                             .with_ttl_mode(Nsec3ParamTtlMode::fixed(Ttl::from_secs(3600)));
@@ -877,15 +884,22 @@ impl SignZone {
                     SigningConfig::new(
                         DenialConfig::Nsec3(nsec3_config, vec![]),
                         !self.do_not_add_keys_to_zone,
+                        rrsig_validity_strategy,
                     )
                 } else {
-                    SigningConfig::new(DenialConfig::Nsec, !self.do_not_add_keys_to_zone)
+                    SigningConfig::new(
+                        DenialConfig::Nsec(GenerateNsecConfig::new()),
+                        !self.do_not_add_keys_to_zone,
+                        rrsig_validity_strategy,
+                    )
                 }
             }
 
-            SigningMode::None => {
-                SigningConfig::new(DenialConfig::AlreadyPresent, !self.do_not_add_keys_to_zone)
-            }
+            SigningMode::None => SigningConfig::new(
+                DenialConfig::AlreadyPresent,
+                !self.do_not_add_keys_to_zone,
+                rrsig_validity_strategy,
+            ),
         };
 
         records
@@ -912,6 +926,7 @@ impl SignZone {
                     &mut records,
                     signing_keys,
                     &zonemd_rrs,
+                    rrsig_validity_strategy,
                 )
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
@@ -919,7 +934,7 @@ impl SignZone {
 
         let nsec3_hashes = match signing_config.denial {
             DenialConfig::AlreadyPresent => None,
-            DenialConfig::Nsec => None,
+            DenialConfig::Nsec(_) => None,
             DenialConfig::Nsec3(nsec3_config, _) => Some(nsec3_config.hash_provider),
             DenialConfig::TransitioningNsecToNsec3(..) => todo!(),
             DenialConfig::TransitioningNsec3ToNsec(..) => todo!(),
@@ -1323,8 +1338,7 @@ impl SignZone {
         public_key: Key<Bytes>,
     ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
         let key_pair = KeyPair::from_bytes(private_key, public_key.raw_public_key())?;
-        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair)
-            .with_validity(self.inception, self.expiration);
+        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair);
         Ok(signing_key)
     }
 
@@ -1533,16 +1547,18 @@ impl SignZone {
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         keys: &[DnssecSigningKey<Bytes, KeyPair>],
         zonemd_rrs: &[Record<StoredName, StoredRecordData>],
+        rrsig_validity_strategy: FixedRrsigValidityPeriodStrategy,
     ) -> Result<(), SigningError>
     where
         KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
     {
         if !zonemd_rrs.is_empty() {
             let zonemd_rrset = Rrset::new(zonemd_rrs);
-            let new_rrsig = zonemd_rrset.sign::<KeyStrat>(apex, keys)?.pop().unwrap();
+            let mut new_rrsig_recs =
+                zonemd_rrset.sign::<KeyStrat, _>(apex, keys, rrsig_validity_strategy)?;
             records.update_data(|rr| {
                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
-            }, new_rrsig.into_data());
+            }, new_rrsig_recs.rrsigs.pop().unwrap().into_data().into());
         }
 
         Ok(())
@@ -1858,7 +1874,7 @@ impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, k)| {
-                        let new_alg = seen_algs.insert(k.algorithm());
+                        let new_alg = seen_algs.insert(k.signing_key().algorithm());
                         (k.signs_keys() || (k.signs_zone_data() && new_alg)).then_some(i)
                     })
                     .collect()
