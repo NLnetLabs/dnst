@@ -50,8 +50,7 @@ use domain::sign::crypto::common::KeyPair;
 use domain::sign::denial::config::DenialConfig;
 use domain::sign::denial::nsec::GenerateNsecConfig;
 use domain::sign::denial::nsec3::{
-    GenerateNsec3Config, Nsec3HashProvider, Nsec3OptOut, Nsec3ParamTtlMode,
-    OnDemandNsec3HashProvider,
+    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
 };
 use domain::sign::error::{FromBytesError, SigningError};
 use domain::sign::keys::keymeta::DesignatedSigningKey;
@@ -606,13 +605,6 @@ impl SignZone {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
-        let opt_out = if self.nsec3_opt_out {
-            Nsec3OptOut::OptOut
-        } else if self.nsec3_opt_out_flags_only {
-            Nsec3OptOut::OptOutFlagsOnly
-        } else {
-            Nsec3OptOut::NoOptOut
-        };
 
         let signing_mode = if self.hash_only {
             SigningMode::HashOnly
@@ -760,32 +752,11 @@ impl SignZone {
         }
 
         if self.sign_dnskeys_with_all_keys {
-            self.go_further::<AllKeyStrat>(
-                env,
-                records,
-                signing_mode,
-                opt_out,
-                &signing_keys,
-                out_file,
-            )
+            self.go_further::<AllKeyStrat>(env, records, signing_mode, &signing_keys, out_file)
         } else if self.sign_with_every_unique_algorithm {
-            self.go_further::<AllUniqStrat>(
-                env,
-                records,
-                signing_mode,
-                opt_out,
-                &signing_keys,
-                out_file,
-            )
+            self.go_further::<AllUniqStrat>(env, records, signing_mode, &signing_keys, out_file)
         } else {
-            self.go_further::<FallbackStrat>(
-                env,
-                records,
-                signing_mode,
-                opt_out,
-                &signing_keys,
-                out_file,
-            )
+            self.go_further::<FallbackStrat>(env, records, signing_mode, &signing_keys, out_file)
         }
     }
 
@@ -799,7 +770,6 @@ impl SignZone {
             MultiThreadedSorter,
         >,
         signing_mode: SigningMode,
-        opt_out: Nsec3OptOut,
         signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
         out_file: PathBuf,
     ) -> Result<(), Error> {
@@ -876,7 +846,14 @@ impl SignZone {
                     );
                     let params =
                         Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-                    let mut nsec3_config = GenerateNsec3Config::new(params, opt_out, hash_provider);
+                    let mut nsec3_config = GenerateNsec3Config::new(params, hash_provider);
+                    if self.nsec3_opt_out {
+                        nsec3_config = nsec3_config.with_opt_out();
+                    } else if self.nsec3_opt_out_flags_only {
+                        nsec3_config = nsec3_config
+                            .with_opt_out()
+                            .without_opt_out_excluding_owner_names_of_unsigned_delegations();
+                    }
                     if self.invoked_as_ldns {
                         nsec3_config = nsec3_config
                             .with_ttl_mode(Nsec3ParamTtlMode::fixed(Ttl::from_secs(3600)));
@@ -2846,8 +2823,8 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
 
         // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
-            example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. DBke1xrDb7cdNvjJChJEdtVGfr+9Xdo6ozbXgYmkPHienXyJnlw2/YFu/XfVsMfg0wd/5JR2SGfQsu5qekNtAQ==\n\
-            example.org.\t3600\tIN\tNSEC3PARAM\t1 0 1 -\n\
+            example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. 0XdDm1l2Mm8dyhtzbyQb91CmyNONs8lc9d22FUGvpjfqo8T2h0xs04x5MIfP0DjmiVnNqIyPK6sipnDqf6tCDg==\n\
+            example.org.\t3600\tIN\tNSEC3PARAM\t1 1 1 -\n\
             93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. z4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
             93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1 1 1 - K71KU6AICR5JPDJOE9J7CDNLK6D5C3UE A NS SOA RRSIG DNSKEY NSEC3PARAM\n\
             k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. HUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
@@ -2878,7 +2855,6 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
         assert_eq!(res.stderr, "");
     }
 
-    // TODO: Currently fails due to https://github.com/NLnetLabs/domain/issues/468.
     #[test]
     fn rfc_4035_nsec_signed_zone_example() {
         // Modified from the version in RFC 4035 replacing the keys used with
@@ -3013,8 +2989,8 @@ example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20150420235959 20051021000000 38353 examp
 example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
 example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
 example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
-example.\t3600\tIN\tNSEC3PARAM\t1 0 12 AABBCCDD
-example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. jb9Dw0kO4hEMpxqo1veI6HmYQGMo3bbahItqjBwLuQ4y1eKQEhGok/Ar6VPrXpPNDQgLnPQafmA6ziI3WoMLtA+vfT7wzLx0UK3ZGqcWPQp00MGNwYQfJ/QezIJteHtVDWBwXWj2xR3f/eUxJAxhPzgj4kOPHMnYMYF4o2ZVsD0=
+example.\t3600\tIN\tNSEC3PARAM\t1 1 12 AABBCCDD
+example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. EMeWCqjK1a8AmRIcl31fH2JlIwxozhyRTkuA6N/DPC6lkun6/RONLsA1ksZuY4P3b9fUcVp5/nYxo+AGNwSgr3I8VcnzhEVsDfg68grtYrcUrwhZz7TkiyLNMlMZ+krj9NpqCY1Kht/uJTrUbnG3WefBdtx3sDKa0wFY/kp/cpM=
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
