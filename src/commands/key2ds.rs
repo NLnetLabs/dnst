@@ -8,8 +8,8 @@ use clap::Parser;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::Record;
+use domain::crypto::validate::DnskeyExt;
 use domain::rdata::Ds;
-use domain::validate::DnskeyExt;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use lexopt::Arg;
 

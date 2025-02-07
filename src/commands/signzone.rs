@@ -43,26 +43,27 @@ use domain::base::iana::Class;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
+use domain::crypto::common::KeyPair;
+use domain::crypto::misc::Key;
+use domain::crypto::validate::Nsec3HashError;
+use domain::dnssec::sign::denial::config::DenialConfig;
+use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
+use domain::dnssec::sign::denial::nsec3::{
+    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
+};
+use domain::dnssec::sign::error::{FromBytesError, SigningError};
+use domain::dnssec::sign::keys::keymeta::DesignatedSigningKey;
+use domain::dnssec::sign::keys::{DnssecSigningKey, SigningKey};
+use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::dnssec::sign::signatures::strategy::{
+    DefaultSigningKeyUsageStrategy, SigningKeyUsageStrategy,
+};
+use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
+use domain::dnssec::sign::{SecretKeyBytes, SigningConfig};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
-use domain::sign::crypto::common::KeyPair;
-use domain::sign::denial::config::DenialConfig;
-use domain::sign::denial::nsec::GenerateNsecConfig;
-use domain::sign::denial::nsec3::{
-    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
-};
-use domain::sign::error::{FromBytesError, SigningError};
-use domain::sign::keys::keymeta::DesignatedSigningKey;
-use domain::sign::keys::{DnssecSigningKey, SigningKey};
-use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
-use domain::sign::signatures::strategy::{
-    DefaultSigningKeyUsageStrategy, FixedRrsigValidityPeriodStrategy, SigningKeyUsageStrategy,
-};
-use domain::sign::traits::{Signable, SignableZoneInPlace};
-use domain::sign::{SecretKeyBytes, SigningConfig};
 use domain::utils::base64;
-use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
@@ -825,10 +826,7 @@ impl SignZone {
             );
         }
 
-        let rrsig_validity_strategy =
-            FixedRrsigValidityPeriodStrategy::new(self.inception, self.expiration);
-
-        let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _, _> = match signing_mode {
+        let mut signing_config: SigningConfig<_, _, _, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -859,15 +857,17 @@ impl SignZone {
                             .with_ttl_mode(Nsec3ParamTtlMode::fixed(Ttl::from_secs(3600)));
                     }
                     SigningConfig::new(
-                        DenialConfig::Nsec3(nsec3_config, vec![]),
+                        DenialConfig::Nsec3(nsec3_config),
                         !self.do_not_add_keys_to_zone,
-                        rrsig_validity_strategy,
+                        self.inception,
+                        self.expiration,
                     )
                 } else {
                     SigningConfig::new(
                         DenialConfig::Nsec(GenerateNsecConfig::new()),
                         !self.do_not_add_keys_to_zone,
-                        rrsig_validity_strategy,
+                        self.inception,
+                        self.expiration,
                     )
                 }
             }
@@ -875,12 +875,13 @@ impl SignZone {
             SigningMode::None => SigningConfig::new(
                 DenialConfig::AlreadyPresent,
                 !self.do_not_add_keys_to_zone,
-                rrsig_validity_strategy,
+                self.inception,
+                self.expiration,
             ),
         };
 
         records
-            .sign_zone(&mut signing_config, signing_keys)
+            .sign_zone::<_, _, KeyStrat, _>(&mut signing_config, signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
@@ -903,7 +904,8 @@ impl SignZone {
                     &mut records,
                     signing_keys,
                     &zonemd_rrs,
-                    rrsig_validity_strategy,
+                    self.inception,
+                    self.expiration,
                 )
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
@@ -912,9 +914,7 @@ impl SignZone {
         let nsec3_hashes = match signing_config.denial {
             DenialConfig::AlreadyPresent => None,
             DenialConfig::Nsec(_) => None,
-            DenialConfig::Nsec3(nsec3_config, _) => Some(nsec3_config.hash_provider),
-            DenialConfig::TransitioningNsecToNsec3(..) => todo!(),
-            DenialConfig::TransitioningNsec3ToNsec(..) => todo!(),
+            DenialConfig::Nsec3(nsec3_config) => Some(nsec3_config.hash_provider),
         };
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
@@ -1524,7 +1524,8 @@ impl SignZone {
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         keys: &[DnssecSigningKey<Bytes, KeyPair>],
         zonemd_rrs: &[Record<StoredName, StoredRecordData>],
-        rrsig_validity_strategy: FixedRrsigValidityPeriodStrategy,
+        inception: Timestamp,
+        expiration: Timestamp,
     ) -> Result<(), SigningError>
     where
         KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
@@ -1532,7 +1533,7 @@ impl SignZone {
         if !zonemd_rrs.is_empty() {
             let zonemd_rrset = Rrset::new(zonemd_rrs);
             let mut new_rrsig_recs =
-                zonemd_rrset.sign::<KeyStrat, _>(apex, keys, rrsig_validity_strategy)?;
+                zonemd_rrset.sign::<KeyStrat>(apex, keys, inception, expiration)?;
             records.update_data(|rr| {
                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
             }, new_rrsig_recs.rrsigs.pop().unwrap().into_data().into());
@@ -1630,7 +1631,7 @@ impl Commented<()> for Dnskey<Bytes> {
             writer.write_str(" (zsk)")?;
         }
         let owner = record.owner().clone();
-        let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
+        let key = domain::crypto::misc::Key::from_dnskey(owner, self.clone()).unwrap();
         let key_size = key.key_size();
         writer.write_fmt(format_args!(", size = {key_size}b}}"))
     }
@@ -1743,7 +1744,7 @@ impl<'a> From<RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>
 /// default Rayon behaviour of using as many threads as their are CPU cores?
 struct MultiThreadedSorter;
 
-impl domain::sign::records::Sorter for MultiThreadedSorter {
+impl domain::dnssec::sign::records::Sorter for MultiThreadedSorter {
     fn sort_by<N, D, F>(records: &mut Vec<Record<N, D>>, compare: F)
     where
         F: Fn(&Record<N, D>, &Record<N, D>) -> Ordering + Sync,
@@ -1976,7 +1977,7 @@ impl Nsec3HashProvider<StoredName, Bytes> for CapturingNsec3HashProvider {
         apex_owner: &StoredName,
         unhashed_owner_name: &StoredName,
         is_ent: bool,
-    ) -> Result<StoredName, domain::validate::Nsec3HashError> {
+    ) -> Result<StoredName, Nsec3HashError> {
         let hashed_owner_name =
             self.provider
                 .get_or_create(apex_owner, unhashed_owner_name, is_ent)?;
