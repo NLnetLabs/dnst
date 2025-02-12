@@ -8,7 +8,7 @@ use clap::ValueEnum;
 use domain::base::iana::{DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::validate::Key;
+use domain::crypto::misc::Key;
 use lexopt::Arg;
 
 use crate::env::Env;
@@ -17,7 +17,7 @@ use crate::parse::parse_name;
 use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::sign::crypto::common::{self, GenerateParams};
+use domain::crypto::common::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -416,7 +416,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
-    use domain::sign::crypto::common::GenerateParams;
+    use domain::crypto::common::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {

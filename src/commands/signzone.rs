@@ -43,26 +43,24 @@ use domain::base::iana::Class;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
+use domain::crypto::common::KeyPair;
+use domain::crypto::misc::Key;
+use domain::crypto::validate::Nsec3HashError;
+use domain::dnssec::sign::denial::config::DenialConfig;
+use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
+use domain::dnssec::sign::denial::nsec3::{
+    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
+};
+use domain::dnssec::sign::error::{FromBytesError, SigningError};
+use domain::dnssec::sign::keys::SigningKey;
+use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
+use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
+use domain::dnssec::sign::{SecretKeyBytes, SigningConfig};
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
-use domain::sign::crypto::common::KeyPair;
-use domain::sign::denial::config::DenialConfig;
-use domain::sign::denial::nsec::GenerateNsecConfig;
-use domain::sign::denial::nsec3::{
-    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
-};
-use domain::sign::error::{FromBytesError, SigningError};
-use domain::sign::keys::keymeta::DesignatedSigningKey;
-use domain::sign::keys::{DnssecSigningKey, SigningKey};
-use domain::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
-use domain::sign::signatures::strategy::{
-    DefaultSigningKeyUsageStrategy, FixedRrsigValidityPeriodStrategy, SigningKeyUsageStrategy,
-};
-use domain::sign::traits::{Signable, SignableZoneInPlace};
-use domain::sign::{SecretKeyBytes, SigningConfig};
 use domain::utils::base64;
-use domain::validate::Key;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
@@ -70,7 +68,6 @@ use lexopt::Arg;
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
-use smallvec::SmallVec;
 
 use crate::env::{Env, Stream};
 use crate::error::{Context, Error};
@@ -638,7 +635,7 @@ impl SignZone {
         }
 
         // Read the zone file.
-        let records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
+        let mut records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
         // Extract the SOA RR from the loaded zone.
         let Some(soa_rr) = records.find_soa() else {
@@ -655,6 +652,8 @@ impl SignZone {
             )
             .into());
         };
+
+        let dnskey_rrset = records.find_apex_dnskey(soa_rr.owner());
 
         // Extract and validate the DNSKEY RRs from the loaded zone.
         let mut found_public_keys = vec![];
@@ -678,7 +677,7 @@ impl SignZone {
         // public key file and validate that its owner matches that of the
         // zone apex. Unlike ldns-signzone we don't use a generated public key
         // if these attempts fail.
-        let mut signing_keys: Vec<DnssecSigningKey<Bytes, KeyPair>> = vec![];
+        let mut signing_keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
 
         'next_key_path: for key_path in &self.key_paths {
             let key_path = env.in_cwd(key_path).into_owned();
@@ -705,7 +704,7 @@ impl SignZone {
                     //     public_key.key_tag(),
                     //     private_key_path.display()
                     // );
-                    signing_keys.push(DnssecSigningKey::from(signing_key));
+                    signing_keys.push(signing_key);
                     continue 'next_key_path;
                 }
             }
@@ -740,7 +739,7 @@ impl SignZone {
                 })?;
 
             // Store the created signing key.
-            signing_keys.push(DnssecSigningKey::from(signing_key));
+            signing_keys.push(signing_key);
 
             // TODO: Log
             // println!(
@@ -751,17 +750,103 @@ impl SignZone {
             // );
         }
 
-        if self.sign_dnskeys_with_all_keys {
-            self.go_further::<AllKeyStrat>(env, records, signing_mode, &signing_keys, out_file)
-        } else if self.sign_with_every_unique_algorithm {
-            self.go_further::<AllUniqStrat>(env, records, signing_mode, &signing_keys, out_file)
-        } else {
-            self.go_further::<FallbackStrat>(env, records, signing_mode, &signing_keys, out_file)
+        // First split the key into Key Signing Keys (KSK) that sign the
+        // DNSKEY RRset and Zone Signing Keys (ZSK) that sign the zone.
+        let mut key_signing_keys = Vec::new();
+        let mut zone_signing_keys = Vec::new();
+        for k in &signing_keys {
+            if k.is_secure_entry_point() {
+                key_signing_keys.push(k);
+            } else {
+                zone_signing_keys.push(k);
+            }
         }
+
+        if key_signing_keys.is_empty() {
+            // Sign the DNSKEY RRset with the zone signing keys.
+            key_signing_keys.append(&mut zone_signing_keys.clone());
+        } else if zone_signing_keys.is_empty() {
+            // Sign the zone with the key signing keys.
+            zone_signing_keys.append(&mut key_signing_keys.clone());
+        } else if self.sign_dnskeys_with_all_keys {
+            // Sign DNSKEY RRset with all keys. Add the ZSKs to the KSKs.
+            key_signing_keys.append(&mut zone_signing_keys.clone());
+        } else if self.sign_with_every_unique_algorithm {
+            // Add ZSks to KSKs if the ZSKs have an algorithm that is not
+            // currently used by the KSKs.
+            let mut algorithms = HashSet::new();
+            for k in &key_signing_keys {
+                algorithms.insert(k.algorithm());
+            }
+            for k in &zone_signing_keys {
+                if !algorithms.contains(&k.algorithm()) {
+                    // ldns-signzone add just one key per algorithm.
+                    algorithms.insert(k.algorithm());
+
+                    key_signing_keys.push(k);
+                }
+            }
+        }
+
+        let mut dnskey_extra = Vec::new();
+        let mut all_dnskeys = Vec::new();
+        let empty_records: [Record<_, _>; 0] = [];
+        for r in dnskey_rrset
+            .as_ref()
+            .map_or(empty_records.iter(), |r| r.iter())
+        {
+            all_dnskeys.push(r.clone());
+        }
+        if !self.do_not_add_keys_to_zone {
+            let dnskey_ttl = dnskey_rrset.as_ref().map_or(soa_rr.ttl(), |r| r.ttl());
+            // Make sure that the DNSKEY RRset contains all keys.
+            for k in &signing_keys {
+                let pubkey = k.public_key().to_dnskey();
+                if !dnskey_rrset
+                    .as_ref()
+                    .map_or(empty_records.iter(), |r| r.iter())
+                    .any(|k| {
+                        if let ZoneRecordData::Dnskey(dnskey) = k.data() {
+                            *dnskey == pubkey
+                        } else {
+                            false
+                        }
+                    })
+                {
+                    let pubkey: Dnskey<Bytes> = pubkey.convert();
+                    let data = ZoneRecordData::Dnskey(pubkey);
+                    let record =
+                        Record::new(soa_rr.owner().clone(), soa_rr.class(), dnskey_ttl, data);
+                    dnskey_extra.push(record.clone());
+                    all_dnskeys.push(record);
+                }
+            }
+        }
+
+        let all_dnskeys = Rrset::new(&all_dnskeys);
+
+        let mut dnskey_rrsigs = Vec::new();
+        if let Ok(all_dnskeys) = all_dnskeys {
+            for k in key_signing_keys {
+                let rrsig = sign_rrset(k, &all_dnskeys, self.inception, self.expiration).unwrap();
+                let data = ZoneRecordData::Rrsig(rrsig.data().clone());
+                let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
+                dnskey_rrsigs.push(record);
+            }
+        }
+
+        for r in dnskey_extra {
+            records.insert(r).unwrap();
+        }
+        for r in dnskey_rrsigs {
+            records.insert(r).unwrap();
+        }
+
+        self.go_further(env, records, signing_mode, &zone_signing_keys, out_file)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn go_further<KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>>(
+    fn go_further(
         &self,
         env: impl Env,
         mut records: SortedRecords<
@@ -770,7 +855,7 @@ impl SignZone {
             MultiThreadedSorter,
         >,
         signing_mode: SigningMode,
-        signing_keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        signing_keys: &[&SigningKey<Bytes, KeyPair>],
         out_file: PathBuf,
     ) -> Result<(), Error> {
         let mut writer = if out_file.as_os_str() == "-" {
@@ -825,10 +910,7 @@ impl SignZone {
             );
         }
 
-        let rrsig_validity_strategy =
-            FixedRrsigValidityPeriodStrategy::new(self.inception, self.expiration);
-
-        let mut signing_config: SigningConfig<_, _, _, KeyStrat, _, _, _> = match signing_mode {
+        let mut signing_config: SigningConfig<_, _, _, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -859,23 +941,23 @@ impl SignZone {
                             .with_ttl_mode(Nsec3ParamTtlMode::fixed(Ttl::from_secs(3600)));
                     }
                     SigningConfig::new(
-                        DenialConfig::Nsec3(nsec3_config, vec![]),
-                        !self.do_not_add_keys_to_zone,
-                        rrsig_validity_strategy,
+                        DenialConfig::Nsec3(nsec3_config),
+                        self.inception,
+                        self.expiration,
                     )
                 } else {
                     SigningConfig::new(
                         DenialConfig::Nsec(GenerateNsecConfig::new()),
-                        !self.do_not_add_keys_to_zone,
-                        rrsig_validity_strategy,
+                        self.inception,
+                        self.expiration,
                     )
                 }
             }
 
             SigningMode::None => SigningConfig::new(
                 DenialConfig::AlreadyPresent,
-                !self.do_not_add_keys_to_zone,
-                rrsig_validity_strategy,
+                self.inception,
+                self.expiration,
             ),
         };
 
@@ -898,12 +980,13 @@ impl SignZone {
             }
 
             if signing_mode == SigningMode::HashAndSign {
-                Self::update_zonemd_rrsig::<KeyStrat>(
+                Self::update_zonemd_rrsig(
                     &apex,
                     &mut records,
                     signing_keys,
                     &zonemd_rrs,
-                    rrsig_validity_strategy,
+                    self.inception,
+                    self.expiration,
                 )
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
@@ -912,9 +995,7 @@ impl SignZone {
         let nsec3_hashes = match signing_config.denial {
             DenialConfig::AlreadyPresent => None,
             DenialConfig::Nsec(_) => None,
-            DenialConfig::Nsec3(nsec3_config, _) => Some(nsec3_config.hash_provider),
-            DenialConfig::TransitioningNsecToNsec3(..) => todo!(),
-            DenialConfig::TransitioningNsec3ToNsec(..) => todo!(),
+            DenialConfig::Nsec3(nsec3_config) => Some(nsec3_config.hash_provider),
         };
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
@@ -981,14 +1062,14 @@ impl SignZone {
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
             self.writeln_rr(&mut writer, record)?;
             if self.order_rrsigs_after_the_rtype_they_cover {
-                if let Some(record) = records.iter().find(|r| {
+                for r in records.iter().filter(|r| {
                     if let ZoneRecordData::Rrsig(rrsig) = r.data() {
                         rrsig.type_covered() == Rtype::SOA
                     } else {
                         false
                     }
                 }) {
-                    self.writeln_rr(&mut writer, record)?;
+                    self.writeln_rr(&mut writer, r)?;
                 }
                 if self.extra_comments {
                     writer.write_str(";\n")?;
@@ -1519,23 +1600,21 @@ impl SignZone {
         Ok(zonemd_rrs)
     }
 
-    fn update_zonemd_rrsig<KeyStrat>(
+    fn update_zonemd_rrsig(
         apex: &StoredName,
         records: &mut SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-        keys: &[DnssecSigningKey<Bytes, KeyPair>],
+        keys: &[&SigningKey<Bytes, KeyPair>],
         zonemd_rrs: &[Record<StoredName, StoredRecordData>],
-        rrsig_validity_strategy: FixedRrsigValidityPeriodStrategy,
-    ) -> Result<(), SigningError>
-    where
-        KeyStrat: SigningKeyUsageStrategy<Bytes, KeyPair>,
-    {
+        inception: Timestamp,
+        expiration: Timestamp,
+    ) -> Result<(), SigningError> {
         if !zonemd_rrs.is_empty() {
-            let zonemd_rrset = Rrset::new(zonemd_rrs);
-            let mut new_rrsig_recs =
-                zonemd_rrset.sign::<KeyStrat, _>(apex, keys, rrsig_validity_strategy)?;
+            let zonemd_rrset =
+                Rrset::new(zonemd_rrs).expect("zonemd_rrs is not empty so new should not fail");
+            let mut new_rrsig_recs = zonemd_rrset.sign(apex, keys, inception, expiration)?;
             records.update_data(|rr| {
                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
-            }, new_rrsig_recs.rrsigs.pop().unwrap().into_data().into());
+            }, new_rrsig_recs.pop().unwrap().into_data().into());
         }
 
         Ok(())
@@ -1630,7 +1709,7 @@ impl Commented<()> for Dnskey<Bytes> {
             writer.write_str(" (zsk)")?;
         }
         let owner = record.owner().clone();
-        let key = domain::validate::Key::from_dnskey(owner, self.clone()).unwrap();
+        let key = domain::crypto::misc::Key::from_dnskey(owner, self.clone()).unwrap();
         let key_size = key.key_size();
         writer.write_fmt(format_args!(", size = {key_size}b}}"))
     }
@@ -1743,122 +1822,13 @@ impl<'a> From<RecordsIter<'a, StoredName, ZoneRecordData<Bytes, StoredName>>>
 /// default Rayon behaviour of using as many threads as their are CPU cores?
 struct MultiThreadedSorter;
 
-impl domain::sign::records::Sorter for MultiThreadedSorter {
+impl domain::dnssec::sign::records::Sorter for MultiThreadedSorter {
     fn sort_by<N, D, F>(records: &mut Vec<Record<N, D>>, compare: F)
     where
         F: Fn(&Record<N, D>, &Record<N, D>) -> Ordering + Sync,
         Record<N, D>: CanonicalOrd + Send,
     {
         records.par_sort_by(compare);
-    }
-}
-
-//------------ FallbackStrat -------------------------------------------------
-
-struct FallbackStrat;
-
-impl SigningKeyUsageStrategy<Bytes, KeyPair> for FallbackStrat {
-    const NAME: &'static str = "Fallback to ZSKs/KSKs if the other is empty";
-
-    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
-        candidate_keys: &[DSK],
-        rtype: Option<Rtype>,
-    ) -> SmallVec<[usize; 4]> {
-        match rtype {
-            // TODO: Do we need to treat CDS and CDNSKEY RRs like DNSKEY RRs?
-            Some(Rtype::DNSKEY) => {
-                // Use the default keys for signing DNSKEY RRs, i.e. keys
-                // intended to be used as KSKs.
-                let keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
-                    candidate_keys,
-                    rtype,
-                );
-
-                // But if there are no such keys, fallback to using the keys
-                // used to sign other record types, i.e. keys intended to be
-                // used as ZSKs.
-                if keys.is_empty() {
-                    Self::select_signing_keys_for_rtype(candidate_keys, None)
-                } else {
-                    keys
-                }
-            }
-
-            _ => {
-                // Use the default keys for signing non-DNSKEY RRs, i.e. keys
-                // intended to be used as ZSKs.
-                let keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
-                    candidate_keys,
-                    rtype,
-                );
-
-                // But if there are no such keys, fallback to using the keys
-                // used to sign DNSKEY RRs, i.e. keys intended to be used as
-                // KSKs.
-                if keys.is_empty() {
-                    Self::select_signing_keys_for_rtype(candidate_keys, Some(Rtype::DNSKEY))
-                } else {
-                    keys
-                }
-            }
-        }
-    }
-}
-
-struct AllKeyStrat;
-
-impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllKeyStrat {
-    const NAME: &'static str = "All keys (KSK and ZSK)";
-
-    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
-        candidate_keys: &[DSK],
-        rtype: Option<Rtype>,
-    ) -> SmallVec<[usize; 4]> {
-        match rtype {
-            Some(Rtype::DNSKEY) => {
-                let mut keys = DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
-                    candidate_keys,
-                    rtype,
-                );
-                keys.extend(
-                    DefaultSigningKeyUsageStrategy::select_signing_keys_for_rtype(
-                        candidate_keys,
-                        None,
-                    ),
-                );
-                keys
-            }
-
-            _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
-        }
-    }
-}
-
-#[derive(Default)]
-struct AllUniqStrat;
-
-impl SigningKeyUsageStrategy<Bytes, KeyPair> for AllUniqStrat {
-    const NAME: &'static str = "Unique algorithms (all KSK + unique ZSK)";
-
-    fn select_signing_keys_for_rtype<DSK: DesignatedSigningKey<Bytes, KeyPair>>(
-        candidate_keys: &[DSK],
-        rtype: Option<Rtype>,
-    ) -> SmallVec<[usize; 4]> {
-        match rtype {
-            Some(Rtype::DNSKEY) => {
-                let mut seen_algs = HashSet::new();
-                candidate_keys
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, k)| {
-                        let new_alg = seen_algs.insert(k.signing_key().algorithm());
-                        (k.signs_keys() || (k.signs_zone_data() && new_alg)).then_some(i)
-                    })
-                    .collect()
-            }
-
-            _ => FallbackStrat::select_signing_keys_for_rtype(candidate_keys, rtype),
-        }
     }
 }
 
@@ -1976,7 +1946,7 @@ impl Nsec3HashProvider<StoredName, Bytes> for CapturingNsec3HashProvider {
         apex_owner: &StoredName,
         unhashed_owner_name: &StoredName,
         is_ent: bool,
-    ) -> Result<StoredName, domain::validate::Nsec3HashError> {
+    ) -> Result<StoredName, Nsec3HashError> {
         let hashed_owner_name =
             self.provider
                 .get_or_create(apex_owner, unhashed_owner_name, is_ent)?;
@@ -3434,6 +3404,224 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
             &zone_file_path,
             &ksk_path,
             &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn multiple_algorithms_no_sign_with_every_unique_algorithm() {
+        let expected_zone = r###"example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400
+example.\t86400\tIN\tRRSIG\tSOA 15 1 86400 20240101010101 20240101010101 39188 example. ckYQDK2HeLK09CjpO76H0oT5CGjc6WcKYihl0zkS79VYzcj2Cspifcf3V5Sft8QDmGzjtBqqQvGYPsbzZwlYCQ==
+example.\t86400\tIN\tNS\tns1.example.
+example.\t86400\tIN\tNS\tns2.example.
+example.\t86400\tIN\tRRSIG\tNS 15 1 86400 20240101010101 20240101010101 39188 example. A06Y3VSm8/G3YhuxJ3yHNI71iTi9UcyG8zIp7bHuXkhhSFDT4kRQMahlaNRP30HvaJDBJz9vy9hXmmbuc28cCQ==
+example.\t86400\tIN\tNSEC\tns1.example. NS SOA RRSIG NSEC DNSKEY
+example.\t86400\tIN\tRRSIG\tNSEC 15 1 86400 20240101010101 20240101010101 39188 example. R3mhoKHFOusQOU0l6vn7vvUPGLnkoOeYQ9o2HmcsQ3PxVpJ1+oQc7igxycgQLw9JLSIz8p2vjPXfQBm+7qE+AQ==
+example.\t86400\tIN\tDNSKEY\t256 3 15 AnxyASt7Bws/Y883BjIsK+Vcl2rlR7fnGqoVHf+wY5o= ;{id = 39188 (zsk), size = 256b}
+example.\t86400\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t86400\tIN\tRRSIG\tDNSKEY 8 1 86400 20240101010101 20240101010101 31967 example. N0YniZN9ZZqFh6xzB+q63GpRNfC8SGWmCB7GovxoLdM7czL7g7Sd7ADAvLqrwguFa4aPoT/dof8NBphh4a4DpQjfcp6AIRAUMUQxA5ELsNN6vvLK2HM8EIN6d7J8H0uyEcDs2b0X84Zgyl5Peg9L8BRfReORU9eyUgexOmO8TGs=
+ns1.example.\t3600\tIN\tA\t203.0.113.63
+ns1.example.\t3600\tIN\tRRSIG\tA 15 2 3600 20240101010101 20240101010101 39188 example. LVmEy45TIoFZgoSryXQbZjUCLpwYUerR2nt9EK6WcSgIkeGkj3IDRGqQfQVyrutjohhlxdkDnFBE4dT5nBwnBg==
+ns1.example.\t86400\tIN\tNSEC\tns2.example. A RRSIG NSEC
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. GqyC25UtODem9X3uVI5gLQ/OLFBvSwdA/bwnj1jB8qP9NhD03bLDfuKzm8QvSJvkq7ERBcHibpEL+lZUL5HrDw==
+ns2.example.\t3600\tIN\tAAAA\t2001:db8::63
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 15 2 3600 20240101010101 20240101010101 39188 example. Fikp9s+ht+B9ncP0GsjWce3Oz2wtixNl8RZAZe+95kaHEL2w+hfNSO30ox8dTPOe5Yih0jJTu1bMmvRySbVXCg==
+ns2.example.\t86400\tIN\tNSEC\texample. AAAA RRSIG NSEC
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. fTkEc85fTdlicaZ/D6YIbMpaZFFZdbpA98vyPjZfCC2aoXvFjTl/RmigLd0L0hMSYW+jIlSANzzKYO7Oj7iFDA==
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+015+39188");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn multiple_algorithms_with_sign_with_every_unique_algorithm() {
+        let expected_zone = r###"example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400
+example.\t86400\tIN\tRRSIG\tSOA 15 1 86400 20240101010101 20240101010101 39188 example. ckYQDK2HeLK09CjpO76H0oT5CGjc6WcKYihl0zkS79VYzcj2Cspifcf3V5Sft8QDmGzjtBqqQvGYPsbzZwlYCQ==
+example.\t86400\tIN\tNS\tns1.example.
+example.\t86400\tIN\tNS\tns2.example.
+example.\t86400\tIN\tRRSIG\tNS 15 1 86400 20240101010101 20240101010101 39188 example. A06Y3VSm8/G3YhuxJ3yHNI71iTi9UcyG8zIp7bHuXkhhSFDT4kRQMahlaNRP30HvaJDBJz9vy9hXmmbuc28cCQ==
+example.\t86400\tIN\tNSEC\tns1.example. NS SOA RRSIG NSEC DNSKEY
+example.\t86400\tIN\tRRSIG\tNSEC 15 1 86400 20240101010101 20240101010101 39188 example. R3mhoKHFOusQOU0l6vn7vvUPGLnkoOeYQ9o2HmcsQ3PxVpJ1+oQc7igxycgQLw9JLSIz8p2vjPXfQBm+7qE+AQ==
+example.\t86400\tIN\tDNSKEY\t256 3 15 AnxyASt7Bws/Y883BjIsK+Vcl2rlR7fnGqoVHf+wY5o= ;{id = 39188 (zsk), size = 256b}
+example.\t86400\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t86400\tIN\tRRSIG\tDNSKEY 8 1 86400 20240101010101 20240101010101 31967 example. N0YniZN9ZZqFh6xzB+q63GpRNfC8SGWmCB7GovxoLdM7czL7g7Sd7ADAvLqrwguFa4aPoT/dof8NBphh4a4DpQjfcp6AIRAUMUQxA5ELsNN6vvLK2HM8EIN6d7J8H0uyEcDs2b0X84Zgyl5Peg9L8BRfReORU9eyUgexOmO8TGs=
+example.\t86400\tIN\tRRSIG\tDNSKEY 15 1 86400 20240101010101 20240101010101 39188 example. a1uf/OWJ2eP2mTDVM6o3CwRjr/0AjHxYDsyw4xoqOr/5iy+W4wSnspydhLH2Fe5V5GQj+J332Nz02qwqzy/LDQ==
+ns1.example.\t3600\tIN\tA\t203.0.113.63
+ns1.example.\t3600\tIN\tRRSIG\tA 15 2 3600 20240101010101 20240101010101 39188 example. LVmEy45TIoFZgoSryXQbZjUCLpwYUerR2nt9EK6WcSgIkeGkj3IDRGqQfQVyrutjohhlxdkDnFBE4dT5nBwnBg==
+ns1.example.\t86400\tIN\tNSEC\tns2.example. A RRSIG NSEC
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. GqyC25UtODem9X3uVI5gLQ/OLFBvSwdA/bwnj1jB8qP9NhD03bLDfuKzm8QvSJvkq7ERBcHibpEL+lZUL5HrDw==
+ns2.example.\t3600\tIN\tAAAA\t2001:db8::63
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 15 2 3600 20240101010101 20240101010101 39188 example. Fikp9s+ht+B9ncP0GsjWce3Oz2wtixNl8RZAZe+95kaHEL2w+hfNSO30ox8dTPOe5Yih0jJTu1bMmvRySbVXCg==
+ns2.example.\t86400\tIN\tNSEC\texample. AAAA RRSIG NSEC
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. fTkEc85fTdlicaZ/D6YIbMpaZFFZdbpA98vyPjZfCC2aoXvFjTl/RmigLd0L0hMSYW+jIlSANzzKYO7Oj7iFDA==
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+015+39188");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-T",
+            "-R",
+            "-U",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn multiple_algorithms_with_sign_with_every_unique_algorithm_extra_zsk() {
+        let expected_zone = r###"example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400
+example.\t86400\tIN\tRRSIG\tSOA 8 1 86400 20240101010101 20240101010101 38353 example. I5rP5chAQ2IeI+Lcu+NPe7N5YMW8CQ4VGPhANiKEiLJAc1qeW0X7LAj2RQprCkxY9lLayp/ldwdH0471J8TP6uEV+bVf5YVDq115zdPOuo0gIc0ZrrJGA6DSbmF0RDQFfEAuHQXeY7u3sg5zEn6ctFbjV/Ye2gpAtZzgMDdz98o=
+example.\t86400\tIN\tRRSIG\tSOA 15 1 86400 20240101010101 20240101010101 39188 example. ckYQDK2HeLK09CjpO76H0oT5CGjc6WcKYihl0zkS79VYzcj2Cspifcf3V5Sft8QDmGzjtBqqQvGYPsbzZwlYCQ==
+example.\t86400\tIN\tNS\tns1.example.
+example.\t86400\tIN\tNS\tns2.example.
+example.\t86400\tIN\tRRSIG\tNS 8 1 86400 20240101010101 20240101010101 38353 example. ic/iYPEWbPaeVkBjO1x3Ykqtl7xLWnfGVKyUJ71sJ/u6OipAnHidqjMthJyWEGc3+Zg868OoFEABqJjJeUeyyEyOiYbvwHsjtejXUP8j0L1xET1ktAOJ0mLcQ1qdz7/SnUhxfxQXRfluC2GYhvzvwqy+R5T+VyELChukTGdr/bM=
+example.\t86400\tIN\tRRSIG\tNS 15 1 86400 20240101010101 20240101010101 39188 example. A06Y3VSm8/G3YhuxJ3yHNI71iTi9UcyG8zIp7bHuXkhhSFDT4kRQMahlaNRP30HvaJDBJz9vy9hXmmbuc28cCQ==
+example.\t86400\tIN\tNSEC\tns1.example. NS SOA RRSIG NSEC DNSKEY
+example.\t86400\tIN\tRRSIG\tNSEC 8 1 86400 20240101010101 20240101010101 38353 example. DrIr6ZSjABNVBt7hAvoUIrcGJ5ytdWdP1G0jVqI+y01i+eZunsUjLJBLCGMBB98tz6FLW9HyUbe7o/x9I6jXz4cE7stip8Wxb+/TBcJwTQOYCZ5nfi4NLZ2zqpOdzJ2urRcitqhf8O6itsqwAq29BGnxOk/rlWjL27w3CdvmoJs=
+example.\t86400\tIN\tRRSIG\tNSEC 15 1 86400 20240101010101 20240101010101 39188 example. R3mhoKHFOusQOU0l6vn7vvUPGLnkoOeYQ9o2HmcsQ3PxVpJ1+oQc7igxycgQLw9JLSIz8p2vjPXfQBm+7qE+AQ==
+example.\t86400\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
+example.\t86400\tIN\tDNSKEY\t256 3 15 AnxyASt7Bws/Y883BjIsK+Vcl2rlR7fnGqoVHf+wY5o= ;{id = 39188 (zsk), size = 256b}
+example.\t86400\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t86400\tIN\tRRSIG\tDNSKEY 8 1 86400 20240101010101 20240101010101 31967 example. HMrFLtPafFjrc948B8o6Y0Q7PWeG+Dmbp66/MpLkf+04BIzi5+7NROPtLeiR2Ljlj+T0mYGCjH0cYv8/8IoQKJ3U8MmFzxjWx72smJFYsHq7/bDfEMLYQkF3ZC9cZYbeeue3m3OkSNhKhmTwcWun2Eb0zQDVNeCreG88A4YXfo8=
+example.\t86400\tIN\tRRSIG\tDNSKEY 15 1 86400 20240101010101 20240101010101 39188 example. fJnk0r7M6bj4SL5CgFet/zfo8+x6qVIdh9yb21DjzbzLGCYCd/ZbGpQU2SQtN/AsNWRhszNMpBsFvAGU58nlDA==
+ns1.example.\t3600\tIN\tA\t203.0.113.63
+ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20240101010101 20240101010101 38353 example. LUqcCem/enGx/t88s1VgxwfPuGqr1U+PFNBBFhOWU9hbl+vYVhPzw7ycKdHmR8+UUryuHJOgwYfZYIjZFLKBX3901zslR7nX99UJdTutKubOyLyn8eaz3l6gdjYr4fKryj76Z5Bss3/jtA+nGdTz+ubAOnoBw0X3hgYCwHmS6vY=
+ns1.example.\t3600\tIN\tRRSIG\tA 15 2 3600 20240101010101 20240101010101 39188 example. LVmEy45TIoFZgoSryXQbZjUCLpwYUerR2nt9EK6WcSgIkeGkj3IDRGqQfQVyrutjohhlxdkDnFBE4dT5nBwnBg==
+ns1.example.\t86400\tIN\tNSEC\tns2.example. A RRSIG NSEC
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 8 2 86400 20240101010101 20240101010101 38353 example. K7W6OzGx4I2PT7FJxx2msXo5yLUiwYT7+vvPoBdJN6im4QVbdsJ21uFNYnYgAH+OKhjry6E7ywnkvICy5diCJu5hgpI6qbFguLx3zQ5loUtF3Nz+uole+fep5Hrhf18I6g77Dd2VVh+mVW1vATmuHmWnIMu0Wd1lACzg3Xd6U0E=
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. GqyC25UtODem9X3uVI5gLQ/OLFBvSwdA/bwnj1jB8qP9NhD03bLDfuKzm8QvSJvkq7ERBcHibpEL+lZUL5HrDw==
+ns2.example.\t3600\tIN\tAAAA\t2001:db8::63
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20240101010101 20240101010101 38353 example. cYvHJhwLhHls4ChlB+cGrp4eal0NIGftZsjPNE7mTboz+2rpvLou0ykqa257DKOJL6ximQ4MDUfn6WJF4l//2t7p3iTmcDtXndyPMf9LYAczXV+MDMVDPbBGpDQyKZNr4cHZS/82Xj3K4R6I+GNXNQyFUJ/6ctwBZ3pLfoebIo8=
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 15 2 3600 20240101010101 20240101010101 39188 example. Fikp9s+ht+B9ncP0GsjWce3Oz2wtixNl8RZAZe+95kaHEL2w+hfNSO30ox8dTPOe5Yih0jJTu1bMmvRySbVXCg==
+ns2.example.\t86400\tIN\tNSEC\texample. AAAA RRSIG NSEC
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 8 2 86400 20240101010101 20240101010101 38353 example. IO3iDg4S1cJXRLubj0ZRKYLUB/ggFkPKQR4zGJ1J6rkFyPYbZNcPqJRiiJW2O6dSgRmmZzw2eA2DJLmOIRh17kj0EmoRJh/iuiLSBrJWJ9PN/sLIS5t/hB17sBf8gxPv4vYk5kJ7RhiVNbY0nOp87CiQlgqV6ZQFqYm8Xam1spM=
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. fTkEc85fTdlicaZ/D6YIbMpaZFFZdbpA98vyPjZfCC2aoXvFjTl/RmigLd0L0hMSYW+jIlSANzzKYO7Oj7iFDA==
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk1_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
+        let zsk2_path = mk_test_data_abs_path_string("test-data/Kexample.+015+39188");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-T",
+            "-R",
+            "-U",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk1_path,
+            &zsk2_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn multiple_algorithms_with_sign_with_every_unique_algorithm_extra_zsk_alt() {
+        let expected_zone = r###"example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400
+example.\t86400\tIN\tRRSIG\tSOA 15 1 86400 20240101010101 20240101010101 39188 example. ckYQDK2HeLK09CjpO76H0oT5CGjc6WcKYihl0zkS79VYzcj2Cspifcf3V5Sft8QDmGzjtBqqQvGYPsbzZwlYCQ==
+example.\t86400\tIN\tRRSIG\tSOA 15 1 86400 20240101010101 20240101010101 41613 example. LlJzwGuHm9uSYrcPJR70HoLrGQtxbblWM4QDvikHlM2k+bufsViT7X+BFhWpPRDMu9aY2+sJRoZXOR3vIXxhBg==
+example.\t86400\tIN\tNS\tns1.example.
+example.\t86400\tIN\tNS\tns2.example.
+example.\t86400\tIN\tRRSIG\tNS 15 1 86400 20240101010101 20240101010101 39188 example. A06Y3VSm8/G3YhuxJ3yHNI71iTi9UcyG8zIp7bHuXkhhSFDT4kRQMahlaNRP30HvaJDBJz9vy9hXmmbuc28cCQ==
+example.\t86400\tIN\tRRSIG\tNS 15 1 86400 20240101010101 20240101010101 41613 example. Co++V4B69csQqYE9+N1b6eUvkLVuLnd8klKSsvCOWEkUiQl+O+z7SnXqndESGj4iIpVn3j1lhHbYlPVVznLABQ==
+example.\t86400\tIN\tNSEC\tns1.example. NS SOA RRSIG NSEC DNSKEY
+example.\t86400\tIN\tRRSIG\tNSEC 15 1 86400 20240101010101 20240101010101 39188 example. R3mhoKHFOusQOU0l6vn7vvUPGLnkoOeYQ9o2HmcsQ3PxVpJ1+oQc7igxycgQLw9JLSIz8p2vjPXfQBm+7qE+AQ==
+example.\t86400\tIN\tRRSIG\tNSEC 15 1 86400 20240101010101 20240101010101 41613 example. ewXIRoDUNicJC7YAFRbgMEvMNHJrMbbvnC7qTcZvXLQtA3I5RS5YgYh+0Qkp1J5DTd6awRxcY93kc5CaG05kBw==
+example.\t86400\tIN\tDNSKEY\t256 3 15 AnxyASt7Bws/Y883BjIsK+Vcl2rlR7fnGqoVHf+wY5o= ;{id = 39188 (zsk), size = 256b}
+example.\t86400\tIN\tDNSKEY\t256 3 15 vARhxM8vGTdL1DuBk8PIRWFZLcYeDAFgHepUiArciRU= ;{id = 41613 (zsk), size = 256b}
+example.\t86400\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t86400\tIN\tRRSIG\tDNSKEY 8 1 86400 20240101010101 20240101010101 31967 example. ofnWRu+0sSovDkCAMmOwxnkip7wSEA2paR33EvDeDwadKvnQ0aLpgMQbLTunaaISh7o8Y07vEt7Z+oQj0v/OsSDI1SxZveWUfhZdiStIAdG92Cl/q68QyAYMscIxeoXtHGAQnahIOvnSlrgJRTlwPbWhJsLwX6h8bSiK9etIv+A=
+example.\t86400\tIN\tRRSIG\tDNSKEY 15 1 86400 20240101010101 20240101010101 39188 example. 6O5etAcDlOiNK9LHx/1ekw03lZBv0fVgIT8QhNPZTOwTcoI/sRsxUNMS8ng0bh1NKyprjesczegCa228qA3AAA==
+ns1.example.\t3600\tIN\tA\t203.0.113.63
+ns1.example.\t3600\tIN\tRRSIG\tA 15 2 3600 20240101010101 20240101010101 39188 example. LVmEy45TIoFZgoSryXQbZjUCLpwYUerR2nt9EK6WcSgIkeGkj3IDRGqQfQVyrutjohhlxdkDnFBE4dT5nBwnBg==
+ns1.example.\t3600\tIN\tRRSIG\tA 15 2 3600 20240101010101 20240101010101 41613 example. f70Ls4F6A8HVvgelJpITVVrZle9ZLOhPozzRG/3evVza2XG4j/7Qxy+7R8HiQBTjDxj2zOfwtPs4ifJJTqKoBQ==
+ns1.example.\t86400\tIN\tNSEC\tns2.example. A RRSIG NSEC
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. GqyC25UtODem9X3uVI5gLQ/OLFBvSwdA/bwnj1jB8qP9NhD03bLDfuKzm8QvSJvkq7ERBcHibpEL+lZUL5HrDw==
+ns1.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 41613 example. 5cV6p62KmcESO0Bk8EAfy75P6RHOlFoGxIoT578n2XDkFZeg0IPAgPL5o/WWK5QGhKi9/Rj50WxuRCMlkz37DQ==
+ns2.example.\t3600\tIN\tAAAA\t2001:db8::63
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 15 2 3600 20240101010101 20240101010101 39188 example. Fikp9s+ht+B9ncP0GsjWce3Oz2wtixNl8RZAZe+95kaHEL2w+hfNSO30ox8dTPOe5Yih0jJTu1bMmvRySbVXCg==
+ns2.example.\t3600\tIN\tRRSIG\tAAAA 15 2 3600 20240101010101 20240101010101 41613 example. 1sjwWYH+L9iDpbLMO3l7182BQyDgPGekm1YGlm9HILCpHatdmJHPkrl6abjDfIr6iOWb2Dry+6ibY7ykFjnvDw==
+ns2.example.\t86400\tIN\tNSEC\texample. AAAA RRSIG NSEC
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39188 example. fTkEc85fTdlicaZ/D6YIbMpaZFFZdbpA98vyPjZfCC2aoXvFjTl/RmigLd0L0hMSYW+jIlSANzzKYO7Oj7iFDA==
+ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 41613 example. 26U9FxV+l7Dfqj+LlWQN9fiG1O5gwbu80iHFH+kKknU2S6fBeXhGTjxwyFjLntTR8IikilpGHGeWlYBMk22XAw==
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk1_path = mk_test_data_abs_path_string("test-data/Kexample.+015+39188");
+        let zsk2_path = mk_test_data_abs_path_string("test-data/Kexample.+015+41613");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample",
+            "-T",
+            "-R",
+            "-U",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk1_path,
+            &zsk2_path,
         ])
         .run();
 
