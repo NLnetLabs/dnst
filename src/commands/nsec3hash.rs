@@ -4,7 +4,7 @@ use std::str::FromStr;
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::name::Name;
-use domain::crypto::validate::nsec3_hash;
+use domain::dnssec::common::nsec3_hash;
 use domain::rdata::nsec3::Nsec3Salt;
 use lexopt::Arg;
 
