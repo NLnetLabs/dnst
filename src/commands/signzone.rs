@@ -42,10 +42,12 @@ use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::iana::Class;
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
-use domain::base::{CanonicalOrd, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl};
+use domain::base::{
+    CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
+};
 use domain::crypto::common::KeyPair;
-use domain::crypto::misc::Key;
-use domain::dnssec::common::Nsec3HashError;
+use domain::crypto::misc::PublicKeyBytes;
+use domain::dnssec::common::{parse_from_bind, Nsec3HashError};
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
 use domain::dnssec::sign::denial::nsec3::{
@@ -57,6 +59,7 @@ use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords}
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
 use domain::dnssec::sign::{SecretKeyBytes, SigningConfig};
+use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
 use domain::rdata::{Dnskey, Nsec3, Nsec3param, Rrsig, Soa, ZoneRecordData, Zonemd};
@@ -660,13 +663,7 @@ impl SignZone {
         for rr in records.iter() {
             if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
                 // Create a public key object from the found DNSKEY RR.
-                let public_key =
-                    Key::from_dnskey(rr.owner().clone(), dnskey.clone()).map_err(|err| {
-                        Error::from(format!(
-                            "Zone file '{}' DNSKEY record '{dnskey}' is invalid: {err}",
-                            self.zonefile_path.display()
-                        ))
-                    })?;
+                let public_key = Record::new(rr.owner(), Class::IN, Ttl::ZERO, dnskey);
 
                 found_public_keys.push(public_key);
             }
@@ -695,7 +692,11 @@ impl SignZone {
             for public_key in &found_public_keys {
                 // Attempt to create a key pair from this public key and every
                 // private key that we have.
-                if let Ok(signing_key) = self.mk_signing_key(&private_key, public_key.clone()) {
+                if let Ok(signing_key) = self.mk_signing_key(
+                    (*public_key.owner()).clone(),
+                    &private_key,
+                    (*public_key.data()).clone(),
+                ) {
                     // Match found, keep the created signing key.
                     // TODO: Log here.
                     // TODO: Check the key tag against the key tag in the key file name?
@@ -728,7 +729,11 @@ impl SignZone {
             // Attempt to crate a key pair from the loaded private and public
             // keys.
             let signing_key = self
-                .mk_signing_key(&private_key, public_key.clone())
+                .mk_signing_key(
+                    public_key.owner().clone(),
+                    &private_key,
+                    public_key.data().clone(),
+                )
                 .map_err(|err| {
                     format!(
                         "Unable to create key pair from '{}' and '{}': {}",
@@ -801,7 +806,7 @@ impl SignZone {
             let dnskey_ttl = dnskey_rrset.as_ref().map_or(soa_rr.ttl(), |r| r.ttl());
             // Make sure that the DNSKEY RRset contains all keys.
             for k in &signing_keys {
-                let pubkey = k.public_key().to_dnskey();
+                let pubkey = k.dnskey();
                 if !dnskey_rrset
                     .as_ref()
                     .map_or(empty_records.iter(), |r| r.iter())
@@ -1351,7 +1356,7 @@ impl SignZone {
         Ok(secret_key)
     }
 
-    fn load_public_key(key_path: &Path) -> Result<Key<Bytes>, Error> {
+    fn load_public_key(key_path: &Path) -> Result<Record<Name<Bytes>, Dnskey<Bytes>>, Error> {
         let public_data = std::fs::read_to_string(key_path)
             .map_err(Error::from)
             .context(&format!(
@@ -1363,7 +1368,7 @@ impl SignZone {
         // regression here because at the time of writing the error returned
         // from parsing indicates broadly the type of parsing failure but does
         // note indicate the line number at which parsing failed.
-        let public_key_info = Key::parse_from_bind(&public_data).map_err(|err| {
+        let public_key_info = parse_from_bind(&public_data).map_err(|err| {
             format!(
                 "Unable to parse BIND formatted public key file '{}': {}",
                 key_path.display(),
@@ -1392,11 +1397,16 @@ impl SignZone {
 
     fn mk_signing_key(
         &self,
+        owner: Name<Bytes>,
         private_key: &SecretKeyBytes,
-        public_key: Key<Bytes>,
+        public_key: Dnskey<Bytes>,
     ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
-        let key_pair = KeyPair::from_bytes(private_key, public_key.raw_public_key())?;
-        let signing_key = SigningKey::new(public_key.owner().clone(), public_key.flags(), key_pair);
+        let key_pair = KeyPair::from_bytes(
+            private_key,
+            &PublicKeyBytes::from_dnskey_format(public_key.algorithm(), public_key.public_key())
+                .map_err(|_| FromBytesError::InvalidKey)?,
+        )?;
+        let signing_key = SigningKey::new(owner, public_key.flags(), key_pair);
         Ok(signing_key)
     }
 
@@ -1699,7 +1709,7 @@ impl Commented<()> for Dnskey<Bytes> {
     fn comment<W: fmt::Write>(
         &self,
         writer: &mut W,
-        record: &Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
+        _record: &Record<StoredName, ZoneRecordData<Bytes, StoredName>>,
         _metadata: (),
     ) -> Result<(), fmt::Error> {
         writer.write_fmt(format_args!(" ;{{id = {}", self.key_tag()))?;
@@ -1708,9 +1718,10 @@ impl Commented<()> for Dnskey<Bytes> {
         } else if self.is_zone_key() {
             writer.write_str(" (zsk)")?;
         }
-        let owner = record.owner().clone();
-        let key = domain::crypto::misc::Key::from_dnskey(owner, self.clone()).unwrap();
-        let key_size = key.key_size();
+        // What do we do if key_size fails. Currently we have to return a
+        // fmt::Error. Just return default and hope that we only get keys
+        // with algorithms that are supported.
+        let key_size = self.key_size().map_err(|_| fmt::Error)?;
         writer.write_fmt(format_args!(", size = {key_size}b}}"))
     }
 }

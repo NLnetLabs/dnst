@@ -5,10 +5,15 @@ use std::path::Path;
 
 use clap::builder::ValueParser;
 use clap::ValueEnum;
-use domain::base::iana::{DigestAlg, SecAlg};
+use domain::base::iana::{Class, DigestAlg, SecAlg};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::crypto::misc::Key;
+use domain::base::Record;
+use domain::base::Ttl;
+use domain::dnssec::common::display_as_bind;
+use domain::dnssec::validator::base::DnskeyExt;
+use domain::rdata::{Dnskey, Ds};
+
 use lexopt::Arg;
 
 use crate::env::Env;
@@ -319,20 +324,31 @@ impl Keygen {
         let (secret_key, public_key) = common::generate(params)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
+        let public_key_bits = public_key.to_dnskey_format();
         // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
-        let public_key = Key::new(self.name.clone(), flags, public_key);
+        let public_key = Dnskey::new(flags, 3, public_key.algorithm(), public_key_bits)
+            .expect("should not fail");
+        let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);
         let digest = self.make_ksk.then(|| {
-            public_key
-                .digest(digest_alg)
-                .expect("only supported digest algorithms are used")
+            let digest = public_key
+                .data()
+                .digest(&self.name, digest_alg)
+                .expect("only supported digest algorithms are used");
+            Ds::new(
+                public_key.data().key_tag(),
+                public_key.data().algorithm(),
+                digest_alg,
+                digest.as_ref().to_vec(),
+            )
+            .expect("should not fail")
         });
 
         let base = format!(
             "K{}+{:03}+{:05}",
             self.name.fmt_with_dot(),
-            public_key.algorithm().to_int(),
-            public_key.key_tag()
+            public_key.data().algorithm().to_int(),
+            public_key.data().key_tag()
         );
 
         let secret_key_path = format!("{base}.private");
@@ -354,7 +370,7 @@ impl Keygen {
 
         // Prepare the contents to write.
         let secret_key = secret_key.display_as_bind().to_string();
-        let public_key = public_key.display_as_bind().to_string();
+        let public_key = display_as_bind(&public_key).to_string();
         let digest = digest.map(|digest| {
             format!(
                 "{}\tIN\tDS\t{}\n",
