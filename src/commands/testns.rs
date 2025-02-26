@@ -29,6 +29,10 @@ pub struct TestNs {
     /// Listens on the specified port, default 53.
     #[arg(short = 'p', value_name = "PORT")]
     port: Option<u16>,
+    
+    /// Verbose output.
+    #[arg(short = 'v')
+    verbose: bool,
 
     /// Datafile
     #[arg()]
@@ -52,6 +56,7 @@ impl LdnsCommand for TestNs {
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut port = 53;
+        let mut verbose = false;
         let mut datafile = None;
 
         let mut parser = lexopt::Parser::from_args(args);
@@ -61,6 +66,9 @@ impl LdnsCommand for TestNs {
                 Arg::Short('p') => {
                     let val = parser.value()?;
                     port = parse_os("port (-p)", &val)?;
+                }
+                Arg::Short('v') => {
+                    verbose = true:
                 }
                 Arg::Value(val) => {
                     if datafile.is_some() {
@@ -82,6 +90,7 @@ impl LdnsCommand for TestNs {
 
         Ok(Args::from(Command::TestNs(Self {
             port: Some(port),
+            verbose,
             datafile: datafile.into(),
             is_ldns: true,
         })))
@@ -123,7 +132,7 @@ impl TestNs {
             .await
             .unwrap();
 
-        if self.is_ldns {
+        if self.is_ldns && self.verbose {
             writeln!(env.stdout(), "Listening on port {port}");
         }
 
