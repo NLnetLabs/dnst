@@ -12,6 +12,7 @@ use env::Env;
 use error::Error;
 
 pub use self::args::Args;
+use commands::testns::TestNs;
 
 pub mod args;
 pub mod commands;
@@ -39,6 +40,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
         "notify" => Notify::parse_ldns_args(args_iter),
         "keygen" => Keygen::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
+        "testns" => TestNs::parse_ldns_args(args_iter),
         "update" => Update::parse_ldns_args(args_iter),
         _ => return Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
     };
