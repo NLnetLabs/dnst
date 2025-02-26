@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=extend-stelline-for-ldns-testns#4a47c2e08d3514f9f2b6f98e00098582f767dff1"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=extend-stelline-for-ldns-testns#161935709a163c8f689193b80495d75774d0d226"
 dependencies = [
  "arc-swap",
  "bytes",
