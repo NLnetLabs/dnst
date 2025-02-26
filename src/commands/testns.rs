@@ -31,7 +31,7 @@ pub struct TestNs {
     port: Option<u16>,
     
     /// Verbose output.
-    #[arg(short = 'v')
+    #[arg(short = 'v')]
     verbose: bool,
 
     /// Datafile
