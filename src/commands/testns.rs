@@ -68,7 +68,7 @@ impl LdnsCommand for TestNs {
                     port = parse_os("port (-p)", &val)?;
                 }
                 Arg::Short('v') => {
-                    verbose = true:
+                    verbose = true;
                 }
                 Arg::Value(val) => {
                     if datafile.is_some() {
@@ -76,7 +76,6 @@ impl LdnsCommand for TestNs {
                     }
                     datafile = Some(val);
                 }
-                Arg::Short('v') => return Ok(Self::report_version()),
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())
