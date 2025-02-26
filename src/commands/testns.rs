@@ -1,5 +1,3 @@
-use core::future::pending;
-
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +19,7 @@ use domain::stelline::parse_stelline::{self, Stelline};
 use domain::stelline::server::do_server;
 use lexopt::Arg;
 use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::mpsc::Sender;
 
 use super::{parse_os, Command, LdnsCommand};
 
@@ -29,7 +28,7 @@ pub struct TestNs {
     /// Listens on the specified port, default 53.
     #[arg(short = 'p', value_name = "PORT")]
     port: Option<u16>,
-    
+
     /// Verbose output.
     #[arg(short = 'v')]
     verbose: bool,
@@ -124,7 +123,9 @@ impl TestNs {
             self.datafile.to_str().unwrap(),
         ));
 
-        let svc = service_fn(refuse_service, stelline);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        let svc = service_fn(refuse_service, (stelline, tx));
 
         let sock = UdpSocket::bind(format!("127.0.0.1:{port}")).await.unwrap();
         let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
@@ -141,17 +142,29 @@ impl TestNs {
         let tcp_srv = StreamServer::new(listener, VecBufSource, svc);
         tokio::spawn(async move { tcp_srv.run().await });
 
-        Ok(pending().await)
+        while let Some(msg) = rx.recv().await {
+            if self.is_ldns && self.verbose {
+                writeln!(env.stdout(), "{}", msg);
+            }
+        }
+
+        Ok(())
     }
 }
 
 fn refuse_service(
     req: Request<Vec<u8>>,
-    stelline: Arc<Stelline>,
+    (stelline, tx): (Arc<Stelline>, Sender<String>),
 ) -> ServiceResult<AtLeastTwoBytesVec> {
     let step_value = CurrStepValue::new();
     match do_server(&req, &stelline, &step_value) {
-        Some(builder) => Ok(CallResult::new(builder)),
+        Some(builder) => {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                tx.send("comparepkt: match!".to_string()).await.unwrap();
+            });
+            Ok(CallResult::new(builder))
+        }
         None => Err(ServiceError::Refused),
     }
 }
