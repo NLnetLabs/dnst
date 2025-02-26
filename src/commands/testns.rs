@@ -161,7 +161,10 @@ fn refuse_service(
     let (res, msg) = match do_server(&req, &stelline, &step_value) {
         Some(builder) => (
             Ok(CallResult::new(builder)),
-            "comparepkt: match!".to_string(),
+            format!(
+                "comparepkt: match! for question {:?}",
+                req.message().first_question()
+            ),
         ),
         None => (
             Err(ServiceError::Refused),
