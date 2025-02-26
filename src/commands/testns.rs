@@ -163,7 +163,7 @@ fn refuse_service(
             (Ok(CallResult::new(builder)), "comparepkt: match!".to_string())
         }
         None => {
-            (Err(ServiceError::Refused), format!("comparepkt: no match for request {req:?}"))
+            (Err(ServiceError::Refused), format!("comparepkt: no match to question {:?}", req.message().first_question()))
         }
     };
     tokio::spawn(async move {
