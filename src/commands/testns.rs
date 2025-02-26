@@ -157,16 +157,19 @@ fn refuse_service(
     (stelline, tx): (Arc<Stelline>, Sender<String>),
 ) -> ServiceResult<AtLeastTwoBytesVec> {
     let step_value = CurrStepValue::new();
-    match do_server(&req, &stelline, &step_value) {
+    let tx = tx.clone();
+    let (res, msg) = match do_server(&req, &stelline, &step_value) {
         Some(builder) => {
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                tx.send("comparepkt: match!".to_string()).await.unwrap();
-            });
-            Ok(CallResult::new(builder))
+            (Ok(CallResult::new(builder)), "comparepkt: match!".to_string())
         }
-        None => Err(ServiceError::Refused),
-    }
+        None => {
+            (Err(ServiceError::Refused), format!("comparepkt: no match for request {req:?}"))
+        }
+    };
+    tokio::spawn(async move {
+        tx.send(msg).await.unwrap();
+    });
+    res
 }
 
 // Hacky work around for the fact that StreamTarget::default() calls
