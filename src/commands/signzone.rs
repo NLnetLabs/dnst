@@ -46,7 +46,6 @@ use domain::base::{
     CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
 };
 use domain::crypto::common::KeyPair;
-use domain::crypto::misc::PublicKeyBytes;
 use domain::dnssec::common::{parse_from_bind, Nsec3HashError};
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
@@ -1401,11 +1400,7 @@ impl SignZone {
         private_key: &SecretKeyBytes,
         public_key: Dnskey<Bytes>,
     ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
-        let key_pair = KeyPair::from_bytes(
-            private_key,
-            &PublicKeyBytes::from_dnskey_format(public_key.algorithm(), public_key.public_key())
-                .map_err(|_| FromBytesError::InvalidKey)?,
-        )?;
+        let key_pair = KeyPair::from_bytes(private_key, &public_key)?;
         let signing_key = SigningKey::new(owner, public_key.flags(), key_pair);
         Ok(signing_key)
     }

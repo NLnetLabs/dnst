@@ -12,7 +12,7 @@ use domain::base::Record;
 use domain::base::Ttl;
 use domain::dnssec::common::display_as_bind;
 use domain::dnssec::validator::base::DnskeyExt;
-use domain::rdata::{Dnskey, Ds};
+use domain::rdata::Ds;
 
 use lexopt::Arg;
 
@@ -319,16 +319,14 @@ impl Keygen {
             _ => unreachable!(),
         };
 
-        // Generate the key.
-        // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::generate(params)
-            .map_err(|err| format!("an implementation error occurred: {err}").into())
-            .context("generating a cryptographic keypair")?;
-        let public_key_bits = public_key.to_dnskey_format();
         // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
-        let public_key = Dnskey::new(flags, 3, public_key.algorithm(), public_key_bits)
-            .expect("should not fail");
+
+        // Generate the key.
+        // TODO: Attempt repeated generation to avoid key tag collisions.
+        let (secret_key, public_key) = common::generate(params, flags)
+            .map_err(|err| format!("an implementation error occurred: {err}").into())
+            .context("generating a cryptographic keypair")?;
         let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);
         let digest = self.make_ksk.then(|| {
             let digest = public_key
