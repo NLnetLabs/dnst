@@ -159,12 +159,17 @@ fn refuse_service(
     let step_value = CurrStepValue::new();
     let tx = tx.clone();
     let (res, msg) = match do_server(&req, &stelline, &step_value) {
-        Some(builder) => {
-            (Ok(CallResult::new(builder)), "comparepkt: match!".to_string())
-        }
-        None => {
-            (Err(ServiceError::Refused), format!("comparepkt: no match to question {:?}", req.message().first_question()))
-        }
+        Some(builder) => (
+            Ok(CallResult::new(builder)),
+            "comparepkt: match!".to_string(),
+        ),
+        None => (
+            Err(ServiceError::Refused),
+            format!(
+                "comparepkt: no match to question {:?}",
+                req.message().first_question()
+            ),
+        ),
     };
     tokio::spawn(async move {
         tx.send(msg).await.unwrap();
