@@ -33,6 +33,10 @@ pub struct TestNs {
     /// Datafile
     #[arg()]
     datafile: PathBuf,
+
+    /// Running in LDNS mode?
+    #[arg(skip)]
+    is_ldns: bool,
 }
 
 const LDNS_HELP: &str = "\
@@ -79,6 +83,7 @@ impl LdnsCommand for TestNs {
         Ok(Args::from(Command::TestNs(Self {
             port: Some(port),
             datafile: datafile.into(),
+            is_ldns: true,
         })))
     }
 }
@@ -90,7 +95,8 @@ impl TestNs {
     }
 
     /// Run the command as an async function
-    pub async fn run(self, _env: &impl Env) -> Result<(), Error> {
+    pub async fn run(self, env: &impl Env) -> Result<(), Error> {
+        let port = self.port.unwrap();
         let mut datafile = std::fs::read_to_string(&self.datafile)?;
 
         if !datafile.contains("RANGE_BEGIN") {
@@ -112,12 +118,14 @@ impl TestNs {
 
         let svc = service_fn(refuse_service, stelline);
 
-        let sock = UdpSocket::bind(format!("127.0.0.1:{}", self.port.unwrap()))
+        let sock = UdpSocket::bind(format!("127.0.0.1:{port}")).await.unwrap();
+        let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.port.unwrap()))
-            .await
-            .unwrap();
+
+        if self.is_ldns {
+            writeln!(env.stdout(), "Listening on port {port}");
+        }
 
         let udp_srv = DgramServer::new(sock, VecBufSource, svc.clone());
         tokio::spawn(async move { udp_srv.run().await });
