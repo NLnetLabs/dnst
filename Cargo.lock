@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=initial-nsec3-generation#5efcccfabd4535a40c8981fc36f89ca73899c3b4"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=extend-stelline-for-ldns-testns#4e7adbc290ad0a0ac3d40cfdff39bae7df7c7b8b"
 dependencies = [
  "arc-swap",
  "bytes",
