@@ -162,10 +162,12 @@ fn answer_from_datafile(
         Some((builder, (range_idx, entry_idx))) => {
             let q = req.message().first_question();
             let hdr = builder.header();
-            let ans = format!("{:?}", builder.as_message().answer());
+            let hdr_opcode = hdr.opcode();
+            let hdr_rcode = hdr.rcode();
+            let hdr_flags = hdr.flags();
             (Ok(CallResult::new(builder)),
             format!(
-                "comparepkt: match! at range {range_idx} entry {entry_idx} for question {q:?} with header {hdr:?} and answer {ans}",
+                "comparepkt: match! at range {range_idx} entry {entry_idx} for question {q:?} with reply header {hdr_opcode}/{hdr_rcode}/{hdr_flags}",
             ))
         }
         None => (
