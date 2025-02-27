@@ -125,7 +125,7 @@ impl TestNs {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-        let svc = service_fn(refuse_service, (stelline, tx));
+        let svc = service_fn(answer_from_datafile, (stelline, tx));
 
         let sock = UdpSocket::bind(format!("127.0.0.1:{port}")).await.unwrap();
         let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
@@ -152,20 +152,22 @@ impl TestNs {
     }
 }
 
-fn refuse_service(
+fn answer_from_datafile(
     req: Request<Vec<u8>>,
     (stelline, tx): (Arc<Stelline>, Sender<String>),
 ) -> ServiceResult<AtLeastTwoBytesVec> {
     let step_value = CurrStepValue::new();
     let tx = tx.clone();
     let (res, msg) = match do_server(&req, &stelline, &step_value) {
-        Some(builder) => (
-            Ok(CallResult::new(builder)),
+        Some((builder, (range_idx, entry_idx))) => {
+            let q = req.message().first_question();
+            let hdr = builder.header();
+            let ans = format!("{:?}", builder.as_message().answer());
+            (Ok(CallResult::new(builder)),
             format!(
-                "comparepkt: match! for question {:?}",
-                req.message().first_question()
-            ),
-        ),
+                "comparepkt: match! at range {range_idx} entry {entry_idx} for question {q:?} with header {hdr:?} and answer {ans}",
+            ))
+        }
         None => (
             Err(ServiceError::Refused),
             format!(
