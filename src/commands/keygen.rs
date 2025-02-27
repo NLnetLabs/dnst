@@ -324,7 +324,7 @@ impl Keygen {
 
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::generate(params, flags)
+        let (secret_key, public_key) = common::sign::generate(params, flags)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
         let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);

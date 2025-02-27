@@ -45,19 +45,20 @@ use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{
     CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
 };
-use domain::crypto::common::KeyPair;
+use domain::crypto::common::sign::KeyPair;
+use domain::crypto::misc::{FromBytesError, SecretKeyBytes};
 use domain::dnssec::common::{parse_from_bind, Nsec3HashError};
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
 use domain::dnssec::sign::denial::nsec3::{
     GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
 };
-use domain::dnssec::sign::error::{FromBytesError, SigningError};
+use domain::dnssec::sign::error::SigningError;
 use domain::dnssec::sign::keys::SigningKey;
 use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
-use domain::dnssec::sign::{SecretKeyBytes, SigningConfig};
+use domain::dnssec::sign::SigningConfig;
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::nsec3::Nsec3Salt;
