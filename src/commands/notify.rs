@@ -267,6 +267,10 @@ impl Notify {
         let mut config = dgram::Config::new();
         config.set_max_retries(self.retries);
 
+        // Prevent sending of an EDNS(0) OPT record as it causes OpenDNSSEC 2.1.14 to crash.
+        // See: https://github.com/opendnssec/opendnssec/pull/865
+        config.set_udp_payload_size(None);
+
         let dgram_connection = dgram::Connection::with_config(env.dgram(socket), config);
 
         let connection: Box<dyn SendRequest<_>> = if let Some(k) = tsig_key {
