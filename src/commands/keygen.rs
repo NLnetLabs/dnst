@@ -22,7 +22,7 @@ use crate::parse::parse_name;
 use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::crypto::common::{self, GenerateParams};
+use domain::crypto::sign::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -324,7 +324,7 @@ impl Keygen {
 
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::sign::generate(params, flags)
+        let (secret_key, public_key) = sign::generate(params, flags)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
         let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);
@@ -430,7 +430,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
-    use domain::crypto::common::GenerateParams;
+    use domain::crypto::sign::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
