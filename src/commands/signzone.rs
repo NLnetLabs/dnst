@@ -45,7 +45,7 @@ use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{
     CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
 };
-use domain::crypto::sign::{KeyPair, FromBytesError, SecretKeyBytes};
+use domain::crypto::sign::{FromBytesError, KeyPair, SecretKeyBytes};
 use domain::dnssec::common::{parse_from_bind, Nsec3HashError};
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
