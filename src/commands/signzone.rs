@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use bytes::{BufMut, Bytes};
 use clap::builder::ValueParser;
+
 use domain::base::iana::nsec3::Nsec3HashAlg;
 use domain::base::iana::zonemd::{ZonemdAlg, ZonemdScheme};
 use domain::base::iana::Class;
@@ -46,12 +47,11 @@ use domain::base::{
     CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
 };
 use domain::crypto::sign::{FromBytesError, KeyPair, SecretKeyBytes};
-use domain::dnssec::common::{parse_from_bind, Nsec3HashError};
+use domain::dnssec::common::parse_from_bind;
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
-use domain::dnssec::sign::denial::nsec3::{
-    GenerateNsec3Config, Nsec3HashProvider, Nsec3ParamTtlMode, OnDemandNsec3HashProvider,
-};
+use domain::dnssec::sign::denial::nsec3::mk_hashed_nsec3_owner_name;
+use domain::dnssec::sign::denial::nsec3::{GenerateNsec3Config, Nsec3ParamTtlMode};
 use domain::dnssec::sign::error::SigningError;
 use domain::dnssec::sign::keys::SigningKey;
 use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
@@ -914,7 +914,107 @@ impl SignZone {
             );
         }
 
-        let mut signing_config: SigningConfig<_, _, _, _> = match signing_mode {
+        let mut nsec3_hashes: Option<Nsec3HashMap> = None;
+
+        if self.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
+            // Create a collection of NSEC3 hashes that can later be used for
+            // debug output.
+            let mut hash_provider = Nsec3HashMap::new();
+            let mut prev_name = None;
+            let mut delegation = None;
+            for rrset in records.rrsets() {
+                let owner = rrset.owner();
+
+                if let Some(ref prev_name) = prev_name {
+                    if *owner == prev_name {
+                        // Already done.
+                        if rrset.rtype() == Rtype::NS {
+                            delegation = Some(owner.clone());
+                        }
+                        continue;
+                    }
+                }
+                if let Some(ref delegation_name) = delegation {
+                    if owner != delegation_name {
+                        if owner.ends_with(&delegation_name) {
+                            // Below zone cut, ignore.
+                            continue;
+                        } else {
+                            // Reset delegation.
+                            delegation = None;
+                        }
+                    }
+                }
+                prev_name = Some(owner.clone());
+
+                if rrset.rtype() == Rtype::NS && *owner != apex {
+                    delegation = Some(owner.clone());
+                    if self.nsec3_opt_out {
+                        // Delegations are ignored for NSEC3. Ignore this
+                        // entry but keep looking for other types at the
+                        // same owner name.
+                        prev_name = None;
+                        continue;
+                    }
+                }
+
+                let hashed_name = mk_hashed_nsec3_owner_name(
+                    owner,
+                    self.algorithm,
+                    self.iterations,
+                    &self.salt,
+                    &apex,
+                )
+                .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
+                let hash_info = Nsec3HashInfo::new(owner.clone(), false);
+                hash_provider
+                    .hashes_by_unhashed_owner
+                    .insert(hashed_name, hash_info);
+
+                if *owner == apex {
+                    // No need to consider empty non-terminals.
+                    continue;
+                }
+
+                // Insert empty non-terminals
+                for suffix in owner.iter_suffixes() {
+                    if suffix == owner {
+                        // Owner is already done.
+                        continue;
+                    }
+                    if suffix == apex {
+                        // Apex is not an ENT. No need to consider
+                        // smaller suffixes.
+                        break;
+                    }
+
+                    let hashed_name = mk_hashed_nsec3_owner_name(
+                        &suffix,
+                        self.algorithm,
+                        self.iterations,
+                        &self.salt,
+                        &apex,
+                    )
+                    .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
+                    if hash_provider
+                        .hashes_by_unhashed_owner
+                        .contains_key(&hashed_name)
+                    {
+                        // Hash is already there. No need to continue
+                        // with smaller suffixes.
+                        break;
+                    }
+
+                    let hash_info = Nsec3HashInfo::new(suffix.clone(), true);
+                    hash_provider
+                        .hashes_by_unhashed_owner
+                        .insert(hashed_name, hash_info);
+                }
+            }
+            nsec3_hashes = Some(hash_provider);
+        }
+
+        let mut signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -925,14 +1025,9 @@ impl SignZone {
                 // transition between NSEC <-> NSEC3 we will need to be able to
                 // sign with more than one hashing configuration at once.
                 if self.use_nsec3 {
-                    let hash_provider = CapturingNsec3HashProvider::new(
-                        self.algorithm,
-                        self.iterations,
-                        self.salt.clone(),
-                    );
                     let params =
                         Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
-                    let mut nsec3_config = GenerateNsec3Config::new(params, hash_provider);
+                    let mut nsec3_config = GenerateNsec3Config::new(params);
                     if self.nsec3_opt_out {
                         nsec3_config = nsec3_config.with_opt_out();
                     } else if self.nsec3_opt_out_flags_only {
@@ -995,12 +1090,6 @@ impl SignZone {
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
         }
-
-        let nsec3_hashes = match signing_config.denial {
-            DenialConfig::AlreadyPresent => None,
-            DenialConfig::Nsec(_) => None,
-            DenialConfig::Nsec3(nsec3_config) => Some(nsec3_config.hash_provider),
-        };
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
         // compatibility with ldns-signzone, re-order them to be in canonical
@@ -1723,7 +1812,7 @@ impl Commented<()> for Dnskey<Bytes> {
 
 #[derive(Copy, Clone)]
 struct Nsec3CommentState<'a> {
-    hashes: Option<&'a CapturingNsec3HashProvider>,
+    hashes: Option<&'a Nsec3HashMap>,
     apex: &'a StoredName,
 }
 
@@ -1891,14 +1980,15 @@ impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     }
 }
 
-//-------------- CapturingNsec3HashProvider ----------------------------------
+//-------------- Nsec3HashMap ------------------------------------------------
 
-struct CapturedNsec3HashInfo {
+#[derive(Debug)]
+struct Nsec3HashInfo {
     unhashed_owner_name: StoredName,
     is_empty_non_terminal: bool,
 }
 
-impl CapturedNsec3HashInfo {
+impl Nsec3HashInfo {
     fn new(unhashed_owner_name: StoredName, is_empty_non_terminal: bool) -> Self {
         Self {
             unhashed_owner_name,
@@ -1911,21 +2001,17 @@ impl CapturedNsec3HashInfo {
     }
 }
 
-struct CapturingNsec3HashProvider {
-    /// A provider of NSEC3 hashes.
-    provider: OnDemandNsec3HashProvider<Bytes>,
-
+struct Nsec3HashMap {
     /// A record of hashed owner names to unhashed owner names.
     ///
     /// We also record if the unhashed owner name was an empty non-terminal or
     /// not.
-    hashes_by_unhashed_owner: HashMap<StoredName, CapturedNsec3HashInfo>,
+    hashes_by_unhashed_owner: HashMap<StoredName, Nsec3HashInfo>,
 }
 
-impl CapturingNsec3HashProvider {
-    fn new(alg: Nsec3HashAlg, iterations: u16, salt: Nsec3Salt<Bytes>) -> Self {
+impl Nsec3HashMap {
+    fn new() -> Self {
         Self {
-            provider: OnDemandNsec3HashProvider::new(alg, iterations, salt),
             hashes_by_unhashed_owner: HashMap::new(),
         }
     }
@@ -1938,34 +2024,11 @@ impl CapturingNsec3HashProvider {
     }
 }
 
-impl std::ops::Deref for CapturingNsec3HashProvider {
-    type Target = HashMap<StoredName, CapturedNsec3HashInfo>;
+impl std::ops::Deref for Nsec3HashMap {
+    type Target = HashMap<StoredName, Nsec3HashInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.hashes_by_unhashed_owner
-    }
-}
-
-impl Nsec3HashProvider<StoredName, Bytes> for CapturingNsec3HashProvider {
-    fn get_or_create(
-        &mut self,
-        apex_owner: &StoredName,
-        unhashed_owner_name: &StoredName,
-        is_ent: bool,
-    ) -> Result<StoredName, Nsec3HashError> {
-        let hashed_owner_name =
-            self.provider
-                .get_or_create(apex_owner, unhashed_owner_name, is_ent)?;
-        if !self
-            .hashes_by_unhashed_owner
-            .contains_key(&hashed_owner_name)
-        {
-            self.hashes_by_unhashed_owner.insert(
-                hashed_owner_name.clone(),
-                CapturedNsec3HashInfo::new(unhashed_owner_name.clone(), is_ent),
-            );
-        }
-        Ok(hashed_owner_name)
     }
 }
 
