@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::builder::ValueParser;
 use clap::Parser;
-use domain::base::iana::{DigestAlg, SecAlg};
+use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::zonefile_fmt::ZonefileFmt;
 use domain::base::Record;
 use domain::dnssec::validator::base::DnskeyExt;
@@ -40,23 +40,24 @@ pub struct Key2ds {
         long = "algorithm",
         value_parser = ValueParser::new(parse_digest_alg)
     )]
-    algorithm: Option<DigestAlg>,
+    algorithm: Option<DigestAlgorithm>,
 
     /// Keyfile to read
     #[arg()]
     keyfile: PathBuf,
 }
 
-pub fn parse_digest_alg(arg: &str) -> Result<DigestAlg, Error> {
+pub fn parse_digest_alg(arg: &str) -> Result<DigestAlgorithm, Error> {
     if let Ok(num) = arg.parse() {
-        let alg = DigestAlg::from_int(num);
+        let alg = DigestAlgorithm::from_int(num);
         if alg.to_mnemonic().is_some() {
             Ok(alg)
         } else {
             Err(Error::from("unknown algorithm number"))
         }
     } else {
-        DigestAlg::from_mnemonic(arg.as_bytes()).ok_or(Error::from("unknown algorithm mnemonic"))
+        DigestAlgorithm::from_mnemonic(arg.as_bytes())
+            .ok_or(Error::from("unknown algorithm mnemonic"))
     }
 }
 
@@ -91,9 +92,9 @@ impl LdnsCommand for Key2ds {
 
         while let Some(arg) = parser.next()? {
             match arg {
-                Arg::Short('1') => algorithm = Some(DigestAlg::SHA1),
-                Arg::Short('2') => algorithm = Some(DigestAlg::SHA256),
-                Arg::Short('4') => algorithm = Some(DigestAlg::SHA384),
+                Arg::Short('1') => algorithm = Some(DigestAlgorithm::SHA1),
+                Arg::Short('2') => algorithm = Some(DigestAlgorithm::SHA256),
+                Arg::Short('4') => algorithm = Some(DigestAlgorithm::SHA384),
                 Arg::Short('f') => ignore_sep = true,
                 Arg::Short('n') => write_to_stdout = true,
                 Arg::Value(val) => {
@@ -169,7 +170,7 @@ impl Key2ds {
                 .algorithm
                 .unwrap_or_else(|| determine_hash_from_sec_alg(sec_alg));
 
-            if digest_alg == DigestAlg::GOST {
+            if digest_alg == DigestAlgorithm::GOST {
                 return Err("Error: the GOST algorithm is deprecated and must not be used. Try a different algorithm.".into());
             }
 
@@ -225,22 +226,22 @@ impl Key2ds {
     }
 }
 
-fn determine_hash_from_sec_alg(sec_alg: SecAlg) -> DigestAlg {
+fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> DigestAlgorithm {
     match sec_alg {
-        SecAlg::RSASHA256
-        | SecAlg::RSASHA512
-        | SecAlg::ED25519
-        | SecAlg::ED448
-        | SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
-        SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
-        SecAlg::ECC_GOST => DigestAlg::GOST,
-        _ => DigestAlg::SHA1,
+        SecurityAlgorithm::RSASHA256
+        | SecurityAlgorithm::RSASHA512
+        | SecurityAlgorithm::ED25519
+        | SecurityAlgorithm::ED448
+        | SecurityAlgorithm::ECDSAP256SHA256 => DigestAlgorithm::SHA256,
+        SecurityAlgorithm::ECDSAP384SHA384 => DigestAlgorithm::SHA384,
+        SecurityAlgorithm::ECC_GOST => DigestAlgorithm::GOST,
+        _ => DigestAlgorithm::SHA1,
     }
 }
 
 #[cfg(test)]
 mod test {
-    use domain::base::iana::DigestAlg;
+    use domain::base::iana::DigestAlgorithm;
     use tempfile::TempDir;
 
     use crate::commands::Command;
@@ -321,7 +322,7 @@ mod test {
         assert_eq!(
             res,
             Key2ds {
-                algorithm: Some(DigestAlg::SHA1),
+                algorithm: Some(DigestAlgorithm::SHA1),
                 ..base.clone()
             }
         );
@@ -330,7 +331,7 @@ mod test {
         assert_eq!(
             res,
             Key2ds {
-                algorithm: Some(DigestAlg::SHA1),
+                algorithm: Some(DigestAlgorithm::SHA1),
                 ..base.clone()
             }
         );
@@ -339,7 +340,7 @@ mod test {
         assert_eq!(
             res,
             Key2ds {
-                algorithm: Some(DigestAlg::SHA1),
+                algorithm: Some(DigestAlgorithm::SHA1),
                 ..base.clone()
             }
         );
@@ -393,7 +394,7 @@ mod test {
         assert_eq!(
             res,
             Key2ds {
-                algorithm: Some(DigestAlg::SHA1),
+                algorithm: Some(DigestAlgorithm::SHA1),
                 ..base.clone()
             }
         );
@@ -404,7 +405,7 @@ mod test {
             Key2ds {
                 ignore_sep: true,
                 write_to_stdout: true,
-                algorithm: Some(DigestAlg::SHA1),
+                algorithm: Some(DigestAlgorithm::SHA1),
                 ..base.clone()
             }
         );
