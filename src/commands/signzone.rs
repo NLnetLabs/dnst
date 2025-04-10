@@ -832,7 +832,8 @@ impl SignZone {
         let mut dnskey_rrsigs = Vec::new();
         if let Ok(all_dnskeys) = all_dnskeys {
             for k in key_signing_keys {
-                let rrsig = sign_rrset(k, &all_dnskeys, self.inception, self.expiration).unwrap();
+                let rrsig = sign_rrset(k, &all_dnskeys, self.inception, self.expiration)
+                    .expect("should not fail");
                 let data = ZoneRecordData::Rrsig(rrsig.data().clone());
                 let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
                 dnskey_rrsigs.push(record);
@@ -840,10 +841,10 @@ impl SignZone {
         }
 
         for r in dnskey_extra {
-            records.insert(r).unwrap();
+            records.insert(r).expect("should not fail");
         }
         for r in dnskey_rrsigs {
-            records.insert(r).unwrap();
+            records.insert(r).expect("should not fail");
         }
 
         self.go_further(env, records, signing_mode, &zone_signing_keys, out_file)
