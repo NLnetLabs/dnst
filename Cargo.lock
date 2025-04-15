@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=initial-nsec3-generation#ad795a94a96646eb422a41a08bfe21d99f2b651d"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#0c6c36ee4974bad580024ce5f78965d5d8aaefbe"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -319,6 +319,7 @@ dependencies = [
  "futures-util",
  "hashbrown",
  "libc",
+ "log",
  "moka",
  "octseq",
  "openssl",
@@ -489,6 +490,12 @@ name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
+
+[[package]]
+name = "itoa"
+version = "1.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
 
 [[package]]
 name = "js-sys"
@@ -1096,10 +1103,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dfd88e563464686c916c7e46e623e520ddc6d79fa6641390f2e3fa86e83e885"
 dependencies = [
  "deranged",
+ "itoa",
  "num-conv",
  "powerfmt",
  "serde",
  "time-core",
+ "time-macros",
 ]
 
 [[package]]
@@ -1107,6 +1116,16 @@ name = "time-core"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
+
+[[package]]
+name = "time-macros"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f252a68540fde3a3877aeea552b832b40ab9a69e318efd078774a01ddee1ccf"
+dependencies = [
+ "num-conv",
+ "time-core",
+]
 
 [[package]]
 name = "tokio"
@@ -1141,6 +1160,7 @@ version = "0.1.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
 dependencies = [
+ "log",
  "pin-project-lite",
  "tracing-attributes",
  "tracing-core",

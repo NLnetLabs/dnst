@@ -1,14 +1,16 @@
+use core::fmt;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
 use clap::builder::ValueParser;
 use clap::ValueEnum;
-use domain::base::iana::{DigestAlg, SecAlg};
+use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::Name;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::sign::{common, GenerateParams};
-use domain::validate::Key;
+use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
+use domain::crypto::sign::GenerateParams;
+use domain::dnssec::validator::base::DnskeyExt;
+use domain::rdata::Ds;
 use lexopt::Arg;
 
 use crate::env::Env;
@@ -17,6 +19,9 @@ use crate::parse::parse_name;
 use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+
+#[cfg(not(any(feature = "openssl", feature = "ring")))]
+compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
 
 #[derive(Clone, Debug, PartialEq, Eq, clap::Args)]
 pub struct Keygen {
@@ -27,7 +32,10 @@ pub struct Keygen {
     /// - ECDSAP256SHA256:    An ECDSA P-256 SHA-256 key (algorithm 13)
     /// - ECDSAP384SHA384:    An ECDSA P-384 SHA-384 key (algorithm 14)
     /// - ED25519:            An Ed25519 key (algorithm 15)
-    /// - ED448:              An Ed448 key (algorithm 16)
+    #[cfg_attr(
+        feature = "openssl",
+        doc = " - ED448:              An Ed448 key (algorithm 16)"
+    )]
     #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
@@ -112,14 +120,24 @@ ldns-keygen -a <algorithm> [-b bits] [-r /dev/random] [-s] [-f] [-v] domain
   The base name (K<name>+<alg>+<id>) will be printed to stdout
 ";
 
-const LDNS_ALGS_HELP: &str = "\
-Supported algorithms:
-- RSASHA256 (8)
-- ECDSAP256SHA256 (13)
-- ECDSAP384SHA384 (14)
-- ED25519 (15)
-- ED448 (16)\
-";
+fn ldns_algs_help() -> String {
+    struct Printer;
+
+    impl fmt::Display for Printer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("Supported algorithms:")?;
+            f.write_str("\n- RSASHA256 (8)")?;
+            f.write_str("\n- ECDSAP256SHA256 (13)")?;
+            f.write_str("\n- ECDSAP384SHA384 (14)")?;
+            f.write_str("\n- ED25519 (15)")?;
+            #[cfg(feature = "openssl")]
+            f.write_str("\n- ED448 (16)")?;
+            Ok(())
+        }
+    }
+
+    format!("{}", Printer)
+}
 
 impl LdnsCommand for Keygen {
     const NAME: &'static str = "keygen";
@@ -146,16 +164,16 @@ impl LdnsCommand for Keygen {
                     let value = parser.value()?;
 
                     if value == "list" {
-                        return Ok(Args::from(Command::Report(LDNS_ALGS_HELP.into())));
+                        return Ok(Args::from(Command::Report(ldns_algs_help())));
                     }
 
                     algorithm = parse_os_with("algorithm (-a)", &value, |s| {
                         Ok(match s {
-                            "RSASHA256" | "8" => Some(SecAlg::RSASHA256),
-                            "ECDSAP256SHA256" | "13" => Some(SecAlg::ECDSAP256SHA256),
-                            "ECDSAP384SHA384" | "14" => Some(SecAlg::ECDSAP384SHA384),
-                            "ED25519" | "15" => Some(SecAlg::ED25519),
-                            "ED448" | "16" => Some(SecAlg::ED448),
+                            "RSASHA256" | "8" => Some(SecurityAlgorithm::RSASHA256),
+                            "ECDSAP256SHA256" | "13" => Some(SecurityAlgorithm::ECDSAP256SHA256),
+                            "ECDSAP384SHA384" | "14" => Some(SecurityAlgorithm::ECDSAP384SHA384),
+                            "ED25519" | "15" => Some(SecurityAlgorithm::ED25519),
+                            "ED448" | "16" => Some(SecurityAlgorithm::ED448),
 
                             _ => {
                                 return Err("unknown algorithm mnemonic or number");
@@ -209,11 +227,11 @@ impl LdnsCommand for Keygen {
         }
 
         let algorithm = match algorithm {
-            Some(SecAlg::RSASHA256) => GenerateParams::RsaSha256 { bits },
-            Some(SecAlg::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
-            Some(SecAlg::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
-            Some(SecAlg::ED25519) => GenerateParams::Ed25519,
-            Some(SecAlg::ED448) => GenerateParams::Ed448,
+            Some(SecurityAlgorithm::RSASHA256) => GenerateParams::RsaSha256 { bits },
+            Some(SecurityAlgorithm::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
+            Some(SecurityAlgorithm::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
+            Some(SecurityAlgorithm::ED25519) => GenerateParams::Ed25519,
+            Some(SecurityAlgorithm::ED448) => GenerateParams::Ed448,
             Some(_) => unreachable!(),
             None => {
                 return Err("Missing algorithm (-a) option".into());
@@ -289,25 +307,24 @@ impl Keygen {
 
         // The digest algorithm is selected based on the key algorithm.
         let digest_alg = match params.algorithm() {
-            SecAlg::RSASHA256 => DigestAlg::SHA256,
-            SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
-            SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
-            SecAlg::ED25519 => DigestAlg::SHA256,
-            SecAlg::ED448 => DigestAlg::SHA256,
+            SecurityAlgorithm::RSASHA256 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ECDSAP256SHA256 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ECDSAP384SHA384 => DigestAlgorithm::SHA384,
+            SecurityAlgorithm::ED25519 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ED448 => DigestAlgorithm::SHA256,
             _ => unreachable!(),
         };
 
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::generate(params)
-            .map_err(|err| format!("an implementation error occurred: {err}").into())
-            .context("generating a cryptographic keypair")?;
         // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
-        let public_key = Key::new(self.name.clone(), flags, public_key);
+        let (secret_key, public_key) = domain::crypto::sign::generate(params, flags)
+            .map_err(|err| format!("an implementation error occurred: {err}").into())
+            .context("generating a cryptographic keypair")?;
         let digest = self.make_ksk.then(|| {
             public_key
-                .digest(digest_alg)
+                .digest(&self.name, digest_alg)
                 .expect("only supported digest algorithms are used")
         });
 
@@ -336,13 +353,21 @@ impl Keygen {
         }
 
         // Prepare the contents to write.
+        let key_tag = public_key.key_tag();
+        let algorithm = public_key.algorithm();
         let secret_key = secret_key.display_as_bind().to_string();
-        let public_key = public_key.display_as_bind().to_string();
+        let public_key = format!(
+            "{} IN DNSKEY {}",
+            self.name.fmt_with_dot(),
+            public_key.display_zonefile(DisplayKind::Simple)
+        );
         let digest = digest.map(|digest| {
             format!(
                 "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(DISPLAY_KIND)
+                Ds::new(key_tag, algorithm, digest_alg, digest)
+                    .expect("we generated the digest, so don't expect it to be too long")
+                    .display_zonefile(DISPLAY_KIND)
             )
         });
 
@@ -393,7 +418,7 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
-    use domain::sign::GenerateParams;
+    use domain::crypto::sign::GenerateParams;
     use regex::Regex;
 
     use crate::commands::Command;
@@ -633,7 +658,7 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(digest_key_regex.is_match(&digest_key));
+        assert!(digest_key_regex.is_match(dbg!(&digest_key)));
 
         assert!(dir
             .path()
