@@ -4,11 +4,7 @@ ldns-nsec3-hash
 Synopsis
 --------
 
-<<<<<<< HEAD
-:program:`ldns-nsec3-hash` :samp:`<{domain-name}>`
-=======
 :program:`ldns-nsec3-hash` ``[OPTIONS]`` ``<DOMAIN NAME>``
->>>>>>> main
 
 Description
 -----------

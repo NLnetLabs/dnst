@@ -4,11 +4,7 @@ dnst nsec3-hash
 Synopsis
 --------
 
-<<<<<<< HEAD
-:program:`dnst nsec3-hash` [``OPTIONS``] :samp:`<DOMAIN NAME>`
-=======
 :program:`dnst nsec3-hash` ``[OPTIONS]`` ``<DOMAIN NAME>``
->>>>>>> main
 
 Description
 -----------
