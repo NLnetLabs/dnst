@@ -11,16 +11,45 @@ categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 license-file = "LICENSE"
 keywords = ["DNS", "domain", "ldns"]
+rust-version = "1.79"
 
 [[bin]]
 name = "ldns"
 path = "src/bin/ldns.rs"
 
-[dependencies]
-clap = { version = "4.3.4", features = ["derive"] }
-domain = "0.10.1"
-lexopt = "0.3.0"
+[features]
+default = ["openssl", "ring"]
 
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.1", features = ["std"] }
-ring = { version = "0.17" }
+# Cryptographic backends
+openssl = ["domain/openssl"]
+ring = ["domain/ring"]
+
+[dependencies]
+bytes = "1.8.0"
+chrono = "0.4.38"
+clap = { version = "4.3.4", features = ["cargo", "derive"] }
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+    "bytes",
+    "net",
+    "resolv",
+    "tsig",
+    "unstable-client-transport",
+    "unstable-sign",
+    "unstable-validator",
+    "zonefile",
+] }
+lexopt = "0.3.0"
+tokio = "1.40.0"
+
+# This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
+# still uses it. And sharded-slab is used by tracing-subscriber, which is
+# used by domain, which is used by us.
+_unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+
+[dev-dependencies]
+test_bin = "0.4.0"
+tempfile = "3.14.0"
+regex = "1.11.1"
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+    "unstable-stelline",
+] }

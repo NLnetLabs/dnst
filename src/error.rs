@@ -1,6 +1,9 @@
-use crate::env::Env;
 use std::fmt;
 use std::{error, io};
+
+use domain::base::wire::ParseError;
+
+use crate::env::Env;
 
 //------------ Error ---------------------------------------------------------
 
@@ -122,6 +125,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<ParseError> for Error {
+    fn from(error: ParseError) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
 impl From<lexopt::Error> for Error {
     fn from(value: lexopt::Error) -> Self {
         value.to_string().into()
@@ -158,6 +167,44 @@ impl fmt::Debug for Error {
 
 impl error::Error for Error {}
 
+//------------ Macros --------------------------------------------------------
+
+// NOTE: Exported macros are placed in the crate root by default.  We hide
+// them using 'doc(hidden)' and then manually re-export them here, forcing
+// documentation to appear using 'doc(inline)'.
+
+#[doc(inline)]
+pub use crate::bail;
+
+#[doc(inline)]
+pub use crate::ensure;
+
+/// Return an [`Error`] from the current function.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! bail {
+    ($fmt:expr) => {
+        return Err($crate::error::Error::new(&format!($fmt)));
+    };
+
+    ($fmt:expr, $($args:tt)*) => {
+        return Err($crate::error::Error::new(&format!($fmt, $($args)*)));
+    };
+}
+
+/// Return an [`Error`] if the given condition does not hold.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $fmt:expr) => {
+        if !$cond { $crate::error::bail!($fmt); }
+    };
+
+    ($cond:expr, $fmt:expr, $($args:tt)*) => {
+        if !$cond { $crate::error::bail!($fmt, $($args)*); }
+    };
+}
+
 //------------ Result --------------------------------------------------------
 
 /// A program result.
@@ -180,4 +227,12 @@ impl<T> Context for Result<T> {
     fn with_context(self, context: impl FnOnce() -> String) -> Self {
         self.map_err(|err| err.context(&(context)()))
     }
+}
+
+/// Execute the given operation under the given context.
+pub fn in_context<R>(
+    context: impl FnOnce() -> String,
+    function: impl FnOnce() -> Result<R>,
+) -> Result<R> {
+    (function)().with_context(context)
 }

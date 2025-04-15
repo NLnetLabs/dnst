@@ -1,20 +1,19 @@
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
+use std::net::SocketAddr;
+use std::path::Path;
 
 mod real;
 
 #[cfg(test)]
 pub mod fake;
 
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
+use domain::resolv::{stub::conf::ResolvConf, StubResolver};
 pub use real::RealEnv;
 
 pub trait Env {
-    // /// Make a network connection
-    // fn make_connection(&self);
-
-    // /// Make a new [`StubResolver`]
-    // fn make_stub_resolver(&self);
-
     /// Get an iterator over the command line arguments passed to the program
     ///
     /// Equivalent to [`std::env::args_os`]
@@ -32,6 +31,26 @@ pub trait Env {
 
     // /// Get a reference to stdin
     // fn stdin(&self) -> impl io::Read;
+
+    /// Make relative paths absolute.
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
+
+    fn dgram(
+        &self,
+        socket: SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static;
+
+    #[allow(async_fn_in_trait)]
+    async fn stub_resolver(&self) -> StubResolver {
+        self.stub_resolver_from_conf(ResolvConf::default()).await
+    }
+
+    #[allow(async_fn_in_trait)]
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver;
 }
 
 /// A type with an infallible `write_fmt` method for use with [`write!`] macros
@@ -72,5 +91,24 @@ impl<E: Env> Env for &E {
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
         (**self).stderr()
+    }
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        (**self).in_cwd(path)
+    }
+
+    fn dgram(
+        &self,
+        socket: SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
+        (**self).dgram(socket)
+    }
+
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
+        (**self).stub_resolver_from_conf(config).await
     }
 }
