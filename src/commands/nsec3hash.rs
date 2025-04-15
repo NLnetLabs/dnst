@@ -1,20 +1,21 @@
 use std::ffi::OsString;
-use std::io::Write;
 use std::str::FromStr;
 
 use clap::builder::ValueParser;
-use domain::base::iana::nsec3::Nsec3HashAlg;
-use domain::base::name::{self, Name};
+use domain::base::iana::nsec3::Nsec3HashAlgorithm;
+use domain::base::name::Name;
+use domain::dnssec::common::nsec3_hash;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
+use crate::env::Env;
 use crate::error::Error;
+use crate::parse::parse_name;
+use crate::Args;
 
-use super::{parse_os, parse_os_with, LdnsCommand};
+use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(
@@ -24,7 +25,7 @@ pub struct Nsec3Hash {
         default_value = "SHA-1",
         value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg)
     )]
-    algorithm: Nsec3HashAlg,
+    algorithm: Nsec3HashAlgorithm,
 
     /// The number of hash iterations
     #[arg(
@@ -47,7 +48,7 @@ pub struct Nsec3Hash {
     salt: Nsec3Salt<Vec<u8>>,
 
     /// The domain name to hash
-    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(Nsec3Hash::parse_name))]
+    #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
 }
 
@@ -60,10 +61,12 @@ ldns-nsec3-hash [OPTIONS] <domain name>
 ";
 
 impl LdnsCommand for Nsec3Hash {
+    const NAME: &'static str = "nsec3-hash";
     const HELP: &'static str = LDNS_HELP;
+    const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Self, Error> {
-        let mut algorithm = Nsec3HashAlg::SHA1;
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
+        let mut algorithm = Nsec3HashAlgorithm::SHA1;
         let mut iterations = 1;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
@@ -104,20 +107,16 @@ impl LdnsCommand for Nsec3Hash {
             return Err("Missing domain name argument".into());
         };
 
-        Ok(Self {
+        Ok(Args::from(Command::Nsec3Hash(Self {
             algorithm,
             iterations,
             salt,
             name,
-        })
+        })))
     }
 }
 
 impl Nsec3Hash {
-    pub fn parse_name(arg: &str) -> Result<Name<Vec<u8>>, name::FromStrError> {
-        Name::from_str(&arg.to_lowercase())
-    }
-
     // Note: This function is only necessary until
     // https://github.com/NLnetLabs/domain/pull/431 is merged.
     pub fn parse_salt(arg: &str) -> Result<Nsec3Salt<Vec<u8>>, Error> {
@@ -128,23 +127,23 @@ impl Nsec3Hash {
         }
     }
 
-    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlgorithm, &'static str> {
         if let Ok(num) = arg.parse() {
             Self::num_to_nsec3_alg(num)
         } else {
-            Nsec3HashAlg::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
+            Nsec3HashAlgorithm::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
         }
     }
 
-    pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+    pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlgorithm, &'static str> {
         match arg.parse() {
             Ok(num) => Self::num_to_nsec3_alg(num),
-            Err(_) => Err("malformed algorith number"),
+            Err(_) => Err("malformed algorithm number"),
         }
     }
 
-    pub fn num_to_nsec3_alg(num: u8) -> Result<Nsec3HashAlg, &'static str> {
-        let alg = Nsec3HashAlg::from_int(num);
+    pub fn num_to_nsec3_alg(num: u8) -> Result<Nsec3HashAlgorithm, &'static str> {
+        let alg = Nsec3HashAlgorithm::from_int(num);
         match alg.to_mnemonic() {
             Some(_) => Ok(alg),
             None => Err("unknown algorithm number"),
@@ -153,30 +152,30 @@ impl Nsec3Hash {
 }
 
 impl Nsec3Hash {
-    pub fn execute<W: Write>(self, writer: &mut W) -> Result<(), Error> {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let hash =
             nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
                 .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
                 .to_string()
                 .to_lowercase();
-        writeln!(writer, "{}.", hash)
-            .map_err(|err| Error::from(format!("Error writing to output: {err}")))
+        writeln!(env.stdout(), "{}.", hash);
+        Ok(())
     }
 }
 
 // These are just basic tests as there is very little code in this module, the
-// actual NSEC3 generation should be tested as part of the domain crate. See
-// also: fuzz/fuzz_targets/nsec3-hash.rs.
+// actual NSEC3 generation should be tested as part of the domain crate.
 #[cfg(test)]
 mod tests {
     mod without_cli {
         use core::str::FromStr;
 
-        use domain::base::iana::Nsec3HashAlg;
+        use domain::base::iana::Nsec3HashAlgorithm;
         use domain::base::Name;
         use domain::rdata::nsec3::Nsec3Salt;
 
         use crate::commands::nsec3hash::Nsec3Hash;
+        use crate::env::fake::{FakeCmd, FakeEnv, FakeStream};
 
         // Note: For the types we use that are provided by the domain crate,
         // construction of them from bad inputs should be tested in that
@@ -186,10 +185,17 @@ mod tests {
         // nsec3-hash`` or as `ldns-nsec3-hash`.
         #[test]
         fn execute() {
+            let env = FakeEnv {
+                cmd: FakeCmd::new(["unused"]),
+                stdout: FakeStream::default(),
+                stderr: FakeStream::default(),
+                stelline: None,
+            };
+
             // We don't test all permutations as that would take too long (~20 seconds)
             #[allow(clippy::single_element_loop)]
             for algorithm in ["SHA-1"] {
-                let algorithm = Nsec3HashAlg::from_mnemonic(algorithm.as_bytes())
+                let algorithm = Nsec3HashAlgorithm::from_mnemonic(algorithm.as_bytes())
                     .unwrap_or_else(|| panic!("Algorithm '{algorithm}' was expected to be okay"));
                 let nsec3_hash = Nsec3Hash {
                     algorithm,
@@ -197,29 +203,29 @@ mod tests {
                     salt: Nsec3Salt::empty(),
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for iterations in [0, 1, u16::MAX - 1, u16::MAX] {
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations,
                     salt: Nsec3Salt::empty(),
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for salt in ["", "-", "aa", "aabb", "aa".repeat(255).as_str()] {
                 let salt = Nsec3Salt::from_str(salt)
                     .unwrap_or_else(|err| panic!("Salt '{salt}' was expected to be okay: {err}"));
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt,
                     name: Name::root(),
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
 
             for name in [
@@ -229,12 +235,12 @@ mod tests {
                 let name = Name::from_str(name)
                     .unwrap_or_else(|err| panic!("Name '{name}' was expected to be okay: {err}"));
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
                     name,
                 };
-                nsec3_hash.execute(&mut std::io::sink()).unwrap();
+                nsec3_hash.execute(&env).unwrap();
             }
         }
     }
@@ -242,8 +248,9 @@ mod tests {
     mod with_dnst_cli {
         use core::str;
 
+        use crate::env::fake::FakeCmd;
         use crate::error::Error;
-        use crate::{parse_args, Args};
+        use crate::Args;
 
         #[test]
         fn accept_good_cli_args() {
@@ -305,22 +312,23 @@ mod tests {
         //------------ Helper functions ------------------------------------------
 
         fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
-            parse_args(|| ["dnst", "nsec3-hash"].iter().chain(args).map(Into::into))
+            FakeCmd::new(["dnst", "nsec3-hash"]).args(args).parse()
         }
 
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
-            let parsed_args = parse_cmd_line(args).unwrap();
-            let mut captured_stdout = vec![];
-            parsed_args.execute(&mut captured_stdout).unwrap();
-            assert_eq!(str::from_utf8(&captured_stdout), Ok(expected_output));
+            let result = FakeCmd::new(["dnst", "nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
         }
     }
 
     mod with_ldns_cli {
         use core::str;
 
+        use crate::env::fake::FakeCmd;
         use crate::error::Error;
-        use crate::{parse_args, Args};
+        use crate::Args;
 
         #[test]
         fn accept_good_cli_args() {
@@ -379,14 +387,47 @@ mod tests {
         //------------ Helper functions ------------------------------------------
 
         fn parse_cmd_line(args: &[&str]) -> Result<Args, Error> {
-            parse_args(|| ["ldns-nsec3-hash"].iter().chain(args).map(Into::into))
+            FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
-            let parsed_args = parse_cmd_line(args).unwrap();
-            let mut captured_stdout = vec![];
-            parsed_args.execute(&mut captured_stdout).unwrap();
-            assert_eq!(str::from_utf8(&captured_stdout), Ok(expected_output));
+            let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout, expected_output);
+            assert_eq!(result.stderr, "");
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::env::fake::FakeCmd;
+
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
+    }
+
+    #[test]
+    fn dnst_run() {
+        let cmd = FakeCmd::new(["dnst", "nsec3-hash"]);
+
+        let res = cmd.run();
+        assert_eq!(res.exit_code, 2);
+
+        let res = cmd.args(["example.test"]).run();
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(res.stdout, "jbas736chung3bb701jkjdhqkqlhvug7.\n")
+    }
+
+    #[test]
+    fn ldns_parse() {
+        let cmd = FakeCmd::new(["ldns-nsec3-hash"]);
+
+        assert!(cmd.parse().is_err());
+        assert!(cmd.args(["-a"]).parse().is_err());
     }
 }
