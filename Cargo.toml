@@ -3,20 +3,48 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 default-run = "dnst"
+rust-version = "1.79"
 
 [[bin]]
 name = "ldns"
 path = "src/bin/ldns.rs"
 
-[dependencies]
-arbitrary = { version = "1", optional = true, features = ["derive"] }
-clap      = { version = "4", features = ["derive"] }
-domain    = { git = "https://github.com/NLnetLabs/domain" }
-lexopt    = "0.3.0"
-
-# for implementation of nsec3 hash until domain has it stabilized
-octseq = { version = "0.5.1", features = ["std"] }
-ring = { version = "0.17" }
-
 [features]
 arbitrary = [ "dep:arbitrary", "domain/arbitrary" ]
+default = ["openssl", "ring"]
+
+# Cryptographic backends
+openssl = ["domain/openssl"]
+ring = ["domain/ring"]
+
+[dependencies]
+arbitrary = { version = "1", optional = true, features = ["derive"] }
+bytes = "1.8.0"
+chrono = "0.4.38"
+clap = { version = "4.3.4", features = ["cargo", "derive"] }
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+    "bytes",
+    "net",
+    "resolv",
+    "tsig",
+    "unstable-client-transport",
+    "unstable-sign",
+    "unstable-stelline",
+    "unstable-validator",
+    "zonefile",
+] }
+lexopt = "0.3.0"
+tokio = "1.40.0"
+
+# This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
+# still uses it. And sharded-slab is used by tracing-subscriber, which is
+# used by domain, which is used by us.
+_unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+
+[dev-dependencies]
+test_bin = "0.4.0"
+tempfile = "3.14.0"
+regex = "1.11.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

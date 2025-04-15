@@ -1,16 +1,20 @@
+use crate::env::Env;
+
 use super::commands::Command;
 use super::error::Error;
 
-#[derive(Clone, Debug, clap::Parser)]
+use clap::Parser;
+
+#[derive(Clone, Debug, Parser)]
 #[command(version, disable_help_subcommand = true)]
 pub struct Args {
     #[command(subcommand)]
-    command: Command,
+    pub command: Command,
 }
 
 impl Args {
-    pub fn execute(self) -> Result<(), Error> {
-        self.command.execute()
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        self.command.execute(env)
     }
 }
 
