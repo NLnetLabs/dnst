@@ -2,10 +2,10 @@ use std::ffi::OsString;
 use std::str::FromStr;
 
 use clap::builder::ValueParser;
-use domain::base::iana::nsec3::Nsec3HashAlg;
+use domain::base::iana::nsec3::Nsec3HashAlgorithm;
 use domain::base::name::Name;
+use domain::dnssec::common::nsec3_hash;
 use domain::rdata::nsec3::Nsec3Salt;
-use domain::validate::nsec3_hash;
 use lexopt::Arg;
 
 use crate::env::Env;
@@ -25,7 +25,7 @@ pub struct Nsec3Hash {
         default_value = "SHA-1",
         value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg)
     )]
-    algorithm: Nsec3HashAlg,
+    algorithm: Nsec3HashAlgorithm,
 
     /// The number of hash iterations
     #[arg(
@@ -66,7 +66,7 @@ impl LdnsCommand for Nsec3Hash {
     const COMPATIBLE_VERSION: &'static str = "1.8.4";
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        let mut algorithm = Nsec3HashAlg::SHA1;
+        let mut algorithm = Nsec3HashAlgorithm::SHA1;
         let mut iterations = 0;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
@@ -127,23 +127,23 @@ impl Nsec3Hash {
         }
     }
 
-    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+    pub fn parse_nsec3_alg(arg: &str) -> Result<Nsec3HashAlgorithm, &'static str> {
         if let Ok(num) = arg.parse() {
             Self::num_to_nsec3_alg(num)
         } else {
-            Nsec3HashAlg::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
+            Nsec3HashAlgorithm::from_mnemonic(arg.as_bytes()).ok_or("unknown algorithm mnemonic")
         }
     }
 
-    pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlg, &'static str> {
+    pub fn parse_nsec3_alg_as_num(arg: &str) -> Result<Nsec3HashAlgorithm, &'static str> {
         match arg.parse() {
             Ok(num) => Self::num_to_nsec3_alg(num),
             Err(_) => Err("malformed algorithm number"),
         }
     }
 
-    pub fn num_to_nsec3_alg(num: u8) -> Result<Nsec3HashAlg, &'static str> {
-        let alg = Nsec3HashAlg::from_int(num);
+    pub fn num_to_nsec3_alg(num: u8) -> Result<Nsec3HashAlgorithm, &'static str> {
+        let alg = Nsec3HashAlgorithm::from_int(num);
         match alg.to_mnemonic() {
             Some(_) => Ok(alg),
             None => Err("unknown algorithm number"),
@@ -171,7 +171,7 @@ mod tests {
     mod without_cli {
         use core::str::FromStr;
 
-        use domain::base::iana::Nsec3HashAlg;
+        use domain::base::iana::Nsec3HashAlgorithm;
         use domain::base::Name;
         use domain::rdata::nsec3::Nsec3Salt;
 
@@ -196,7 +196,7 @@ mod tests {
             // We don't test all permutations as that would take too long (~20 seconds)
             #[allow(clippy::single_element_loop)]
             for algorithm in ["SHA-1"] {
-                let algorithm = Nsec3HashAlg::from_mnemonic(algorithm.as_bytes())
+                let algorithm = Nsec3HashAlgorithm::from_mnemonic(algorithm.as_bytes())
                     .unwrap_or_else(|| panic!("Algorithm '{algorithm}' was expected to be okay"));
                 let nsec3_hash = Nsec3Hash {
                     algorithm,
@@ -209,7 +209,7 @@ mod tests {
 
             for iterations in [0, 1, u16::MAX - 1, u16::MAX] {
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations,
                     salt: Nsec3Salt::empty(),
                     name: Name::root(),
@@ -221,7 +221,7 @@ mod tests {
                 let salt = Nsec3Salt::from_str(salt)
                     .unwrap_or_else(|err| panic!("Salt '{salt}' was expected to be okay: {err}"));
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt,
                     name: Name::root(),
@@ -236,7 +236,7 @@ mod tests {
                 let name = Name::from_str(name)
                     .unwrap_or_else(|err| panic!("Name '{name}' was expected to be okay: {err}"));
                 let nsec3_hash = Nsec3Hash {
-                    algorithm: Nsec3HashAlg::SHA1,
+                    algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
                     name,

@@ -5,10 +5,15 @@ use std::path::Path;
 
 use clap::builder::ValueParser;
 use clap::ValueEnum;
-use domain::base::iana::{DigestAlg, SecAlg};
+use domain::base::iana::{Class, DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::Name;
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::validate::Key;
+use domain::base::Record;
+use domain::base::Ttl;
+use domain::dnssec::common::display_as_bind;
+use domain::dnssec::validator::base::DnskeyExt;
+use domain::rdata::Ds;
+
 use lexopt::Arg;
 
 use crate::env::Env;
@@ -17,7 +22,7 @@ use crate::parse::parse_name;
 use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::sign::crypto::common::{self, GenerateParams};
+use domain::crypto::sign::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -168,11 +173,11 @@ impl LdnsCommand for Keygen {
 
                     algorithm = parse_os_with("algorithm (-a)", &value, |s| {
                         Ok(match s {
-                            "RSASHA256" | "8" => Some(SecAlg::RSASHA256),
-                            "ECDSAP256SHA256" | "13" => Some(SecAlg::ECDSAP256SHA256),
-                            "ECDSAP384SHA384" | "14" => Some(SecAlg::ECDSAP384SHA384),
-                            "ED25519" | "15" => Some(SecAlg::ED25519),
-                            "ED448" | "16" => Some(SecAlg::ED448),
+                            "RSASHA256" | "8" => Some(SecurityAlgorithm::RSASHA256),
+                            "ECDSAP256SHA256" | "13" => Some(SecurityAlgorithm::ECDSAP256SHA256),
+                            "ECDSAP384SHA384" | "14" => Some(SecurityAlgorithm::ECDSAP384SHA384),
+                            "ED25519" | "15" => Some(SecurityAlgorithm::ED25519),
+                            "ED448" | "16" => Some(SecurityAlgorithm::ED448),
 
                             _ => {
                                 return Err("unknown algorithm mnemonic or number");
@@ -226,11 +231,11 @@ impl LdnsCommand for Keygen {
         }
 
         let algorithm = match algorithm {
-            Some(SecAlg::RSASHA256) => GenerateParams::RsaSha256 { bits },
-            Some(SecAlg::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
-            Some(SecAlg::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
-            Some(SecAlg::ED25519) => GenerateParams::Ed25519,
-            Some(SecAlg::ED448) => GenerateParams::Ed448,
+            Some(SecurityAlgorithm::RSASHA256) => GenerateParams::RsaSha256 { bits },
+            Some(SecurityAlgorithm::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
+            Some(SecurityAlgorithm::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
+            Some(SecurityAlgorithm::ED25519) => GenerateParams::Ed25519,
+            Some(SecurityAlgorithm::ED448) => GenerateParams::Ed448,
             Some(_) => unreachable!(),
             None => {
                 return Err("Missing algorithm (-a) option".into());
@@ -306,33 +311,42 @@ impl Keygen {
 
         // The digest algorithm is selected based on the key algorithm.
         let digest_alg = match params.algorithm() {
-            SecAlg::RSASHA256 => DigestAlg::SHA256,
-            SecAlg::ECDSAP256SHA256 => DigestAlg::SHA256,
-            SecAlg::ECDSAP384SHA384 => DigestAlg::SHA384,
-            SecAlg::ED25519 => DigestAlg::SHA256,
-            SecAlg::ED448 => DigestAlg::SHA256,
+            SecurityAlgorithm::RSASHA256 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ECDSAP256SHA256 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ECDSAP384SHA384 => DigestAlgorithm::SHA384,
+            SecurityAlgorithm::ED25519 => DigestAlgorithm::SHA256,
+            SecurityAlgorithm::ED448 => DigestAlgorithm::SHA256,
             _ => unreachable!(),
         };
 
-        // Generate the key.
-        // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = common::generate(params)
-            .map_err(|err| format!("an implementation error occurred: {err}").into())
-            .context("generating a cryptographic keypair")?;
         // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
-        let public_key = Key::new(self.name.clone(), flags, public_key);
+
+        // Generate the key.
+        // TODO: Attempt repeated generation to avoid key tag collisions.
+        let (secret_key, public_key) = sign::generate(params, flags)
+            .map_err(|err| format!("an implementation error occurred: {err}").into())
+            .context("generating a cryptographic keypair")?;
+        let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);
         let digest = self.make_ksk.then(|| {
-            public_key
-                .digest(digest_alg)
-                .expect("only supported digest algorithms are used")
+            let digest = public_key
+                .data()
+                .digest(&self.name, digest_alg)
+                .expect("only supported digest algorithms are used");
+            Ds::new(
+                public_key.data().key_tag(),
+                public_key.data().algorithm(),
+                digest_alg,
+                digest.as_ref().to_vec(),
+            )
+            .expect("should not fail")
         });
 
         let base = format!(
             "K{}+{:03}+{:05}",
             self.name.fmt_with_dot(),
-            public_key.algorithm().to_int(),
-            public_key.key_tag()
+            public_key.data().algorithm().to_int(),
+            public_key.data().key_tag()
         );
 
         let secret_key_path = format!("{base}.private");
@@ -354,7 +368,7 @@ impl Keygen {
 
         // Prepare the contents to write.
         let secret_key = secret_key.display_as_bind().to_string();
-        let public_key = public_key.display_as_bind().to_string();
+        let public_key = display_as_bind(&public_key).to_string();
         let digest = digest.map(|digest| {
             format!(
                 "{}\tIN\tDS\t{}\n",
@@ -416,7 +430,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
-    use domain::sign::crypto::common::GenerateParams;
+    use domain::crypto::sign::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
