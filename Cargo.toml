@@ -2,11 +2,6 @@
 name = "dnst"
 version = "0.1.0"
 edition = "2021"
-authors = ["NLnet Labs <dns-team@nlnetlabs.nl>"]
-description = "Reimplementation of important ldns programs."
-repository = "https://github.com/NLnetLabs/dnst"
-license = "BSD-3-Clause"
-readme = "README.md"
 default-run = "dnst"
 readme = "README.md"
 repository = "https://github.com/nlnetlabs/dnst/"
