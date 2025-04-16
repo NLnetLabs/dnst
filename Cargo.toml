@@ -3,6 +3,14 @@ name = "dnst"
 version = "0.1.0"
 edition = "2021"
 default-run = "dnst"
+readme = "README.md"
+repository = "https://github.com/nlnetlabs/dnst/"
+authors = ["NLnet Labs <dns-team@nlnetlabs.nl>"]
+description = "Rust reimplementation of important ldns programs."
+categories = ["command-line-utilities"]
+license = "BSD-3-Clause"
+license-file = "LICENSE"
+keywords = ["DNS", "domain", "ldns"]
 rust-version = "1.79"
 
 [[bin]]
@@ -17,10 +25,12 @@ openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
 [dependencies]
-bytes  = { version = "1.1", default-features = false }
+bytes  = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "main", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+    "bytes",
+    "net",
     "resolv",
     "tokio-stream",
     "tsig",
@@ -47,10 +57,10 @@ smallvec = "1.13.2"
 
 [dev-dependencies]
 const_format = " 0.2.33"
-domain = { git = "https://github.com/NLnetLabs/domain", branch = "main", features = [
+test_bin = "0.4.0"
+tempfile = "3.14.0"
+regex = "1.11.1"
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
-regex = "1.11.1"
-tempfile = "3.14.0"
-test_bin = "0.4.0"

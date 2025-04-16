@@ -5,24 +5,20 @@ use std::path::Path;
 
 use clap::builder::ValueParser;
 use clap::ValueEnum;
-use domain::base::iana::{Class, DigestAlgorithm, SecurityAlgorithm};
+use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::Name;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::Record;
-use domain::base::Ttl;
-use domain::dnssec::common::display_as_bind;
+use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
+use domain::crypto::sign::GenerateParams;
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::Ds;
-
 use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args, DISPLAY_KIND};
+use crate::{util, Args};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
-use domain::crypto::sign::{self, GenerateParams};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
@@ -319,34 +315,27 @@ impl Keygen {
             _ => unreachable!(),
         };
 
-        // TODO: Add a high-level operation in 'domain' to select flags?
-        let flags = if self.make_ksk { 257 } else { 256 };
-
         // Generate the key.
         // TODO: Attempt repeated generation to avoid key tag collisions.
-        let (secret_key, public_key) = sign::generate(params, flags)
+        // TODO: Add a high-level operation in 'domain' to select flags?
+        let flags = if self.make_ksk { 257 } else { 256 };
+        let (secret_key, public_key) = domain::crypto::sign::generate(params, flags)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
-        let public_key = Record::new(self.name.clone(), Class::IN, Ttl::ZERO, public_key);
+        let key_tag = public_key.key_tag();
+        let algorithm = public_key.algorithm();
         let digest = self.make_ksk.then(|| {
             let digest = public_key
-                .data()
                 .digest(&self.name, digest_alg)
                 .expect("only supported digest algorithms are used");
-            Ds::new(
-                public_key.data().key_tag(),
-                public_key.data().algorithm(),
-                digest_alg,
-                digest.as_ref().to_vec(),
-            )
-            .expect("should not fail")
+            Ds::new(key_tag, algorithm, digest_alg, digest).expect("should not fail")
         });
 
         let base = format!(
             "K{}+{:03}+{:05}",
             self.name.fmt_with_dot(),
-            public_key.data().algorithm().to_int(),
-            public_key.data().key_tag()
+            algorithm.to_int(),
+            key_tag
         );
 
         let secret_key_path = format!("{base}.private");
@@ -368,12 +357,16 @@ impl Keygen {
 
         // Prepare the contents to write.
         let secret_key = secret_key.display_as_bind().to_string();
-        let public_key = display_as_bind(&public_key).to_string();
+        let public_key = format!(
+            "{} IN DNSKEY {}",
+            self.name.fmt_with_dot(),
+            public_key.display_zonefile(DisplayKind::Simple)
+        );
         let digest = digest.map(|digest| {
             format!(
-                "{}\tIN\tDS\t{}\n",
+                "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(DISPLAY_KIND)
+                digest.display_zonefile(DisplayKind::Simple)
             )
         });
 
@@ -424,13 +417,13 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
+    use domain::crypto::sign::GenerateParams;
     use regex::Regex;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
 
     use super::{Keygen, SymlinkArg};
-    use domain::crypto::sign::GenerateParams;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> Keygen {
@@ -652,7 +645,7 @@ mod test {
         let public_key_regex =
             Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
         let digest_key_regex =
-            Regex::new(r"^example.org.\tIN\tDS\t[0-9]+\t15 2 [0-9a-fA-F]+\n$").unwrap();
+            Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
 
         assert_eq!(res.exit_code, 0, "{res:?}");
         assert_eq!(res.stderr, "");
