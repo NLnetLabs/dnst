@@ -322,20 +322,17 @@ impl Keygen {
         let (secret_key, public_key) = domain::crypto::sign::generate(params, flags)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
-        let key_tag = public_key.key_tag();
-        let algorithm = public_key.algorithm();
         let digest = self.make_ksk.then(|| {
-            let digest = public_key
+            public_key
                 .digest(&self.name, digest_alg)
-                .expect("only supported digest algorithms are used");
-            Ds::new(key_tag, algorithm, digest_alg, digest).expect("should not fail")
+                .expect("only supported digest algorithms are used")
         });
 
         let base = format!(
             "K{}+{:03}+{:05}",
             self.name.fmt_with_dot(),
-            algorithm.to_int(),
-            key_tag
+            public_key.algorithm().to_int(),
+            public_key.key_tag()
         );
 
         let secret_key_path = format!("{base}.private");
@@ -356,6 +353,8 @@ impl Keygen {
         }
 
         // Prepare the contents to write.
+        let key_tag = public_key.key_tag();
+        let algorithm = public_key.algorithm();
         let secret_key = secret_key.display_as_bind().to_string();
         let public_key = format!(
             "{} IN DNSKEY {}",
@@ -366,7 +365,9 @@ impl Keygen {
             format!(
                 "{} IN DS {}\n",
                 self.name.fmt_with_dot(),
-                digest.display_zonefile(DisplayKind::Simple)
+                Ds::new(key_tag, algorithm, digest_alg, digest)
+                    .expect("we generated the digest, so don't expect it to be too long")
+                    .display_zonefile(DisplayKind::Simple)
             )
         });
 
@@ -657,10 +658,7 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(
-            digest_key_regex.is_match(&digest_key),
-            "{digest_key} not matched"
-        );
+        assert!(digest_key_regex.is_match(&digest_key));
 
         assert!(dir
             .path()
