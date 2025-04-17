@@ -20,14 +20,14 @@ ring = ["domain/ring"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
+#git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation",
+domain = { path = "../domain", features = [
     "bytes",
     "net",
     "resolv",
     "tsig",
     "unstable-client-transport",
     "unstable-sign",
-    "unstable-validate",
     "unstable-validator",
     "zonefile",
 ] }
@@ -38,11 +38,15 @@ tokio = "1.40.0"
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+serde_json = "1.0.137"
+serde = "1.0.217"
+jiff = "0.2.6"
 
 [dev-dependencies]
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation", features = [
+#git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation",
+domain = { path = "../domain", features = [
     "unstable-stelline",
 ] }

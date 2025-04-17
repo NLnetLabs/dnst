@@ -1,9 +1,10 @@
 //! The command of _dnst_.
 pub mod help;
-pub mod key2ds;
-pub mod keygen;
+//pub mod key2ds;
+//pub mod keygen;
+pub mod keyset;
 pub mod notify;
-pub mod nsec3hash;
+//pub mod nsec3hash;
 pub mod update;
 
 use clap::crate_version;
@@ -41,13 +42,13 @@ pub enum Command {
     /// <tag> is the 16-bit tag of the key, zero-padded to 5 digits.
     ///
     /// Upon completion, 'K<name>+<alg>+<tag>' will be printed.
-    #[allow(rustdoc::invalid_html_tags)]
-    #[command(name = "keygen", verbatim_doc_comment)]
-    Keygen(self::keygen::Keygen),
+    //#[allow(rustdoc::invalid_html_tags)]
+    //#[command(name = "keygen", verbatim_doc_comment)]
+    //Keygen(self::keygen::Keygen),
 
     /// Print the NSEC3 hash of a given domain name
-    #[command(name = "nsec3-hash")]
-    Nsec3Hash(self::nsec3hash::Nsec3Hash),
+    //#[command(name = "nsec3-hash")]
+    //Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
     /// Send a NOTIFY packet to DNS servers
     ///
@@ -62,12 +63,16 @@ pub enum Command {
     /// The following file will be created for each key:
     /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
     /// will be printed to stdout.
-    #[command(name = "key2ds")]
-    Key2ds(key2ds::Key2ds),
+    //#[command(name = "key2ds")]
+    //Key2ds(key2ds::Key2ds),
 
     /// Send an UPDATE packet
     #[command(name = "update")]
     Update(self::update::Update),
+
+    /// Maintain a set of DNSSEC keys
+    #[command(name = "keyset")]
+    Keyset(self::keyset::Keyset),
 
     /// Show the manual pages
     Help(self::help::Help),
@@ -83,11 +88,12 @@ pub enum Command {
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
-            Self::Keygen(keygen) => keygen.execute(env),
-            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            Self::Key2ds(key2ds) => key2ds.execute(env),
+            //Self::Keygen(keygen) => keygen.execute(env),
+            //Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
+            //Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Notify(notify) => notify.execute(env),
             Self::Update(update) => update.execute(env),
+            Self::Keyset(keyset) => keyset.execute(env),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
