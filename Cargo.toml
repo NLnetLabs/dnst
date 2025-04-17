@@ -20,8 +20,7 @@ ring = ["domain/ring"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-#git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation",
-domain = { path = "../domain", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
     "bytes",
     "net",
     "resolv",
@@ -46,7 +45,6 @@ jiff = "0.2.6"
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
-#git = "https://github.com/NLnetLabs/domain.git", branch = "initial-nsec3-generation",
-domain = { path = "../domain", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
     "unstable-stelline",
 ] }
