@@ -656,7 +656,10 @@ impl SignZone {
             .into());
         };
 
-        let dnskey_rrset = records.find_apex_dnskey(soa_rr.owner());
+        let dnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::DNSKEY);
+
+        let cds_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDS);
+        let cdnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDNSKEY);
 
         // Extract and validate the DNSKEY RRs from the loaded zone.
         let mut found_public_keys = vec![];
@@ -851,7 +854,7 @@ impl SignZone {
 
         let mut dnskey_rrsigs = Vec::new();
         if let Ok(all_dnskeys) = all_dnskeys {
-            for k in key_signing_keys {
+            for k in &key_signing_keys {
                 let rrsig = sign_rrset(k, &all_dnskeys, self.inception, self.expiration)
                     .expect("should not fail");
                 let data = ZoneRecordData::Rrsig(rrsig.data().clone());
@@ -860,10 +863,36 @@ impl SignZone {
             }
         }
 
+        let mut cds_cdnskey_rrsigs = Vec::new();
+        if let Some(cds_rrset) = &cds_rrset {
+            for k in &key_signing_keys {
+                let rrsig = sign_rrset(k, &cds_rrset, self.inception, self.expiration)
+                    .expect("should not fail");
+                let data = ZoneRecordData::Rrsig(rrsig.data().clone());
+                let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
+                cds_cdnskey_rrsigs.push(record);
+            }
+        }
+        drop(cds_rrset);
+
+        if let Some(cdnskey_rrset) = &cdnskey_rrset {
+            for k in key_signing_keys {
+                let rrsig = sign_rrset(k, &cdnskey_rrset, self.inception, self.expiration)
+                    .expect("should not fail");
+                let data = ZoneRecordData::Rrsig(rrsig.data().clone());
+                let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
+                cds_cdnskey_rrsigs.push(record);
+            }
+        }
+        drop(cdnskey_rrset);
+
         for r in dnskey_extra {
             records.insert(r).expect("should not fail");
         }
         for r in dnskey_rrsigs {
+            records.insert(r).expect("should not fail");
+        }
+        for r in cds_cdnskey_rrsigs {
             records.insert(r).expect("should not fail");
         }
 
@@ -3913,6 +3942,110 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 41
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn signed_zone_with_cds_and_cdnskey_example() {
+        // Make sure the CDS and CDNSKEY RRsets are signed with the KSKs.
+        // RFC 7344 Section 4.1
+        // o  Signer: MUST be signed with a key that is represented in both
+        //    the current DNSKEY and DS RRsets, [...]
+        let expected_signed_zone = r###"example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600
+example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20240101010101 20240101010101 38353 example. cL7d3D6QdmgXqh3CbD10VgF/xMGtNpWoJnEcljYRIdX3rbC2jIf+GtEuTPGx2IFbynmR/Mu+EWcN208eLNtzZmVuPZ2gnN2mlj3O3UgvB5OnXEl9AQsQ7aJzkdTKwWdX7Y8CE2BeJkETa9IQgHmeuJdc1tQHZewJwnuzeQSsDgQ=
+example.\t3600\tIN\tNS\tns1.example.
+example.\t3600\tIN\tNS\tns2.example.
+example.\t3600\tIN\tRRSIG\tNS 8 1 3600 20240101010101 20240101010101 38353 example. Gz8ertKXzdKE4JM1RfdPit3yLFr9SeADLX2jQd9TILmb6t6AJY613wkiuAqF6MWumrxgbLWrculdY0nywgkbbeCxUqet3KXPtTblBpGQuuvJv1nmveAMr7l2Yga1f4t6soJ1mbP8J3upbZ9gRk7ztPyuG3CDwkVMN4loGwadn+U=
+example.\t3600\tIN\tMX\t1 xx.example.
+example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20240101010101 20240101010101 38353 example. YFr6UaUKs2ypho6nRWw3rnXFnYrD0gdjPtolOGeq+fsGuEfWv0cMGX5n7/qQHlXmfBGOJf+3u7Mk299lQKxLBiMMqy9cBihx8CB+FwnWerycg4jW5uqGfqgtBUHo8pwABoC/tLgKbQyeAruuRBoLsPAh2G10zyM7sW/ecChAb/w=
+example.\t3600\tIN\tNSEC\ta.example. NS SOA MX RRSIG NSEC DNSKEY CDS CDNSKEY
+example.\t3600\tIN\tRRSIG\tNSEC 8 1 3600 20240101010101 20240101010101 38353 example. Qiw+vax1xUEfN1BhX1O0KbD/V8t2IUh+ex6d1tfqK5C55r296HuiZ70j76V4VjIFXj5tgz9uU1JIR2/UUghGhpp4mmg6Ct5rOiq6DW6w2WN4fLinCwIPnOZ4GLIl/h3+Au5T6hxjZM6OQIsvlP3k7Y5ICViHIqPa+HsJbPFO9Vg=
+example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
+example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
+example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20240101010101 20240101010101 31967 example. GmunmCEX5pnYq5v4dgdmjEfxvT31do2Aw6msSJGbnwR51ZhtNuqq1p0VAyvS/YW0YaL2PaCxP2LT4ydsvnOHdqW0YKDUlAlCXz8RXQslagslvRMwLXuQwALzE/tFWJJOA5OAAydIzEhVq3SNOwOiucqFpAR8An5FmNxIAzz1F/A=
+example.\t3600\tIN\tCDS\t31967 8 2 2B8562A69323CF45D662976637829EC082C6204D0C83C9E1AEDCD655629389AA
+example.\t3600\tIN\tRRSIG\tCDS 8 1 3600 20240101010101 20240101010101 31967 example. gLUWk/uFgIeN0Jj7u+Qn1ulyQ1V4YSKUfEZaKVCbmG1u83j9u0HcHAECf21OVf9ihbryGf5mN56By7pLMSZTdRI07ZwIxkFmNeZBrJyt9NlhHvn+drLCxgZT6bw4wN1x37yc9CwWyWY/ufuiXYg7nF2+foOsFCQyMUmZYzm19KE=
+example.\t3600\tIN\tCDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7
+example.\t3600\tIN\tRRSIG\tCDNSKEY 8 1 3600 20240101010101 20240101010101 31967 example. Sg+R/AVr2/VsRREKvYCRnplwHMz3AEwAeNWYCZks3mF4UkqQOa3bxszZFPoDQRIU6iP8LjWpqA3SgXDFNPwHhIrh4J/SuGRWYG7QkGpe49aeYpcbyUiD+DvgcruJXp2McxyjxCvkgFMrFL4qtrMTjkn9UBRuOjlpoa5FLqa8q9g=
+a.example.\t3600\tIN\tNS\tns1.a.example.
+a.example.\t3600\tIN\tNS\tns2.a.example.
+a.example.\t3600\tIN\tDS\t57855 5 1 B6DCD485719ADCA18E5F3D48A2331627FDD3636B
+a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20240101010101 20240101010101 38353 example. LMf+InLS3tvyadrLa0OqvAjWDfwaGeTDyoXfg1ljh//wiJR8IheUfP6hXqTd9UVm0T4SKd+ph6/5oOeVnDRJ9ugd1TlE4c89weAOHwJsJULQdkow1/GYw6v9WRVR75D4g9ogaB7zlLfVXFC9uFlxTGQE+FyOUc4obiJ7o2Swz98=
+a.example.\t3600\tIN\tNSEC\tai.example. NS DS RRSIG NSEC
+a.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. fsXgi03vsWU2R3j6jGmTEcyId6AOtIKgVhD0AecNIkwXhn9FOL86hf4orVHbBKpuB1RExql+msJ68EyCyfyM5H8he3sn9BIA/EWaIAg9/c/u+tqLmLE6w7GTm4ZwijExPHfTkYljLLKUWV55hTGD1cqeVT73IljzlHCH9Nt2I+w=
+ns1.a.example.\t3600\tIN\tA\t192.0.2.5
+ns2.a.example.\t3600\tIN\tA\t192.0.2.6
+ai.example.\t3600\tIN\tA\t192.0.2.9
+ai.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20240101010101 20240101010101 38353 example. Hnns8AklQUUYKPdc5kmBwEauOSdOZnIRY1w/Lz+O4e7zHyyr1LK7BTmMKsvo+FQ6ORwuqFJ9caI3X7ZG7loduzrfhdrWJ0BN9Zbxi+oGvxnNpK+HP0YoLFKeW4rrJcgRRrQdtzIZTknze+fd73we2Mr0YuZuvbMode+A1pIvQWU=
+ai.example.\t3600\tIN\tHINFO\t"KLH-10" "ITS"
+ai.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20240101010101 20240101010101 38353 example. PNISCG06jg9+Zc+s+/rrHXyUEKWO/Rh7El6pABCZzq9PK081I31AKn5V0wRgPDm3Z0wF5or0qa6L5FXH/3cwCvPrQS4CkvGdTkW8/O7CUUNEGh1gw+lUNryz8LtkKo5blM7ubi8m4RW8mOm2+J1kwbWtEMyhtfj7cCwXxsaIIsg=
+ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
+ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20240101010101 20240101010101 38353 example. XD+egYoiwjDOuZFr0FympXEr6uWAhkTGBfNYrLoJAX6Xxk9Aa3JSrEhRXkT7bvEMmsSmFZAy3Ek+VmDT4yvsBw0ZmvyefIQRVBqze1EtNfRCgtRqQL5P+zXHou58XKcdNSKUR0o/lcRqm9Np+FMOEeTbnVjkPbGg/zc/UZk2mDM=
+ai.example.\t3600\tIN\tNSEC\tb.example. A HINFO AAAA RRSIG NSEC
+ai.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. dvcv/WQN3JqOouLSLAXvGhV9IGi/Vz0UISdFkV4DKD5/ZwcPVUBi6ykcQAhj9k2medZcCLWM4sy4FWqMmuqSpgUuEV/nkEJk96PW1901g+CD8W67d2SnPhRJnLa8TOJZgPlYKwMEz9eB7mV8KjHSZTa4hYCW26eVhD5GTfLJfMk=
+b.example.\t3600\tIN\tNS\tns1.b.example.
+b.example.\t3600\tIN\tNS\tns2.b.example.
+b.example.\t3600\tIN\tNSEC\tns1.example. NS RRSIG NSEC
+b.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. qRfOaUm6fI1Ae0QMGERwfIGmVasBwshLlPu70GDj/AW0nRXahv5T3PjaDvraQfHFMhvWKlfZLVseEX7A+I6rA+wV/nhQWpD+14jzPc6Bt5T3gmjEq8xSZgl/5MVjLgQQbvi9WAcbNkzBr6oP+bx7qxdrgEG/1UU8amVj7/llKE0=
+ns1.b.example.\t3600\tIN\tA\t192.0.2.7
+ns2.b.example.\t3600\tIN\tA\t192.0.2.8
+ns1.example.\t3600\tIN\tA\t192.0.2.1
+ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20240101010101 20240101010101 38353 example. iQF6pCPHm0UPARJeK4bQ3G4E+nk4pAQBnsxDLrZSWvEJEt31NELTrBftyoBBawfzP4V6/n5+8KPQ2LDN4Gws1xZlqrrKPFQOSho83Wfk0Arx9RSet8W1RSj+RabVV3BFkbJkBE5s+bGDDL7gJvdFwHfPT0xSFpSG65qAi+NYtmg=
+ns1.example.\t3600\tIN\tNSEC\tns2.example. A RRSIG NSEC
+ns1.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. cr3lvE/56qrQcLg98R/2XLpNF6gJ/VHmVwKJrr+mH22JhtsDicPxggQOOogv+AJ+eXqd4C76NRRYv/PfuAau75gySKNTCMhit+NlAUKxi7aNpNa9uY0sT2j55xm0BjBHgC1oYDtNuRitTIwJDC3LydoG8wEXNWACMfn7dPxz/7w=
+ns2.example.\t3600\tIN\tA\t192.0.2.2
+ns2.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20240101010101 20240101010101 38353 example. O6jfsXRL0shlZ4gyYLc2HZhNUPvU70+j0+b/tTrohkwJwSnwBd0mP4arQ8qTjOpWmDR2EgYVKRc0sVBKdOjXthjaxTBmA24KifrbcKkMeaZwDAlfpHjgW4uWxFv+EK2LrIqpzLdIKUYOKmlWJgixmg47jeBZCgl76QKPzuXkWBA=
+ns2.example.\t3600\tIN\tNSEC\t*.w.example. A RRSIG NSEC
+ns2.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. G1diMrjHA5ESNK6vsuLYgTLCt8OmZBicO8XO0hXmzNwmToiJgGFxiWCCyHCRm/GINBOEEqR0pVXvA88tfmR1370YWD45mdMLeQm0pA+8nOwB3+2q7ow2/Us7S33319kvJcdkksZGBr+yzgh95YyvrJQ6no4BPTZ/t8Vp1IUxs78=
+*.w.example.\t3600\tIN\tMX\t1 ai.example.
+*.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20240101010101 20240101010101 38353 example. Xxw3GRDGppmG7vtqB+hvqAIlRI8FEFuZomVXaquhYSUHk07/3XI3gpzkn9tZihAZXp9ZOCzJ8Wqz2n1HzPN5od5hh1Jr48aEPqvG/cU2Uh8ChblR+6yX/op8rBSkSnJvh/4MfxmFYBmnWXVQRmcOwVqKhyiWbMsBtK3mKf2FQMo=
+*.w.example.\t3600\tIN\tNSEC\tx.w.example. MX RRSIG NSEC
+*.w.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. hR8wuOcdiaOcBqs/MN9mh4SY40yaHa1lOhCDoxwG1KLqkZi3anN3RdBpx2GssT37rQv+YFpftX2wdn4pvxpRLRkQLtwbAphUDnAAa6rCrfqerUo+3Xcc2+xOx5wyHjTQ0ZRzf2H6hG+VEUbDEQ1nsFXoVqAl2RhcB+WC5zbYfvc=
+x.w.example.\t3600\tIN\tMX\t1 xx.example.
+x.w.example.\t3600\tIN\tRRSIG\tMX 8 3 3600 20240101010101 20240101010101 38353 example. ffs2V0oDavRzclaPILSPmSyj8fk1di264FRpz2hlcFfSpHeRw5VOleM/HZ/O/OOKepjZLyvRlfwOO/xeN6JEK1utOQxDLEoziJRx/II3XehkRtfMMY/MP4yRQ3IOtCChzMbzluiZYoyG6DQ/rNJrb+mtEE5p1XJe4dlcjHjCcJ8=
+x.w.example.\t3600\tIN\tNSEC\tx.y.w.example. MX RRSIG NSEC
+x.w.example.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20240101010101 20240101010101 38353 example. sgkt+WxHIbNPUFwSBbRgskm6V/g5I7mpKUB1OE3HhWQPrXwLgfuKGVwRQHoYT5yclSblgQGz498mqu7OBRtr+JKBAx1X8IjFXcRF1kWtYJbj8oyR/wv4JRrvr5MT78WE0wv6Iu8gYKMB/8zzluBwQGBKXr449kT2cuzgtB3/Dr4=
+x.y.w.example.\t3600\tIN\tMX\t1 xx.example.
+x.y.w.example.\t3600\tIN\tRRSIG\tMX 8 4 3600 20240101010101 20240101010101 38353 example. ul6QjoykQ6Fv82wQtSCr2FKjmO+9xcBbqtCTPG+Pe1as5h0uQ9g1CRVA5hL8tyroNVN2ZnOgC4pS9IwvqSd5uhSAe9GvUZ/yfXfe7dLjgaLnHRckQeiaUCkQns7jd9KwTY+q2AQP4U3Rv4xkuWU1NpzjvuCP0WjKAxkVebxXzYU=
+x.y.w.example.\t3600\tIN\tNSEC\txx.example. MX RRSIG NSEC
+x.y.w.example.\t3600\tIN\tRRSIG\tNSEC 8 4 3600 20240101010101 20240101010101 38353 example. ioQ/JE7YxVTd+FKHI+cejcrboc6hcIMRuYyPufM+VZ/2k/QN7BRjivwdUdumksaRHBZ4pjy92kNfZs2mwTtWMHGrscGnYNc+np8PS/UVXzf64I/rxsM0Y0xHj47J7mzfW9ckeMhPUYwkGIdEpofXD75qEmLpdNtnFHVm83E8Wvw=
+xx.example.\t3600\tIN\tA\t192.0.2.10
+xx.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20240101010101 20240101010101 38353 example. Sdi0syLs5N4MQAXj7MAQWMM1ctA61fACVqCnkmJ/fo5DMlql7Jzw0+j0RioWq+hpvGBP3yC4eImwVguU77SL/b1m8IbzxTvqdOyq5g2SbpRhkeGlZMDqluoOYHaVHeO1MFTctKa3TZ0c7tB5e2V4Z7soPA8J0LR5StXxWfay9K0=
+xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
+xx.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20240101010101 20240101010101 38353 example. TBscw+fZ/WwLzuQB6hB7qIn1KY/dU4KxTIJNasT8ky5xpMVNps+yofRoMVF0O5vDEAEnEfSjLrLfWk7DGrYJghUAhc8K4m5UQSCwUyYSJiy9n4jaFVqpOaDKCiKWkW+VSWlG+0VWkAY8Hm6JgA2O/GdxxlYqZkEKG/0ZOcV1tnc=
+xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
+xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20240101010101 20240101010101 38353 example. Eu4tNWn/jzq0lwTx9FCO+B2/Anj64FE1KtxTQ9FDITrTO/w5LkPYCJVOaF3gOUvuY4sQieWcaZPIXDkt/JAvRFrOoDWhwwgWY56Ic/UsSmq8ia6DaF9sUVu1MKKIVWw/0mN6S3rE7HixiVaxjxnZoDHC/xyJtmY1/z87q29wGRw=
+xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
+xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 example. PB3pkKf0VHe7GHFbvW6y4lvKxhJx8+p0BGfQqMwGWsC95WUq0244a4bKigraFRR59RCuFjuwUkSKgEs2knxRW4rTjfs6bcbzMr7y1Cwa58tMXU73yg4A881iiC+guiKbu1Gfi9uXTrpuMmi8+hHeaUqPO78N9h/r2QKRnj0lr6s=
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.CDS+CDNSKEY");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
+
+        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
+        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
+        // RFC 4035 Appendix A.
+        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-T",
+            "-R",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stdout, expected_signed_zone);
+        assert_eq!(res.stderr, "");
         assert_eq!(res.exit_code, 0);
     }
 
