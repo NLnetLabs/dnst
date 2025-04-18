@@ -866,25 +866,23 @@ impl SignZone {
         let mut cds_cdnskey_rrsigs = Vec::new();
         if let Some(cds_rrset) = &cds_rrset {
             for k in &key_signing_keys {
-                let rrsig = sign_rrset(k, &cds_rrset, self.inception, self.expiration)
+                let rrsig = sign_rrset(k, cds_rrset, self.inception, self.expiration)
                     .expect("should not fail");
                 let data = ZoneRecordData::Rrsig(rrsig.data().clone());
                 let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
                 cds_cdnskey_rrsigs.push(record);
             }
         }
-        drop(cds_rrset);
 
         if let Some(cdnskey_rrset) = &cdnskey_rrset {
             for k in key_signing_keys {
-                let rrsig = sign_rrset(k, &cdnskey_rrset, self.inception, self.expiration)
+                let rrsig = sign_rrset(k, cdnskey_rrset, self.inception, self.expiration)
                     .expect("should not fail");
                 let data = ZoneRecordData::Rrsig(rrsig.data().clone());
                 let record = Record::new(rrsig.owner().clone(), rrsig.class(), rrsig.ttl(), data);
                 cds_cdnskey_rrsigs.push(record);
             }
         }
-        drop(cdnskey_rrset);
 
         for r in dnskey_extra {
             records.insert(r).expect("should not fail");
