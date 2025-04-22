@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::Path;
 
 use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend, UdpConnect};
@@ -19,11 +19,19 @@ impl Env for RealEnv {
     }
 
     fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stdout()))
+        let stdout = io::stdout();
+        Stream {
+            is_terminal: stdout.is_terminal(),
+            writer: FmtWriter(io::stdout()),
+        }
     }
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stderr()))
+        let stderr = io::stderr();
+        Stream {
+            is_terminal: stderr.is_terminal(),
+            writer: FmtWriter(io::stdout()),
+        }
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {

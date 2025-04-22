@@ -13,6 +13,7 @@ use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
+use crate::log::warning;
 use crate::parse::TSigInfo;
 use crate::Args;
 
@@ -223,24 +224,18 @@ impl Notify {
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                writeln!(
-                    env.stderr(),
-                    "warning: invalid domain name \"{server}\", skipping."
-                );
+                warning!(env, "invalid domain name \"{server}\", skipping.");
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                writeln!(
-                    env.stderr(),
-                    "warning: could not resolve host \"{name}\", skipping."
-                );
+                warning!(env, "could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
             if hosts.is_empty() {
-                writeln!(
-                    env.stderr(),
+                warning!(
+                    env,
                     "skipping bad address: {name}: Name or service not known"
                 );
                 continue;

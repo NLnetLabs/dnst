@@ -17,6 +17,7 @@ pub mod args;
 pub mod commands;
 pub mod env;
 pub mod error;
+pub mod log;
 pub mod parse;
 pub mod util;
 
