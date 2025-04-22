@@ -9,7 +9,8 @@ const TEST_ZONE_NAME: &str = "nlnetlabs.nl";
 #[test]
 fn nsec3_hash() {
     // Note: ldns-nsec3-hash defaults NSEC3 iterations to 1, while dnst
-    // nsec-hash defaults NSEC3 iterations to 0.
+    // nsec3-hash defaults NSEC3 iterations to 0 even in LDNS compatibility
+    // mode.
     assert_org_ldns_cmd_eq_new_ldns_cmd(
         &[LDNS_CMD, TEST_ZONE_NAME],
         &[LDNS_CMD, "-t", "1", TEST_ZONE_NAME],
