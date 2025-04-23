@@ -108,6 +108,9 @@ impl Keyset {
                 dnskey_inception_offset: Duration::from_secs(ONE_DAY),
                 dnskey_signature_lifetime: Duration::from_secs(FOUR_WEEKS),
                 dnskey_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
+                cds_inception_offset: Duration::from_secs(ONE_DAY),
+                cds_signature_lifetime: Duration::from_secs(FOUR_WEEKS),
+                cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
                 autoremove: false,
             };
@@ -511,8 +514,11 @@ impl Keyset {
             for (roll, state) in kss.keyset.rollstates().iter() {
                 println!("{roll:?}: {state:?}");
             }
-            if dnskey_sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
+            if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
                 println!("DNSKEY RRSIG(s) need to be renewed");
+            }
+            if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
+                println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
             }
 
             // Check for expired keys.
@@ -626,6 +632,9 @@ impl Keyset {
             let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
             ksc.ds_algorithm = DsAlgorithm::new(&arg)?;
             config_changed = true;
+        } else if self.cmd == "set-dnskey-inception-offset" {
+            ksc.dnskey_inception_offset = parse_duration_from_opt(&self.value)?;
+            config_changed = true;
         } else if self.cmd == "get-dnskey-lifetime" {
             let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
             let signeddur = span
@@ -637,6 +646,21 @@ impl Keyset {
             config_changed = true;
         } else if self.cmd == "set-dnskey-remain-time" {
             ksc.dnskey_remain_time = parse_duration_from_opt(&self.value)?;
+            config_changed = true;
+        } else if self.cmd == "set-cds-inception-offset" {
+            ksc.cds_inception_offset = parse_duration_from_opt(&self.value)?;
+            config_changed = true;
+        } else if self.cmd == "get-cds-lifetime" {
+            let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
+            let signeddur = span
+                .to_duration(SpanRelativeTo::days_are_24_hours())
+                .expect("should not fail");
+            println!("{signeddur:#}");
+        } else if self.cmd == "set-cds-lifetime" {
+            ksc.cds_signature_lifetime = parse_duration_from_opt(&self.value)?;
+            config_changed = true;
+        } else if self.cmd == "set-cds-remain-time" {
+            ksc.cds_remain_time = parse_duration_from_opt(&self.value)?;
             config_changed = true;
         } else if self.cmd == "set-ksk-validity" {
             ksc.ksk_validity = parse_opt_duration_from_opt(&self.value)?;
@@ -662,6 +686,9 @@ impl Keyset {
                 ksc.dnskey_signature_lifetime
             );
             println!("dnskey-remain-time: {:?}", ksc.dnskey_remain_time);
+            println!("cds-inception-offset: {:?}", ksc.cds_inception_offset);
+            println!("cds-signature-lifetime: {:?}", ksc.cds_signature_lifetime);
+            println!("cds-remain-time: {:?}", ksc.cds_remain_time);
             println!("ds-algorithm: {:?}", ksc.ds_algorithm);
             println!("autoremove: {:?}", ksc.autoremove);
         } else if self.cmd == "get-dnskey" {
@@ -675,6 +702,17 @@ impl Keyset {
         } else if self.cmd == "get-ds" {
             for r in &kss.ds_rrset {
                 println!("{r}");
+            }
+        } else if self.cmd == "cron" {
+            if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
+                println!("DNSKEY RRSIG(s) need to be renewed");
+                update_dnskey_rrset(&mut kss, &ksc, env)?;
+                state_changed = true;
+            }
+            if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
+                println!("CDS/CDNSKEY RRSIGs need to be renewed");
+                create_cds_rrset(&mut kss, &ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?;
+                state_changed = true;
             }
         } else {
             return Err(format!("unknown subcommand {}\n", self.cmd).into());
@@ -719,6 +757,15 @@ struct KeySetConfig {
 
     // DNSKEY resign
     dnskey_remain_time: Duration,
+
+    // CDS/CDNSKEY inception offset
+    cds_inception_offset: Duration,
+
+    // CDS/CDNSKEY sig lifetime
+    cds_signature_lifetime: Duration,
+
+    // CDS/CDNSKEY resign
+    cds_remain_time: Duration,
 
     // DS hash algorithm
     ds_algorithm: DsAlgorithm,
@@ -980,6 +1027,7 @@ fn update_dnskey_rrset(
 
 fn create_cds_rrset(
     kss: &mut KeySetState,
+    ksc: &KeySetConfig,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
 ) -> Result<(), Error> {
@@ -1042,11 +1090,74 @@ fn create_cds_rrset(
                     "Infallible because the digest won't be too long since it's a valid digest",
                 );
 
-                let cds_record =
-                    Record::new(record.owner().clone(), record.class(), record.ttl(), cds);
+                let cds_record = Record::new(
+                    record
+                        .owner()
+                        .try_to_name::<Bytes>()
+                        .expect("should not fail"),
+                    record.class(),
+                    record.ttl(),
+                    cds,
+                );
 
                 cds_list.push(cds_record);
             }
+        }
+
+        // Need to sign
+    }
+
+    let now = Timestamp::now().into_int();
+    let inception = (now - ksc.cds_inception_offset.as_secs() as u32).into();
+    let expiration = (now + ksc.cds_signature_lifetime.as_secs() as u32).into();
+
+    let mut cds_sigs = Vec::new();
+    let mut cdnskey_sigs = Vec::new();
+    for (k, v) in kss.keyset.keys() {
+        let dnskey_signer = match v.keytype() {
+            KeyType::Ksk(key_state) => key_state.signer(),
+            KeyType::Zsk(_) => false,
+            KeyType::Csk(key_state, _) => key_state.signer(),
+            KeyType::Include(_) => false,
+        };
+
+        let cds_rrset = Rrset::new(&cds_list)
+            .map_err::<Error, _>(|e| format!("unable to create Rrset: {e}\n").into())?;
+        let cdnskey_rrset = Rrset::new(&cdnskey_list)
+            .map_err::<Error, _>(|e| format!("unable to create Rrset: {e}\n").into())?;
+
+        if dnskey_signer {
+            let privref = v.privref().ok_or("missing private key")?;
+            let private_data = std::fs::read_to_string(privref)?;
+            let secret_key =
+                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
+                    format!("unable to parse private key file {privref}: {e}").into()
+                })?;
+            let public_data = std::fs::read_to_string(k)?;
+            let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
+                format!("unable to parse public key file {k}: {e}").into()
+            })?;
+
+            let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                .map_err::<Error, _>(|e| {
+                    format!("private key {privref} and public key {k} do not match: {e}").into()
+                })?;
+            let signing_key = SigningKey::new(
+                public_key.owner().clone(),
+                public_key.data().flags(),
+                key_pair,
+            );
+            let sig = sign_rrset::<_, _, Bytes, _>(&signing_key, &cds_rrset, inception, expiration)
+                .map_err::<Error, _>(|e| {
+                    format!("error signing CDS RRset with private key {privref}: {e}").into()
+                })?;
+            cds_sigs.push(sig);
+            let sig =
+                sign_rrset::<_, _, Bytes, _>(&signing_key, &cdnskey_rrset, inception, expiration)
+                    .map_err::<Error, _>(|e| {
+                    format!("error signing CDNSKEY RRset with private key {privref}: {e}").into()
+                })?;
+            cdnskey_sigs.push(sig);
         }
     }
 
@@ -1055,7 +1166,15 @@ fn create_cds_rrset(
         kss.cds_rrset
             .push(r.display_zonefile(DisplayKind::Simple).to_string());
     }
+    for r in cdnskey_sigs {
+        kss.cds_rrset
+            .push(r.display_zonefile(DisplayKind::Simple).to_string());
+    }
     for r in cds_list {
+        kss.cds_rrset
+            .push(r.display_zonefile(DisplayKind::Simple).to_string());
+    }
+    for r in cds_sigs {
         kss.cds_rrset
             .push(r.display_zonefile(DisplayKind::Simple).to_string());
     }
@@ -1068,7 +1187,7 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
     kss.cds_rrset.truncate(0);
 }
 
-fn update_cd_rrset(
+fn update_ds_rrset(
     kss: &mut KeySetState,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
@@ -1140,11 +1259,11 @@ fn handle_actions(
         match action {
             Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env)?,
             Action::CreateCdsRrset => {
-                create_cds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
+                create_cds_rrset(kss, ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?
             }
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
-                update_cd_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
+                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
@@ -1190,7 +1309,7 @@ fn parse_opt_duration_from_opt(value: &Option<String>) -> Result<Option<Duration
     Ok(Some(duration))
 }
 
-fn dnskey_sig_renew(dnskey_rrset: &[String], remain_time: &Duration) -> bool {
+fn sig_renew(dnskey_rrset: &[String], remain_time: &Duration) -> bool {
     let mut zonefile = Zonefile::new();
     for r in dnskey_rrset {
         zonefile.extend_from_slice(r.as_ref());
