@@ -14,7 +14,7 @@ fn main() -> ExitCode {
     let mut args = std::env::args_os();
     args.next().unwrap();
     let args =
-        try_ldns_compatibility(args).map(|args| args.expect("ldns commmand is not recognized"));
+        try_ldns_compatibility(args).map(|args| args.expect("ldns commmand lacks ldns- prefix"));
 
     match args.and_then(|args| args.execute(&env)) {
         Ok(()) => ExitCode::SUCCESS,

@@ -4,7 +4,8 @@ pub mod help;
 //pub mod keygen;
 pub mod keyset;
 pub mod notify;
-//pub mod nsec3hash;
+pub mod nsec3hash;
+pub mod signzone;
 pub mod update;
 
 use clap::crate_version;
@@ -46,9 +47,21 @@ pub enum Command {
     //#[command(name = "keygen", verbatim_doc_comment)]
     //Keygen(self::keygen::Keygen),
 
+    /// Generate a DS RR from the DNSKEYS in keyfile
+    ///
+    /// The following file will be created for each key:
+    /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
+    /// will be printed to stdout.
+    #[command(name = "key2ds")]
+    Key2ds(key2ds::Key2ds),
+
     /// Print the NSEC3 hash of a given domain name
     //#[command(name = "nsec3-hash")]
     //Nsec3Hash(self::nsec3hash::Nsec3Hash),
+
+    /// Sign the zone with the given key(s)
+    #[command(name = "signzone")]
+    SignZone(self::signzone::SignZone),
 
     /// Send a NOTIFY packet to DNS servers
     ///
@@ -63,8 +76,8 @@ pub enum Command {
     /// The following file will be created for each key:
     /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
     /// will be printed to stdout.
-    //#[command(name = "key2ds")]
-    //Key2ds(key2ds::Key2ds),
+    #[command(name = "key2ds")]
+    Key2ds(key2ds::Key2ds),
 
     /// Send an UPDATE packet
     #[command(name = "update")]
@@ -88,10 +101,11 @@ pub enum Command {
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
-            //Self::Keygen(keygen) => keygen.execute(env),
-            //Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
-            //Self::Key2ds(key2ds) => key2ds.execute(env),
+            Self::Key2ds(key2ds) => key2ds.execute(env),
+            Self::Keygen(keygen) => keygen.execute(env),
+            Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Notify(notify) => notify.execute(env),
+            Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Keyset(keyset) => keyset.execute(env),
             Self::Help(help) => help.execute(),
@@ -119,10 +133,7 @@ pub trait LdnsCommand {
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error>;
 
     fn parse_ldns_args<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
-        match Self::parse_ldns(args) {
-            Ok(c) => Ok(c),
-            Err(e) => Err(format!("{e}\n\n{}", Self::HELP).into()),
-        }
+        Self::parse_ldns(args).map_err(|e| format!("{e}\n\n{}", Self::HELP).into())
     }
 
     fn report_help() -> Args {
