@@ -10,6 +10,7 @@ use commands::update::Update;
 use commands::LdnsCommand;
 use env::Env;
 use error::Error;
+use log::LogFormatter;
 
 pub use self::args::Args;
 
@@ -17,6 +18,7 @@ pub mod args;
 pub mod commands;
 pub mod env;
 pub mod error;
+pub mod log;
 pub mod parse;
 pub mod util;
 
@@ -89,12 +91,23 @@ fn parse_args(env: impl Env) -> Result<Args, Error> {
 }
 
 pub fn run(env: impl Env) -> u8 {
-    let res = parse_args(&env).and_then(|args| args.execute(&env));
-    match res {
-        Ok(()) => 0,
-        Err(err) => {
-            err.pretty_print(&env);
-            err.exit_code()
+    let stderr = env.stderr();
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_ansi(stderr.is_terminal())
+        .with_writer(stderr)
+        .event_format(LogFormatter {
+            program: env.args_os().next().unwrap().to_string_lossy().to_string(),
+        })
+        .finish();
+
+    tracing::subscriber::with_default(subscriber, || {
+        let res = parse_args(&env).and_then(|args| args.execute(&env));
+        match res {
+            Ok(()) => 0,
+            Err(err) => {
+                err.pretty_print(&env);
+                err.exit_code()
+            }
         }
-    }
+    })
 }

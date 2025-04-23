@@ -60,12 +60,18 @@ impl Env for FakeEnv {
         self.cmd.cmd.iter().map(Into::into)
     }
 
-    fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(self.stdout.clone())
+    fn stdout(&self) -> Stream<impl io::Write> {
+        Stream {
+            writer: Mutex::new(self.stdout.clone()),
+            is_terminal: false,
+        }
     }
 
-    fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(self.stderr.clone())
+    fn stderr(&self) -> Stream<impl io::Write + Send + Sync + 'static> {
+        Stream {
+            writer: Mutex::new(self.stderr.clone()),
+            is_terminal: false,
+        }
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
@@ -186,27 +192,32 @@ impl FakeCmd {
 
 impl FakeEnv {
     pub fn get_stdout(&self) -> String {
-        self.stdout.0.lock().unwrap().clone()
+        String::from_utf8(self.stdout.0.lock().unwrap().clone()).unwrap()
     }
 
     pub fn get_stderr(&self) -> String {
-        self.stderr.0.lock().unwrap().clone()
+        String::from_utf8(self.stderr.0.lock().unwrap().clone()).unwrap()
     }
 }
 
 /// A type to used to mock stdout and stderr
 #[derive(Clone, Default)]
-pub struct FakeStream(Arc<Mutex<String>>);
+pub struct FakeStream(Arc<Mutex<Vec<u8>>>);
 
-impl fmt::Write for FakeStream {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.lock().unwrap().push_str(s);
+impl io::Write for FakeStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // do nothing
         Ok(())
     }
 }
 
 impl fmt::Display for FakeStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0.lock().unwrap().as_ref())
+        f.write_str(std::str::from_utf8(&self.0.lock().unwrap()).unwrap())
     }
 }
