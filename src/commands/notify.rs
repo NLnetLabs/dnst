@@ -293,10 +293,7 @@ impl Notify {
                 writeln!(out, ";; MSG SIZE  rcvd: {}", msg.as_slice().len());
             }
             Err(e) => {
-                writeln!(
-                    env.stdout(),
-                    "warning: reply was not received or erroneous from: {socket}: {e}"
-                );
+                warn!("reply was not received or erroneous from: {socket}: {e}");
             }
         }
     }
