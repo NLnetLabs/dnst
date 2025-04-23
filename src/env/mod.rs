@@ -71,7 +71,7 @@ impl<'writer, T: io::Write + 'writer> MakeWriter<'writer> for Stream<T> {
     type Writer = &'writer Self;
 
     fn make_writer(&'writer self) -> Self::Writer {
-        &self
+        self
     }
 }
 

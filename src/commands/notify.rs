@@ -582,15 +582,13 @@ mod tests {
 
     #[test]
     fn invalid_domain_name() {
-        let rpl = format!(
-            "
+        let rpl = "
             CONFIG_END
 
             SCENARIO_BEGIN
 
             SCENARIO_END
-        "
-        );
+        ";
 
         let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", ""])
             .stelline(rpl.as_bytes(), "notify.rpl");
