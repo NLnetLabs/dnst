@@ -1,54 +1,56 @@
-use std::fmt::Display;
+use std::fmt;
 
-use crate::env::Env;
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::{
+    fmt::{format, FmtContext, FormatEvent, FormatFields},
+    registry::LookupSpan,
+};
 
 mod color {
-    pub const BLUE: u8 = 34;
-    pub const YELLOW: u8 = 33;
     pub const RED: u8 = 31;
+    pub const GREEN: u8 = 32;
+    pub const YELLOW: u8 = 33;
+    pub const BLUE: u8 = 34;
+    pub const PURPLE: u8 = 35;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LogLevel {
-    Info,
-    Warning,
-    Error,
+pub struct LogFormatter {
+    pub program: String,
 }
 
-impl LogLevel {
-    fn color(self) -> u8 {
-        match self {
-            Self::Info => color::BLUE,
-            Self::Warning => color::YELLOW,
-            Self::Error => color::RED,
+impl<S, N> FormatEvent<S, N> for LogFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: format::Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        // Format values from the event's's metadata:
+        let metadata = event.metadata();
+
+        write!(&mut writer, "[{}] ", &self.program)?;
+
+        let level = *metadata.level();
+        if writer.has_ansi_escapes() {
+            let color = match level {
+                Level::ERROR => color::RED,
+                Level::WARN => color::YELLOW,
+                Level::INFO => color::BLUE,
+                Level::DEBUG => color::GREEN,
+                Level::TRACE => color::PURPLE,
+            };
+            write!(&mut writer, "\x1B[{color}m{level}\x1B[0m: ",)?;
+        } else {
+            write!(&mut writer, "{level}: ")?;
         }
-    }
 
-    fn text(self) -> &'static str {
-        match self {
-            LogLevel::Info => "INFO",
-            LogLevel::Warning => "WARNING",
-            LogLevel::Error => "ERROR",
-        }
-    }
-}
+        // Write fields on the event
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
 
-impl Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.text())
-    }
-}
-
-struct Logger(&'static Env);
-
-pub fn log(env: impl Env, level: LogLevel, text: impl Display) {
-    let mut err = env.stderr();
-    let prog = std::env::args().next().unwrap();
-
-    if err.is_terminal() {
-        let color = level.color();
-        writeln!(err, "[{prog}] \x1B[{color}m{level}\x1B[0m: {text}");
-    } else {
-        writeln!(err, "[{prog}] {level}: {text}");
+        writeln!(writer)
     }
 }

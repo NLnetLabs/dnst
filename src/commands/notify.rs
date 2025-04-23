@@ -10,10 +10,10 @@ use domain::rdata::Soa;
 use domain::tsig::Key;
 use domain::utils::base16;
 use lexopt::Arg;
+use tracing::warn;
 
 use crate::env::Env;
 use crate::error::Error;
-use crate::log::warning;
 use crate::parse::TSigInfo;
 use crate::Args;
 
@@ -224,20 +224,17 @@ impl Notify {
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                warning!(env, "invalid domain name \"{server}\", skipping.");
+                warn!("invalid domain name \"{server}\", skipping.");
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                warning!(env, "could not resolve host \"{name}\", skipping.");
+                warn!("could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
             if hosts.is_empty() {
-                warning!(
-                    env,
-                    "skipping bad address: {name}: Name or service not known"
-                );
+                warn!("skipping bad address: {name}: Name or service not known");
                 continue;
             }
 
@@ -581,5 +578,24 @@ mod tests {
         let res = cmd.run();
         assert_eq!(res.exit_code, 0);
         assert!(res.stderr.contains("Name or service not known"));
+    }
+
+    #[test]
+    fn invalid_domain_name() {
+        let rpl = format!(
+            "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            SCENARIO_END
+        "
+        );
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", ""])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert!(res.stderr.contains("invalid domain name"));
     }
 }

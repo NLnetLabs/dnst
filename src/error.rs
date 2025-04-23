@@ -1,10 +1,10 @@
 use std::fmt;
-use std::{error, io};
+use std::io;
 
 use domain::base::wire::ParseError;
+use tracing::error;
 
 use crate::env::Env;
-use crate::log::error;
 
 //------------ Error ---------------------------------------------------------
 
@@ -58,8 +58,6 @@ impl Error {
 
     /// Pretty-print this error.
     pub fn pretty_print(&self, env: impl Env) {
-        let mut err = env.stderr();
-
         let msg = match &self.0.primary {
             // Clap errors are already styled. We don't want our own pretty
             // styling around that and context does not make sense for command
@@ -73,7 +71,8 @@ impl Error {
             PrimaryError::Other(error) => error,
         };
 
-        error!(env, "{msg}");
+        error!("{msg}");
+        let mut err = env.stderr();
         for context in &self.0.context {
             writeln!(err, "... while {context}");
         }
@@ -155,7 +154,7 @@ impl fmt::Debug for Error {
 
 //--- Error
 
-impl error::Error for Error {}
+impl std::error::Error for Error {}
 
 //------------ Macros --------------------------------------------------------
 
