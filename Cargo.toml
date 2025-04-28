@@ -17,6 +17,7 @@ name = "ldns"
 path = "src/bin/ldns.rs"
 
 [features]
+arbitrary = [ "dep:arbitrary", "domain/arbitrary" ]
 default = ["openssl", "ring"]
 
 # Cryptographic backends
@@ -24,6 +25,7 @@ openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
 [dependencies]
+arbitrary = { version = "1", optional = true, features = ["derive"] }
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
@@ -34,6 +36,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "tsig",
     "unstable-client-transport",
     "unstable-sign",
+    "unstable-stelline",
     "unstable-validator",
     "zonefile",
 ] }
@@ -49,6 +52,6 @@ _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
-    "unstable-stelline",
-] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
