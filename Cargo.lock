@@ -329,7 +329,6 @@ dependencies = [
  "rayon",
  "regex",
  "ring",
- "smallvec",
  "tempfile",
  "test_bin",
  "tokio",
