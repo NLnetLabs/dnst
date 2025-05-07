@@ -976,7 +976,7 @@ impl SignZone {
                 if let Some(ref prev_name) = prev_name {
                     if *owner == prev_name {
                         // Already done.
-                        if rrset.rtype() == Rtype::NS {
+                        if rrset.rtype() == Rtype::NS && *owner != apex {
                             delegation = Some(owner.clone());
                         }
                         continue;
