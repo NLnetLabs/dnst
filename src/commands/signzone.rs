@@ -843,7 +843,7 @@ impl SignZone {
             all_dnskeys.push(r.clone());
         }
         if !self.do_not_add_keys_to_zone {
-            let dnskey_ttl = dnskey_rrset.as_ref().map_or(soa_rr.ttl(), |r| r.ttl());
+            let dnskey_ttl = dnskey_rrset
                 .as_ref()
                 .map_or(new_rr_default_ttl, |r| r.ttl());
 
