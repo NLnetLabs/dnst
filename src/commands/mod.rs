@@ -5,8 +5,8 @@ pub mod keygen;
 pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
-pub mod signzone;
 pub mod signer;
+pub mod signzone;
 pub mod update;
 
 use clap::crate_version;
