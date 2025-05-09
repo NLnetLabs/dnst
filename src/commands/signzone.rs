@@ -1038,7 +1038,7 @@ impl SignZone {
                         self.algorithm,
                         self.iterations,
                         &self.salt,
-                        &apex,
+                        apex,
                     )
                     .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
                     if hash_provider
@@ -1108,7 +1108,7 @@ impl SignZone {
         };
 
         records
-            .sign_zone(&apex, &mut signing_config, &zone_signing_keys)
+            .sign_zone(apex, &mut signing_config, &zone_signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
