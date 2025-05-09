@@ -776,14 +776,14 @@ struct KeySetConfig {
 
 /// Persistent state for the keyset command.
 #[derive(Deserialize, Serialize)]
-struct KeySetState {
+pub struct KeySetState {
     /// Domain KeySet state.
-    keyset: KeySet,
+    pub keyset: KeySet,
 
-    dnskey_rrset: Vec<String>,
-    ds_rrset: Vec<String>,
-    cds_rrset: Vec<String>,
-    ns_rrset: Vec<String>,
+    pub dnskey_rrset: Vec<String>,
+    pub ds_rrset: Vec<String>,
+    pub cds_rrset: Vec<String>,
+    pub ns_rrset: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
