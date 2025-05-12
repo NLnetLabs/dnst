@@ -674,10 +674,10 @@ impl SignZone {
         // dnssec-signzone and ldns-signzone.
         let new_rr_default_ttl = soa_rr.ttl();
 
-        let dnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::DNSKEY);
+        let dnskey_rrset = records.find_apex_rtype(apex, Rtype::DNSKEY);
 
-        let cds_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDS);
-        let cdnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDNSKEY);
+        let cds_rrset = records.find_apex_rtype(apex, Rtype::CDS);
+        let cdnskey_rrset = records.find_apex_rtype(apex, Rtype::CDNSKEY);
 
         // Extract and validate the DNSKEY RRs from the loaded zone.
         let mut found_public_keys = vec![];
@@ -738,10 +738,9 @@ impl SignZone {
 
             // Verify that the owner of the public key matches the apex of the
             // zone.
-            if !self.no_require_keys_match_apex && public_key.owner() != soa_rr.owner() {
+            if !self.no_require_keys_match_apex && public_key.owner() != apex {
                 return Err(format!(
-                    "Zone apex ({}) does not match the expected apex ({})",
-                    soa_rr.owner(),
+                    "Zone apex ({apex}) does not match the expected apex ({})",
                     public_key.owner()
                 )
                 .into());
@@ -863,8 +862,7 @@ impl SignZone {
                 {
                     let pubkey: Dnskey<Bytes> = pubkey.convert();
                     let data = ZoneRecordData::Dnskey(pubkey);
-                    let record =
-                        Record::new(soa_rr.owner().clone(), soa_rr.class(), dnskey_ttl, data);
+                    let record = Record::new(apex.clone(), soa_rr.class(), dnskey_ttl, data);
                     dnskey_extra.push(record.clone());
                     all_dnskeys.push(record);
                 }
