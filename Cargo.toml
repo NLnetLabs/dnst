@@ -28,7 +28,7 @@ ring = ["domain/ring"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "fix-signing-with-early-glue", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "bytes",
     "net",
     "resolv",
@@ -59,7 +59,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "fix-signing-with-early-glue", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"

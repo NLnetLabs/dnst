@@ -337,7 +337,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=fix-signing-with-early-glue#8d3730276a8d56ae2b94f660ee133e254bdc25b0"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#2a390420af5f0f09f1a9bb31145844cb1409e163"
 dependencies = [
  "arc-swap",
  "bytes",
