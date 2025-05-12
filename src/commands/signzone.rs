@@ -1057,9 +1057,7 @@ impl SignZone {
             nsec3_hashes = Some(hash_provider);
         }
 
-        // TODO: Remove this `mut` once
-        // https://github.com/NLnetLabs/domain/pull/524 is merged.
-        let mut signing_config: SigningConfig<_, _> = match signing_mode {
+        let signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -1106,7 +1104,7 @@ impl SignZone {
         };
 
         records
-            .sign_zone(apex, &mut signing_config, &zone_signing_keys)
+            .sign_zone(apex, &signing_config, &zone_signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
