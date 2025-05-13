@@ -80,7 +80,7 @@ impl Error {
         // program operation.  We would fail very early if it didn't exist.
         Self::write_error(&mut err, error);
         for context in &self.0.context {
-            writeln!(err, "\n... while {context}");
+            writeln!(err, "... while {context}");
         }
     }
 
