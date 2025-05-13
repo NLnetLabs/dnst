@@ -1109,7 +1109,7 @@ impl SignZone {
         };
 
         records
-            .sign_zone(&mut signing_config, signing_keys)
+            .sign_zone(&apex, &signing_config, signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
