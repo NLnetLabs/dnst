@@ -1062,7 +1062,7 @@ impl SignZone {
             nsec3_hashes = Some(hash_provider);
         }
 
-        let mut signing_config: SigningConfig<_, _> = match signing_mode {
+        let signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
