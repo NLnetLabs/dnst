@@ -663,12 +663,14 @@ impl SignZone {
 
         // Extract and validate the DNSKEY RRs from the loaded zone.
         let mut found_public_keys = vec![];
-        for rr in records.iter() {
-            if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
-                // Create a public key object from the found DNSKEY RR.
-                let public_key = Record::new(rr.owner(), Class::IN, Ttl::ZERO, dnskey);
+        if let Some(dnskey_rrset) = &dnskey_rrset {
+            for rr in dnskey_rrset.iter() {
+                if let ZoneRecordData::Dnskey(dnskey) = rr.data() {
+                    // Create a public key object from the found DNSKEY RR.
+                    let public_key = Record::new(rr.owner(), Class::IN, Ttl::ZERO, dnskey);
 
-                found_public_keys.push(public_key);
+                    found_public_keys.push(public_key);
+                }
             }
         }
 
