@@ -729,7 +729,7 @@ impl SignZone {
                 .into());
             }
 
-            // Attempt to crate a key pair from the loaded private and public
+            // Attempt to create a key pair from the loaded private and public
             // keys.
             let signing_key = self
                 .mk_signing_key(
