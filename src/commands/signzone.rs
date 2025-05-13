@@ -2545,6 +2545,46 @@ mod test {
     }
 
     #[test]
+    fn do_not_add_keys_to_zone() {
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
+
+        let res1 = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-d",
+            "-f",
+            "-",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res1.stderr, "");
+        assert_eq!(
+            res1.stdout,
+            "example.\t86400\tIN\tSOA\tns1.example. admin.example. 2018031900 1800 900 604800 86400\n\
+            example.\t86400\tIN\tNS\tns1.example.\n\
+            example.\t86400\tIN\tNS\tns2.example.\n\
+            example.\t86400\tIN\tRRSIG\tNS 8 1 86400 2419200 0 38353 example. Nf1AJOIse+BKTnng70iYOSazSo/PLZA3SAld/oOGqxE4g5ZTmfVa5ikHP8C+jBNaOW/nXNQJVc446pr1cI5kWVbKLbuPWKv33IygLVsOCKz8m8HIgihKxIcd0Wbzvsbgy4963wAo7ypde5mZ8+XDrLDNpcW8HKQMccZX1w63HF8=\n\
+            example.\t86400\tIN\tRRSIG\tSOA 8 1 86400 2419200 0 38353 example. GxHcCYArh7wmh/dpx95MVtAkc1soNSzw9OBmkvkG8gQiUwZSt5YJq8ImjRlzMQ+UQ/JfR6VGqpHdq/ScVgqOsXOYicn2430h4h1SebtWwwXnvkzWHCwSxVVInufQIRgZHfhhpNyjBxrSBwh2Y+qxnH2JYcrELQ28t0If7fo+tDM=\n\
+            example.\t86400\tIN\tRRSIG\tNSEC 8 1 86400 2419200 0 38353 example. ZooZy2FXylWuoy41yJt0XEFlllQNeuqnkb8of2HryRlDNbRwqARGzJxOUgCxJ6387w01lAiQJ3kMTHzz2U7FVwRh+mrtDUQ3SpIaH4iKNKyRUMAKJrrn2xhBtPg49bR/sHDfcIjRK67ktieYLKZqnPh636QaZFBjAk5ZXoG4g/8=\n\
+            example.\t86400\tIN\tNSEC\tns1.example. NS SOA RRSIG NSEC DNSKEY\n\
+            ns1.example.\t3600\tIN\tA\t203.0.113.63\n\
+            ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 2419200 0 38353 example. BXRmu3njAbizxTX49isTcab9HR495sOrTYzq5nU71aEbY89lz8rdMhxLA6NYX0zIYJPHdkI7yf8/aHf2VsAjz+p2NQ7qaODtm5oFpIm2O9JiBqTrqj5P4fK9qN+pJmKsJAXupphXhFKmsQkWJdYCoHq/wXjq1Hp7xICdd30XsUY=\n\
+            ns1.example.\t86400\tIN\tRRSIG\tNSEC 8 2 86400 2419200 0 38353 example. G1ohioxllf2ZTVt4XrgKkCQ0JhxNZn4ABecihoHVVOpUNBlk4aWrdOtWTKt81dwbnXONhttL3sf6mWJJXJFe1yAxZAU3LA1wHlc+V50xjbO2vNW6oSQ9CjTBZW9/aih5aUtG4uTroa8din5eaUn1hL2DTOfG7bKKNfkH5wpU9vs=\n\
+            ns1.example.\t86400\tIN\tNSEC\tns2.example. A RRSIG NSEC\n\
+            ns2.example.\t3600\tIN\tAAAA\t2001:db8::63\n\
+            ns2.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 2419200 0 38353 example. X566NNfPtSpPXdOfJT0XaMPcTHSvBKThjaCvodojDW6OLKfZJyvZOjzYcvMMLDcHkRkNak6M534Zn++Hrym3n2hl3FS/A1hGLMZ2MxlQxVwya4Xg9zE3IEmlRGlVFjVFrEK1Me8sfwyg+eM7+8Wq3qOtxyK/xb4eL8lmgB/kfm4=\n\
+            ns2.example.\t86400\tIN\tRRSIG\tNSEC 8 2 86400 2419200 0 38353 example. cM6oDa/FElsY5XuBa7LXwn35w7t2Dckya+9EVr3oxqKWrVCOemFXUCQkFv/DX2NA9IY1ijJkvDN+I2lg7XXhokFc78CpJeL/rr7EbxKQulKEy64u/Skd4ZuedLD6pQw21oIqFTnJ/nj1e3DXoWAEk2rGflexZ6E9NrxJrXYmTrA=\n\
+            ns2.example.\t86400\tIN\tNSEC\texample. AAAA RRSIG NSEC\n"
+        );
+        assert_eq!(res1.exit_code, 0);
+    }
+
+    #[test]
     fn zonemd_digest_and_replacing_existing_at_apex() {
         let dir = run_setup();
 

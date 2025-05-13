@@ -337,7 +337,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#2a390420af5f0f09f1a9bb31145844cb1409e163"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=fx-inplace-parser-origin-detection#f6692ed373c51068d44dfb035d7cb00e7d66060d"
 dependencies = [
  "arc-swap",
  "bytes",
