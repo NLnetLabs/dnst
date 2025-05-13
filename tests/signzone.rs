@@ -91,7 +91,7 @@ fn signzone_detect_origin() {
             &ldns_out_path,
             ORIGINLESS_ZONE_PATH,
             ORIGINLESS_KSK_PATH,
-            ORIGINLESS_ZSK_PATH
+            ORIGINLESS_ZSK_PATH,
         ],
         &[
             LDNS_CMD,
@@ -99,7 +99,7 @@ fn signzone_detect_origin() {
             &dnst_out_path,
             ORIGINLESS_ZONE_PATH,
             ORIGINLESS_KSK_PATH,
-            ORIGINLESS_ZSK_PATH
+            ORIGINLESS_ZSK_PATH,
         ],
         false,
     );
