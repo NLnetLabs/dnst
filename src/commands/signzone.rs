@@ -1116,8 +1116,7 @@ impl SignZone {
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
-            let _ =
-                records.remove_first_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
+            let _ = records.remove_first_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
 
             let zonemd_rrs = Self::create_zonemd_digest_and_records(
                 &records, &apex, zone_class, &zonemd, soa_serial, ttl,
