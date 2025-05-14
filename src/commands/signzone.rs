@@ -1117,7 +1117,7 @@ impl SignZone {
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
             let _ =
-                records.remove_first_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+                records.remove_first_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
 
             let zonemd_rrs = Self::create_zonemd_digest_and_records(
                 &records, &apex, zone_class, &zonemd, soa_serial, ttl,
@@ -1696,7 +1696,7 @@ impl SignZone {
         ttl: Ttl,
     ) {
         // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-        let _ = records.remove_all_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+        let _ = records.remove_all_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
 
         // Insert a single placeholder ZONEMD at apex for creating the
         // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).
