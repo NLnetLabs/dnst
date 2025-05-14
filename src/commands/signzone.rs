@@ -1696,7 +1696,7 @@ impl SignZone {
         ttl: Ttl,
     ) {
         // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-        let _ = records.remove_all_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
+        let _ = records.remove_all_by_name_class_rtype(apex, None, Some(Rtype::ZONEMD));
 
         // Insert a single placeholder ZONEMD at apex for creating the
         // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).
