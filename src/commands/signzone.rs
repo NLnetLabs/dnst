@@ -3053,7 +3053,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040509183619 20040409183619 38353 
         assert_eq!(res.exit_code, 0);
     }
 
-    // TODO: Currently fails due to https://github.com/NLnetLabs/domain/issues/468.
     #[test]
     fn rfc_5155_nsec3_signed_zone_example() {
         let expected_signed_zone = r###"; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
