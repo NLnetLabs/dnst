@@ -2909,7 +2909,7 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
         // layout changes that don't affect the zonefile semantics?
         let dir = run_setup();
 
-        // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
+        // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 some_example.org.zone.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
             example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. 0XdDm1l2Mm8dyhtzbyQb91CmyNONs8lc9d22FUGvpjfqo8T2h0xs04x5MIfP0DjmiVnNqIyPK6sipnDqf6tCDg==\n\
             example.org.\t3600\tIN\tNSEC3PARAM\t1 1 1 -\n\
@@ -2929,7 +2929,7 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
             "20241127162422",
             "-i",
             "20241127162422",
-            "nsec3_optout1_example.org.zone",
+            "some_example.org.zone.org.zone",
             "ksk1",
         ])
         .cwd(&dir)
@@ -2940,6 +2940,63 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
             filter_lines_containing_all(&res.stdout, &["NSEC3"]),
             ldns_dnst_output_stripped
         );
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    /// Test NSEC3 optout behaviour with signing
+    fn ldns_signzone_disables_minus_b_when_output_is_to_stdout() {
+        let dir = run_setup();
+
+        // (dnst) ldns-signzone -f - -e 20241127162422 -i 20241127162422 some_example.org.zone.org.zone ksk1
+        let ldns_dnst_output_stripped: &str = "\
+            example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
+            example.org.\t240\tIN\tA\t128.140.76.106\n\
+            example.org.\t240\tIN\tNS\texample.net.\n\
+            example.org.\t240\tIN\tRRSIG\tA 15 2 240 20241127162422 20241127162422 38873 example.org. dVrR1Ay58L3cDaRIial45keWp/X8roeirciEqJqVZcqWO4AkSaILqDYIpfNRf3i9WvDzio0BLZT5K4r2krmyCA==\n\
+            example.org.\t240\tIN\tRRSIG\tNS 15 2 240 20241127162422 20241127162422 38873 example.org. JJDRuXMuv9yiJAFN+15/7DBbaBHepA20QxLruqrjSJZsgzRcPb1UTyGozlsq9BdCq3oxZm8lea5DcIi2tyGVDQ==\n\
+            example.org.\t240\tIN\tRRSIG\tSOA 15 2 240 20241127162422 20241127162422 38873 example.org. 2Jp7z/VMHlUvZoXApvsolX78ZzH9BmI8jznVHjagpmjOto/tAb1bL7AaTcOG2Ihk+uSSvDmIExaax0dbtL8CAg==\n\
+            example.org.\t240\tIN\tRRSIG\tNSEC 15 2 240 20241127162422 20241127162422 38873 example.org. Qg+48BSWm8cXwpCH9rkkZLevuIkiJ0+IKhSFAubOJd0NIfQvzexDYksgQ2tJIEFWIk2HVStv+FotAIybiuH3DQ==\n\
+            example.org.\t240\tIN\tRRSIG\tDNSKEY 15 2 240 20241127162422 20241127162422 38873 example.org. UPk13WDbN2MLjSwgV82084DrNUdJFmS9bthBw52X0rfiBMAvrQJJhSYbq72G5j11SFp2DnUyml8stScKJyMlCQ==\n\
+            example.org.\t240\tIN\tNSEC\tinsecure-deleg.example.org. A NS SOA RRSIG NSEC DNSKEY\n\
+            example.org.\t240\tIN\tDNSKEY\t257 3 15 6VdB0mk5qwjHWNC5TTOw1uHTzA0m3Xadg7aYVbcRn8Y= ;{id = 38873 (ksk), size = 256b}\n\
+            insecure-deleg.example.org.\t240\tIN\tNS\texample.com.\n\
+            insecure-deleg.example.org.\t240\tIN\tRRSIG\tNSEC 15 3 240 20241127162422 20241127162422 38873 example.org. gmvju7eMOcNdihcB3U15sGO9w21rTonNQ12th9BTi2I2z6g5uEAA9kfC6D5UZp9Tr0C6GPYD/RT6ARCO0ZztBQ==\n\
+            insecure-deleg.example.org.\t240\tIN\tNSEC\tsecure-deleg.example.org. NS RRSIG NSEC\n\
+            occluded.insecure-deleg.example.org.\t240\tIN\tA\t1.2.3.4\n\
+            secure-deleg.example.org.\t240\tIN\tNS\texample.com.\n\
+            secure-deleg.example.org.\t240\tIN\tDS\t3120 15 2 0675D8C4A90ECD25492E4C4C6583AFCEF7C3B910B7A39162803058E6E7393A19\n\
+            secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 15 3 240 20241127162422 20241127162422 38873 example.org. q3UjPriiyx+luDxGExsOD33jnm/wreuwZ6VuwaGx4BruSKg/YMuTgoBuKWq8XjsC1ORVkyIBHVCp10BwmO+PAg==\n\
+            secure-deleg.example.org.\t240\tIN\tRRSIG\tNSEC 15 3 240 20241127162422 20241127162422 38873 example.org. qZWmwEt/otZtoV67DAMUXc75z0PiBAGT/tVLADlN8qV63eFzuM3xzkBifoOORCxWuAulABrR+6e+OMeFwTqGBA==\n\
+            secure-deleg.example.org.\t240\tIN\tNSEC\texample.org. NS DS RRSIG NSEC\n\
+        ";
+
+        let args = [
+            "-f-",
+            "-e",
+            "20241127162422",
+            "-i",
+            "20241127162422",
+            "some_example.org.zone.org.zone",
+            "ksk1",
+        ];
+
+        // Without -b
+        let res = FakeCmd::new(["ldns-signzone"].iter().chain(args.iter()))
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(&res.stdout, ldns_dnst_output_stripped);
+        assert_eq!(res.stderr, "");
+
+        // With -b
+        let res = FakeCmd::new(["ldns-signzone", "-b"].iter().chain(args.iter()))
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(&res.stdout, ldns_dnst_output_stripped);
         assert_eq!(res.stderr, "");
     }
 
@@ -3195,6 +3252,113 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
 
         assert_eq!(res.stdout, expected_signed_zone);
         // assert_eq!(res.stderr, ""); // Commented out due to NSEC3 iterations warning.
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn ldns_signzone_nsec_signed_zone_example_with_minus_b() {
+        let expected_signed_zone = r###";; Zone: example.org.
+;
+example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 1429574399 1129852800 28954 example.org. V1LINcwCh6ulr9LBERp2zTUW4QfvoUKiv8VX5P8S03SZ9hdNk2BDLzNJj5TJj6o4ki708+DNzyqVHdz+EgyGUR9wH/vT9PxgRrKzjhJ35ktkKFLO+r08XxLMfZ7sCQrVYYr+LRpzDbzGqQby2fisMbNY8V4Lq3c7C7INP64peag=
+;
+example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 1429574399 1129852800 28954 example.org. enga3YYnD/6JGZuWbiBWFeSGTKfV3wba/5UoYDeY43XPs5nN7BDWpDRTtksP4N8sRTlbmtzxxk7negGinm3XGDm+Pvxl651Q2Gujn6URX+vH+IDxkIYTcooVJTG1tEZqtKB/Nwa0kgmeO28Wf+/9XOT4gyqV2qTY6uOrnu9PE9w=
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 1429574399 1129852800 51331 example.org. VBK2AFt1u3O0HIBjJrvQ2mo4aRnQcF5j1ibZ1FVpPoi6qtQ9MeL0B67AZJOcEgX080miM4IR+OujTooU1Npor8TIfx1nKr9Yamxzt1hrZkZz4eIbZ68bXPIBuLuvD/5Br4x0TcrXL+R6/QaRErPnbpB8WIBRohofoqMVFRR0Og0=
+;
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1429574399 1129852800 28954 example.org. HJ+HG8Z6jgSuzeBTbNtgLXO4QXXGNbrqijGfNrSIjqLJi1w8S/ADsiamh9Kua6EtwP653uYWmG34pA2mE8TDq6jjJp4ExCEs0fuYBsw7dkNiG++yh8oSr7jVHkYm3sQuDZC2984c4zIKolJD85dsGZ9Pp5b/YFdzQUj1nrhwIs8=
+some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 example.org. rkKQ2NCHw8tTQhxMDV+BvDThJC+mXUolpmjjVB7H1ziYDUhF18j4MbigGzQI9L6FXFPmwR6HIYexOnend0+2x2mHefnEGcoYVPVyRV6zTD4jFxJTy2l4mumEk8gPbTvN0Tgg4bMkWZWTeOivMmIcAXO+s06ICw2XKSq/LzL4kWc=
+;
+"###.replace("\\t", "\t");
+
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
+        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
+        // stdout.
+        //
+        // Signature validity period (expiration via `-e` and inception via
+        // `-i`) are specified to make output matching more deterministic.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20150420235959",
+            "-i",
+            "20051021000000",
+            "-b",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_signed_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn dnst_signzone_nsec3_signed_zone_example_with_minus_b() {
+        let expected_signed_zone = r###";; Zone: example.org.
+;
+example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 1429574399 1129852800 28954 example.org. V1LINcwCh6ulr9LBERp2zTUW4QfvoUKiv8VX5P8S03SZ9hdNk2BDLzNJj5TJj6o4ki708+DNzyqVHdz+EgyGUR9wH/vT9PxgRrKzjhJ35ktkKFLO+r08XxLMfZ7sCQrVYYr+LRpzDbzGqQby2fisMbNY8V4Lq3c7C7INP64peag=
+;
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 1429574399 1129852800 51331 example.org. VBK2AFt1u3O0HIBjJrvQ2mo4aRnQcF5j1ibZ1FVpPoi6qtQ9MeL0B67AZJOcEgX080miM4IR+OujTooU1Npor8TIfx1nKr9Yamxzt1hrZkZz4eIbZ68bXPIBuLuvD/5Br4x0TcrXL+R6/QaRErPnbpB8WIBRohofoqMVFRR0Og0=
+example.org.\t239\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t239\tIN\tRRSIG\tNSEC3PARAM 8 2 239 1429574399 1129852800 28954 example.org. IHWhCUqMv3MqMfeQgKhqqSBHVBku1KWXR8kqwnYK2WIPh8lip3TQPvvp/30VWZmuzHy6ixgO35rmPLwQEJmUIkjFFhAR+YLdqOlxN0gxIU7t3kwyyjNsKlRZhiNTwb9dDGhaSkkae4zww9ZT9reZVIvDQ6y79hiriLYEB30o2QY=
+;
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 SOA RRSIG DNSKEY NSEC3PARAM  ;{ flags: -, from: example.org., to: some.example.org.}
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. O4eZ+kgHciA7xfgjHwM2OxREhwQr49bsTujdBFXNxwFmhlaB9kfMd8d+WIYSZLvhcchh5a8cOAsCc0FRmelEAAs3wh0LzWPjmzVsLIU3iM/dgjyYm524jD0HMJDw2OYo8d6RKeF2anCbA/ynno5OmJd8TZ/h1tZ5BTso/mtZckI=
+;
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1429574399 1129852800 28954 example.org. HJ+HG8Z6jgSuzeBTbNtgLXO4QXXGNbrqijGfNrSIjqLJi1w8S/ADsiamh9Kua6EtwP653uYWmG34pA2mE8TDq6jjJp4ExCEs0fuYBsw7dkNiG++yh8oSr7jVHkYm3sQuDZC2984c4zIKolJD85dsGZ9Pp5b/YFdzQUj1nrhwIs8=
+;
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG  ;{ flags: -, from: some.example.org., to: example.org.}
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. fpbF8OsVXpUwFzsTRmGmVcEJ5+h/5FrlyqO+goyUapRudSPS7Izxblz+RE3IRu1eYOdYdU62Sz9hnpRK2NCs7NuBacLRGKiudNI5fv/Z0XF3nELjM3TSk7WYfCOFAjgoEGK2OKZrNWUTONsdaFNeJbs/SyzW+77nbWYZ4Al16gQ=
+;
+"###.replace("\\t", "\t");
+
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
+        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
+        // stdout.
+        //
+        // Signature validity period (expiration via `-e` and inception via
+        // `-i`) are specified to make output matching more deterministic.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20150420235959",
+            "-i",
+            "20051021000000",
+            "-b",
+            "-n",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_signed_zone);
         assert_eq!(res.exit_code, 0);
     }
 
@@ -4100,7 +4264,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
                 occluded.deleg.example.org. 240 IN  A  1.2.3.4\n\
                 ");
 
-        create_file_with_content(&dir, "nsec3_optout1_example.org.zone", b"\
+        create_file_with_content(&dir, "some_example.org.zone.org.zone", b"\
                 example.org.                          240 IN SOA example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240\n\
                 example.org.                          240 IN NS  example.net.\n\
                 example.org.                          240 IN A   128.140.76.106\n\
