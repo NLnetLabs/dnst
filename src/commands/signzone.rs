@@ -95,7 +95,9 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Original ldns-signzone options in ldns-signzone -h order:
     // -----------------------------------------------------------------------
-    /// Use layout in signed zone and print comments on DNSSEC records
+    /// Use layout in signed zone and print comments on DNSSEC records.
+    ///
+    /// Using this flag enables -O and -R automatically.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'b',
@@ -103,11 +105,11 @@ pub struct SignZone {
     )]
     extra_comments: bool,
 
-    /// Used keys are not added to the zone
+    /// Used keys are not added to the zone.
     #[arg(short = 'd', default_value_t = false)]
     do_not_add_keys_to_zone: bool,
 
-    /// Expiration date [default: 4 weeks from now]
+    /// Expiration date [default: 4 weeks from now].
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now + 4 weeks if no expiration timestamp is specified.
@@ -120,13 +122,13 @@ pub struct SignZone {
     )]
     expiration: Timestamp,
 
-    /// Output zone to file [default: <zonefile>.signed]
+    /// Output zone to file [default: <zonefile>.signed].
     ///
     /// Use '-f -' to output to stdout.
     #[arg(short = 'f', value_name = "file")]
     out_file: Option<PathBuf>,
 
-    /// Inception date [default: now]
+    /// Inception date [default: now].
     // Default is not documented in ldns-signzone -h or man ldns-signzone but
     // in code (see ldns/dnssec_sign.c::ldns_create_empty_rrsig()) LDNS uses
     // now if no inception timestamp is specified.
@@ -139,20 +141,18 @@ pub struct SignZone {
     )]
     inception: Timestamp,
 
-    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
+    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN).
     #[arg(short = 'o', value_name = "domain")]
     origin: Option<StoredName>,
 
-    /// Set SOA serial to the number of seconds since Jan 1st 1970
+    /// Set SOA serial to the number of seconds since Jan 1st 1970.
     ///
     /// If this would NOT result in the SOA serial increasing it will be
     /// incremented instead.
     #[arg(short = 'u', default_value_t = false)]
     set_soa_serial_to_epoch_time: bool,
 
-    // SKIPPED: -v
-    // This should be handled at the dnst top level, not per subcommand.
-    /// Add a ZONEMD resource record
+    /// Add a ZONEMD resource record.
     ///
     /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
     /// <scheme> currently only supports "SIMPLE" (1).
@@ -169,23 +169,23 @@ pub struct SignZone {
     // the uniqueness of the tuples need to be checked at runtime.
     zonemd: Vec<ZonemdTuple>,
 
-    /// Allow ZONEMDs to be added without signing
+    /// Allow ZONEMDs to be added without signing.
     #[arg(short = 'Z', requires = "zonemd")]
     allow_zonemd_without_signing: bool,
 
-    /// Sign DNSKEYs with all keys instead of minimal
+    /// Sign DNSKEYs with all keys instead of minimal.
     #[arg(short = 'A', default_value_t = false)]
     sign_dnskeys_with_all_keys: bool,
 
-    /// Sign with every unique algorithm in the provided keys
+    /// Sign with every unique algorithm in the provided keys.
     #[arg(short = 'U', default_value_t = false)]
     sign_with_every_unique_algorithm: bool,
 
-    /// Use NSEC3 instead of NSEC
+    /// Use NSEC3 instead of NSEC.
     #[arg(short = 'n', default_value_t = false, group = "nsec3")]
     use_nsec3: bool,
 
-    /// Hashing algorithm
+    /// Hashing algorithm.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 'a',
@@ -196,7 +196,7 @@ pub struct SignZone {
     )]
     algorithm: Nsec3HashAlgorithm,
 
-    /// Number of hash iterations
+    /// Number of hash iterations.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 't',
@@ -206,7 +206,7 @@ pub struct SignZone {
     )]
     iterations: u16,
 
-    /// Salt
+    /// Salt.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 's',
@@ -216,7 +216,9 @@ pub struct SignZone {
     )]
     salt: Nsec3Salt<Bytes>,
 
-    /// Set the opt-out flag on all NSEC3 RRs
+    /// Set the opt-out flag on all NSEC3 RRs.
+    ///
+    /// Cannot be used with -P.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 'p',
@@ -229,7 +231,9 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Extra options not supported by the original ldns-signzone:
     // -----------------------------------------------------------------------
-    /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
+    /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations.
+    ///
+    /// Cannot be used with -p.
     #[arg(
         help_heading = Some("NSEC3 (when using '-n')"),
         short = 'P',
@@ -239,7 +243,7 @@ pub struct SignZone {
     )]
     nsec3_opt_out: bool,
 
-    /// Hash only, don't sign
+    /// Hash only, don't sign.
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
@@ -248,15 +252,20 @@ pub struct SignZone {
     no_require_keys_match_apex: bool,
 
     /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
+    ///
+    /// Cannot be used with -Z or -H.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'T',
-        default_value_t = false
+        default_value_t = false,
+        conflicts_with_all = ["allow_zonemd_without_signing", "hash_only"],
     )]
     use_yyyymmddhhmmss_rrsig_format: bool,
 
     /// Preceed the zone output by a list that contains the NSEC3 hashes of the
     /// original ownernames.
+    ///
+    /// Requires -n.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'L',
@@ -266,6 +275,8 @@ pub struct SignZone {
     preceed_zone_with_hash_list: bool,
 
     /// Order RRSIG RRs by the record type that they cover.
+    ///
+    /// Enabled automatically by -b.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'R',
@@ -275,6 +286,8 @@ pub struct SignZone {
     order_rrsigs_after_the_rtype_they_cover: bool,
 
     /// Order NSEC3 RRs by unhashed owner name.
+    ///
+    /// Enabled automatically by -b.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'O',
@@ -287,13 +300,18 @@ pub struct SignZone {
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
-    /// The zonefile to sign
+    /// The zonefile to sign.
     #[arg(value_name = "zonefile")]
     zonefile_path: PathBuf,
 
-    /// The keys to sign the zone with
-    // May be omitted if -Z or -H are given
-    #[arg(value_name = "key", required_unless_present_any = ["allow_zonemd_without_signing", "hash_only"])]
+    /// The keys to sign the zone with.
+    ///
+    /// Cannot be used with -Z or -H.
+    #[arg(
+        value_name = "key",
+        conflicts_with_all = ["allow_zonemd_without_signing", "hash_only"],
+        required_unless_present_any = ["allow_zonemd_without_signing", "hash_only"]
+    )]
     key_paths: Vec<PathBuf>,
 
     // -----------------------------------------------------------------------
@@ -604,16 +622,10 @@ impl SignZone {
 
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         // Post-process arguments.
-        // TODO: Can Clap do this for us?
-
         let signing_mode = if self.hash_only {
             SigningMode::HashOnly
         } else if self.key_paths.is_empty() {
-            if self.allow_zonemd_without_signing {
-                SigningMode::None
-            } else {
-                return Err("Missing key argument".into());
-            }
+            SigningMode::None
         } else {
             SigningMode::HashAndSign
         };
