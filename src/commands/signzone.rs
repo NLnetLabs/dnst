@@ -487,7 +487,7 @@ impl LdnsCommand for SignZone {
         // ldns-signzone just copies the unsigned zone (without comments) when
         // using only -Z (without -z).
         if key_paths.is_empty() && !allow_zonemd_without_signing {
-            return Err("Missing key argument".into());
+            return Err("No keys to sign with. Aborting.".into());
         };
 
         preceed_zone_with_hash_list &= extra_comments && use_nsec3;
