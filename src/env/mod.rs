@@ -32,6 +32,14 @@ pub trait Env {
     /// Make relative paths absolute.
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 
+    /// Get the number of seconds since the UNIX epoch.
+    fn seconds_since_epoch(&self) -> u32;
+
+    /// Set the number of seconds since the UNIX epoch.
+    ///
+    /// Only for use by FakeEnv, should not do anything in RealEnv.
+    fn set_seconds_since_epoch(&mut self, seconds: u32);
+
     fn dgram(
         &self,
         socket: SocketAddr,
@@ -119,6 +127,55 @@ impl<E: Env> Env for &E {
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
         (**self).in_cwd(path)
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        (**self).seconds_since_epoch()
+    }
+
+    fn set_seconds_since_epoch(&mut self, _seconds: u32) {
+        unreachable!()
+    }
+
+    fn dgram(
+        &self,
+        socket: SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
+        (**self).dgram(socket)
+    }
+
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
+        (**self).stub_resolver_from_conf(config).await
+    }
+}
+
+impl<E: Env> Env for &mut E {
+    fn args_os(&self) -> impl Iterator<Item = OsString> {
+        (**self).args_os()
+    }
+
+    fn stdout(&self) -> Stream<impl fmt::Write> {
+        (**self).stdout()
+    }
+
+    fn stderr(&self) -> Stream<impl fmt::Write> {
+        (**self).stderr()
+    }
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        (**self).in_cwd(path)
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        (**self).seconds_since_epoch()
+    }
+
+    fn set_seconds_since_epoch(&mut self, seconds: u32) {
+        (**self).set_seconds_since_epoch(seconds);
     }
 
     fn dgram(
