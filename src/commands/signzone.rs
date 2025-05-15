@@ -4048,6 +4048,68 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
     }
 
     #[test]
+    fn sign_zone_with_key_by_different_name() {
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kjelte.nlnetlabs.nl.+008+31310");
+
+        // Try first without -M which should cause an error that a key for
+        // jelte.nlnetlabs.nl cannot be used to sign a zone with apex
+        // example.org.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            &zone_file_path,
+            &ksk_path,
+        ])
+        .run();
+
+        assert!(!filter_lines_containing_all(
+            &res.stderr,
+            &["Zone apex (example.org) does not match the expected apex (jelte.nlnetlabs.nl)"]
+        )
+        .is_empty());
+        assert_ne!(res.exit_code, 0);
+        assert_eq!(res.stdout, "");
+
+        // Retry with -M to allow key by a different name than the apex.
+        let expected_zone = r###"example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 239
+example.org.\t238\tIN\tRRSIG\tSOA 8 2 238 1704070861 1704070861 31310 jelte.nlnetlabs.nl. qnLSFwGzwUwDd3H0l5E1EYcDj5fv3CZ6Saa9wPoPvccfoHPJs1WIUXj8tMMWjazem6wEjW17YJGmQALsXi4zJzAReCqbzQRtasnu9f47MT/80yDO4Ke5fTlcEk0UW5gwvC/9CrMH9V94yxDPCK3zs0fU12OIYWajToUkBdxAV6c=
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 1704070861 1704070861 31310 jelte.nlnetlabs.nl. Y0A4kVCk5xrppl6njxzH2Go430fyl026VYmox118qK7oWj82M/RVHcEh7dsKsuIx3tK7zIJHlSZJ3IeWXT5O8BUnhhvXMK4hyXftPK9x4EYrlh5K0BBcQGxPvoJo0NF+x57WQhKx27Z3yyX6nLLeptj5VxUeBnZ51HybhVahjvw=
+example.org.\t238\tIN\tRRSIG\tDNSKEY 8 2 238 1704070861 1704070861 31310 jelte.nlnetlabs.nl. O0sDiVeMSk6VpZUyumYVQHg1PyIRmpirQ83BMCmWjHHKwvZTpnqU2OmZiHi/gdXuWIBaMO2kKf6feolgIOjSD8xhch2KkH/norF180l0d0y95OrcEj+ElxfUnhfNuQfyg5sZHU11P8rjmG61H5rQ3Gf7DjiKodC5u32Ln+7bedw=
+example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
+example.org.\t238\tIN\tDNSKEY\t257 3 8 AwEAAe3iCDazOBQLVjCq6luwnF+r20OHHdrB98vLRxn7Hnc2E5MuB9nHguTEmBQGXNM3wf4cYr6n+56jw/lds3UyoATFA15cWQlTFt//jcoKbUH3gamY3i01cvMCqYN/pcVv651xudiDC1LZ1DgCsxnz2B22Rx1s6jpIUX8omv451E3T
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1704070861 1704070861 31310 jelte.nlnetlabs.nl. 24jlYTrBneUtKtQ7ZAh700Uf/IF0mxK9U/GMamtajVIW0DzAkNC3Z44De3+Og0muX+QCVMkcBLLvaoX7z87PzYMm2wWlQn3i501fBcKckT7fqRTUUbYxQfjfhExYP74Q6P9ZlU6kaicaTTeugUSfxoyRK8QnFxLwCUa7DNtvlac=
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1704070861 1704070861 31310 jelte.nlnetlabs.nl. zx5tL0Og+4KbBbCklfnveMMJoIIFy4ZN7ETWTQ+rAK81mjoVXnbSvWcoTkOu9z4UQlsbK5bB1oG87z5hAvse8+94VXERZDbu3lypzN7FP4onKDWR4cywrgjCSVyx1J/Kkty+x/f9TmWFsLFABUv5ansf1SAEZHilWVGc2X+0TKg=
+some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+"###.replace("\\t", "\t");
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20240101010101",
+            "-i",
+            "20240101010101",
+            "-M",
+            &zone_file_path,
+            &ksk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stdout, expected_zone);
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
     fn non_existing_input_file_should_not_create_empty_output_file() {
         let dir = tempfile::TempDir::new().unwrap();
 
