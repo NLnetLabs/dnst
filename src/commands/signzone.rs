@@ -3275,7 +3275,8 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 exam
 ;
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
@@ -3329,7 +3330,8 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 142
 ;
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
