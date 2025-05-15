@@ -30,11 +30,6 @@ Arguments
 Options
 -------
 
-.. option:: -b
-
-      Add comments on DNSSEC records. Without this option only DNSKEY RRs
-      will have their key tag annotated in the comment.
-
 .. option:: -d
 
       Do not add used keys to the resulting zonefile.
@@ -66,6 +61,20 @@ Options
       If this would NOT result in the SOA serial increasing it will be
       incremented instead.
 
+.. option:: -n
+
+      Use NSEC3 instead of NSEC. By default, RFC 9276 best practice settings
+      are used: SHA-1, no extra iterations, empty salt. To use different NSEC3
+      settings see :ref:`dnst-signzone-nsec3-options`.
+
+.. option:: -A
+
+      Sign DNSKEYs with all keys instead of the minimal set.
+
+.. option:: -U
+
+      Sign with every unique algorithm in the provided keys.
+
 .. option:: -z <[SCHEME:]HASH>
 
       Add a ZONEMD resource record. Accepts both mnemonics and numbers.
@@ -80,14 +89,6 @@ Options
       Allow adding ZONEMD RRs without signing the zone. With this option, the
       <KEY>... argument becomes optional and determines whether to sign the
       zone.
-
-.. TODO: document -A and -U when implemented
-
-.. option:: -n
-
-      Use NSEC3 instead of NSEC. By default, RFC 9276 best practice settings
-      are used: SHA-1, no extra iterations, empty salt. To use different NSEC3
-      settings see :ref:`dnst-signzone-nsec3-options`.
 
 .. option:: -H
 
@@ -104,6 +105,36 @@ Options
       ``--help``).
 
 
+.. _dnst-signzone-formatting-options:
+
+Output formatting options
+--------------------------------
+
+The following options can be used to affect the format of the output.
+
+.. option:: -b
+
+      Add comments on DNSSEC records. Without this option only DNSKEY RRs
+      will have their key tag annotated in the comment.
+
+.. option:: -L
+
+      Preceed the zone output by a list that contains the NSEC3 hashes of the
+      original ownernames.
+
+.. option:: -O
+
+      Order NSEC3 RRs by unhashed owner name.
+
+.. option:: -R
+
+      Order RRSIG RRs by the record type that they cover.
+
+.. option:: -T
+
+      Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
+
+
 .. _dnst-signzone-nsec3-options:
 
 NSEC3 options
@@ -116,19 +147,19 @@ settings used.
 
       Specify the hashing algorithm. Defaults to SHA-1.
 
-.. option:: -t <NUMBER>
-
-      Set the number of extra hash iterations. Defaults to 0.
-
 .. option:: -s <STRING>
 
       Specify the salt as a hex string. Defaults to ``-``, meaning empty salt.
+
+.. option:: -t <NUMBER>
+
+      Set the number of extra hash iterations. Defaults to 0.
 
 .. option:: -p
 
       Set the opt-out flag on all NSEC3 RRs.
 
-.. option:: -A
+.. option:: -P
 
       Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations.
 
