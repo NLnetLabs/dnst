@@ -162,7 +162,6 @@ pub struct SignZone {
     #[arg(short = 'U', default_value_t = false)]
     sign_with_every_unique_algorithm: bool,
 
-    // This should be handled at the dnst top level, not per subcommand.
     /// Add a ZONEMD resource record
     ///
     /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
