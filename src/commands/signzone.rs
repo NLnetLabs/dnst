@@ -3256,150 +3256,107 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
-    fn ldns_signzone_rfc_5155_nsec3_signed_zone_example_with_minus_b() {
-        let expected_signed_zone = r###"; H(example) = 0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example
-; H(2t7b4g4vsa5smi47k61mv5bv1a22bojr.example) = kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example
-; H(a.example) = 35mthgpgcu1qg68fab165klnsnk3dpvl.example
-; H(ai.example) = gjeqe526plbf1g8mklp59enfd789njgi.example
-; H(ns1.example) = 2t7b4g4vsa5smi47k61mv5bv1a22bojr.example
-; H(ns2.example) = q04jkcevqvmu85r014c7dkba38o0ji5r.example
-; H(w.example) = k8udemvp1j2f7eg6jebps17vp3n8i58h.example
-; H(*.w.example) = r53bq7cc2uvmubfu5ocmm6pers9tk9en.example
-; H(x.w.example) = b4um86eghhds6nea196smvmlo4ors995.example
-; H(y.w.example) = ji6neoaepv8b5o6k4ev33abha8ht9fgc.example
-; H(x.y.w.example) = 2vptu5timamqttgl4luu9kg21e0aor3s.example
-; H(xx.example) = t644ebqk9bibcna874givr6joj62mlhv.example
-example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1 3600 300 3600000 3600
-example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20150420235959 20051021000000 38353 example. OQmI2syAvTPgPZCKCV2cIvJyEAWyTatdMUKhg9hBdPovmZzRZ9wWaLtRzwGUuHdzeNzA7MEPOSZ1heIWYiS4JqEfemJSwZtQRLuwhOKznPMQt7UJNN4e7cjM2j0W7D8v92TsjwdB9j47Qjl64Yl0Y26zh25Sw3JRuq2dbGbbl8I=
-example.\t3600\tIN\tNS\tns1.example.
-example.\t3600\tIN\tNS\tns2.example.
-example.\t3600\tIN\tRRSIG\tNS 8 1 3600 20150420235959 20051021000000 38353 example. YEedzYLNAJpDj/1ekisL51HQ3m9Dmcf/kj+1XxMs86P91wWTB07mhv9Jin6ziwPPwSn2erXKsJkFOT6W5XNh1W3WlgvxsQ1mAApppm0OPxmuA/pjMiv6Hr+df+N/6IZ2Wq36EtgUXxFU+QN4WVPzwebjM9rZLtNxN8kQnhSs4E4=
-example.\t3600\tIN\tMX\t1 xx.example.
-example.\t3600\tIN\tRRSIG\tMX 8 1 3600 20150420235959 20051021000000 38353 example. tEw3cOYajeExrCquvSlxpcjUUKNw7Myy6WjsQvboMtM4W5rs36oLF9bJiG0IuduLz3JnGPnl8o1XgpVpsmrt/xqh2ifesUD1SILxKmljw7IvJ1VDeqsaVJxmlbG0BXhNrGLRwfuiJnvUxGf3Dl8bW1g8aLOEwwm+Gz7091GJcvM=
-example.\t3600\tIN\tDNSKEY\t256 3 8 AwEAAbsD4Tcz8hl2Rldov4CrfYpK3ORIh/giSGDlZaDTZR4gpGxGvMBwu2jzQ3m0iX3PvqPoaybC4tznjlJi8g/qsCRHhOkqWmjtmOYOJXEuUTb+4tPBkiboJM5QchxTfKxkYbJ2AD+VAUX1S6h/0DI0ZCGx1H90QTBE2ymRgHBwUfBt ;{id = 38353 (zsk), size = 1024b}
-example.\t3600\tIN\tDNSKEY\t257 3 8 AwEAAaYL5iwWI6UgSQVcDZmH7DrhQU/P6cOfi4wXYDzHypsfZ1D8znPwoAqhj54kTBVqgZDHw8QEnMcS3TWxvHBvncRTIXhCLx0BNK5/6mcTSK2IDbxl0j4vkcQrOxc77tyExuFfuXouuKVtE7rggOJiX6ga5LJW2if6Jxe/Rh8+aJv7 ;{id = 31967 (ksk), size = 1024b}
-example.\t3600\tIN\tRRSIG\tDNSKEY 8 1 3600 20150420235959 20051021000000 31967 example. neFL5wACumr7fNXVJAjNRz+5xpmkOVtsZfoW0AnOCT9Kmo8RKkArWxIMRoqCjSwL7gqAVkkDCe0hdkktfAjqwqi2cSy2SSytqgX3MBaJlfFsg/d0cTHRK32qDlhDZ4zZ511VmJCgK5rwrHPZIO5g1FTEj+hawpPVWlFqu/rWk6M=
-example.\t3600\tIN\tNSEC3PARAM\t1 1 12 AABBCCDD
-example.\t3600\tIN\tRRSIG\tNSEC3PARAM 8 1 3600 20150420235959 20051021000000 38353 example. EMeWCqjK1a8AmRIcl31fH2JlIwxozhyRTkuA6N/DPC6lkun6/RONLsA1ksZuY4P3b9fUcVp5/nYxo+AGNwSgr3I8VcnzhEVsDfg68grtYrcUrwhZz7TkiyLNMlMZ+krj9NpqCY1Kht/uJTrUbnG3WefBdtx3sDKa0wFY/kp/cpM=
-0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2T7B4G4VSA5SMI47K61MV5BV1A22BOJR NS SOA MX RRSIG DNSKEY NSEC3PARAM
-0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. psCexsG2DMIfSm4WgYSGx/DeUGcYvj9pTcCihdM3QO5bKJfXMQ6f0zP+Af+VpYBst+zlRZkZaoNZ04rNdm3asOLGyXlEvXSecwM9VVwpof21LaX2IW/8uue/pvr1UQQUtxqbFt5VoOoLdUVUXyo/4B5BLw1qhv3vDTbaRnKjBXc=
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tA\t192.0.2.127
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. h7JOg0b+I3ZWI4usKYTCV8Kvik2wIOlJbbgqnQuMq/eADcNucUSKP454p+6HgrTA+11FLirv07d1CL3HcXUiNd0J/85LfII965t9jEKOWq2tWzEXj0LYhoXFqcfLDmYBSNxOXy8/VexRvYlIk1wooQ8aYqdc0VIeQKba66yNAKo=
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A RRSIG
-2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. W3ZqyTU5dpvSeNYUtjk5mGDDyLWyoNmJXBNfZmv9Hwpb7FZQ/dZLu9OhS6B8JBDxunRaatpNFQjurkdQNdaLPH3B61824V0mW4JZFWZuTJJMIVZtPDOXNYXeezejYwuIKn1CZXtkobdJOtQUEmiW3OjC0Hz3L/0IUoKTgIbLZB4=
-2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 35MTHGPGCU1QG68FAB165KLNSNK3DPVL MX RRSIG
-2vptu5timamqttgl4luu9kg21e0aor3s.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. n0psta4fcHe5JvTi3KSA4O0n732l/4qYpwZhso2G8MvCTGTlVrGH/DQTPjS9rhBwkw2AWBN0kAVZ7Ry48jtfub9zC6VjLaF2aNzBScvbRRsewJi3pdNbo69qidOrlBEJUyVRo9cu3XQOA0zjT0mh+iT31oqQMNg3n3d66HnD3bs=
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD B4UM86EGHHDS6NEA196SMVMLO4ORS995 NS DS RRSIG
-35mthgpgcu1qg68fab165klnsnk3dpvl.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. cLVHqZp0jL0MG2ZqcnVUsOHkrGajuOtSJU/W9t7u8JDr0pjhw/yhtY1sCemgHEDVz1E9cyp3WLvcVphApGOMR6tkVOHzsPbVlKHRHogILXWL5Q6BUvXCWYtTsPvRT0eukGy/yFGL+JnCI+uRHuhMqmAmfjvBfIDzvYyy8MjNF5w=
-a.example.\t3600\tIN\tNS\tns1.a.example.
-a.example.\t3600\tIN\tNS\tns2.a.example.
-a.example.\t3600\tIN\tDS\t58470 5 1 3079F1593EBAD6DC121E202A8B766A6A4837206C
-a.example.\t3600\tIN\tRRSIG\tDS 8 2 3600 20150420235959 20051021000000 38353 example. hvn/QOHcGuvuZFuBgc2w6Z6GwhIYlzz+Rc1Y0F8ewD9IURCHmU438p++lx8MRY7IlGpa9rO+TIXiGpeA4amgO0wLTNUz9PcCihZuJ7wI8CSM49VB9OyCgORDsW13WTAUkqKgKyldbH3xE4EzNlY59pmWQgt6dGdHNj1aM9WsEco=
-ns1.a.example.\t3600\tIN\tA\t192.0.2.5
-ns2.a.example.\t3600\tIN\tA\t192.0.2.6
-ai.example.\t3600\tIN\tA\t192.0.2.9
-ai.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. Y/ycwCcc4Ocm7Hmn0p7G2LqiQmm3rO9J8up3Q/rz6VhRm9IhAYj9Pae3iaGuaPd3lXwmWvSYx6aLhGvl5q8BPJXH5l220pDH1aszH48c+sYfSSgSkCe3Tjcd2OnWBX3rkbVIs8JYkAdkBct8jOQXzzjqtRIwdE4rbBav4/Azk3s=
-ai.example.\t3600\tIN\tHINFO\t"KLH-10" "ITS"
-ai.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. lt9YIge2LzOVGEED+l0oHuVuhebYI3rudx4Knl0WZ4qMk7xcLtzAfK2NT0cV2MYKe9hi31O7ITh4mVZUC3yq9L1lpbZQaeeDRxJHsm1LDtlEh32GCKHXBRNNaQWmFZEuXeGeNec3/itTYMQx/2e7xXmltzVPvvBFqjn8t4pGyFo=
-ai.example.\t3600\tIN\tAAAA\t2001:db8::f00:baa9
-ai.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. diBqPpbIyhguumnN3aqQnAKiqOZk0q1fJSANjYZcnGJjAxrTfQ1kkEjG1NAJpINnfIo2lD1dxXwHvW9TJXHRcx6KcLc5v0e+weoLtA+6eNViLQVG7JvL24amuPMHS0oJBE4bkJEMYGvtJmIitb0rNaA4MIf3j0oYWS+dhL4B8A4=
-b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD GJEQE526PLBF1G8MKLP59ENFD789NJGI MX RRSIG
-b4um86eghhds6nea196smvmlo4ors995.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. q2De6iOGJZBGqKlrmdGEXvXHb2Rz0OT1P5Rnfqn+TutSupUYmLKZYlk66QSj/CXW8aLb0mDGdqyRTjm7DuDv0+su2T+w0SoS3M5t1wiDSeE/vl6VFwGuZeCZGb0Re4sfkGpuFv/LD6VmNvhCcy+O+sXrguMrMdJ3lQCvJQjhCqA=
-c.example.\t3600\tIN\tNS\tns1.c.example.
-c.example.\t3600\tIN\tNS\tns2.c.example.
-ns1.c.example.\t3600\tIN\tA\t192.0.2.7
-ns2.c.example.\t3600\tIN\tA\t192.0.2.8
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD JI6NEOAEPV8B5O6K4EV33ABHA8HT9FGC A HINFO AAAA RRSIG
-gjeqe526plbf1g8mklp59enfd789njgi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. WOV1cBmmwlbTsR4qie8996TsFxWeYh0Q9CKNvHbTRtvNX2BHFa2K8583B+5x/GBOrHdZqFgSHXqkyAkD8y1gAj0cHzCUIvZhlGwHKtOlLk3lZBK0UdQGtWzbqRJBfoEZW9ZLuyWw1R67hxCkysPS2Mq4pHsXQgbQZZt4G7O/XwM=
-ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD K8UDEMVP1J2F7EG6JEBPS17VP3N8I58H
-ji6neoaepv8b5o6k4ev33abha8ht9fgc.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. J0QT2D31aTMBikuGbnGDTazPPx2fHNg3R8T6BPyNW+nX2qtI74BEdgFOsPUL7C3DlXPayWDYHFREXumHQldAb65X2N4EGblZVJ5HiVVxe4mqaGipckyWhvbNXTm3ITvvuCK6G+Q0XUMsQ2INb7wF9Qo1acd1b5cLLi1UNET3NPo=
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD KOHAR7MBB8DC2CE8A9QVL8HON4K53UHI
-k8udemvp1j2f7eg6jebps17vp3n8i58h.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. s43tb7Gyh2lQ5wSKgxNMrP0HFJtjBuT+lzutMwoivhn4CMmJqYoOiMgtozsOg8OcG6mBZn6WqEC5y05CuHrHOirzGY55+Jp2B/I/RwVgWjWTA5qsjuqohgJjNnJDF1PpC+qVJZjdDU41+q/M63fiMvDBeJ5PAfqqdDLOxX/muGc=
-kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD Q04JKCEVQVMU85R014C7DKBA38O0JI5R A RRSIG
-kohar7mbb8dc2ce8a9qvl8hon4k53uhi.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. iCIqnxLw7KsQZxj7MNPlEGlbU4SvoroyygNAILtzxgEY0qJflPEsV4lyjsJMNMPMvzlyzs4zAl2StBYF+Y9WDCJf5h1t/W0tB9oddfoLwtAEqukHFW6DIcoHuERjdqTVr3+fvcIJzwGAuT+TYuOucq/2aTwmludE1lhHBgOIjJU=
-ns1.example.\t3600\tIN\tA\t192.0.2.1
-ns1.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. i2ljZXbHVRHFrDI00jW8Ln6Pivq0S2cBS9TNBHoiiCvMR4cxE/jijDAqt7U/TqIHyu3lSK3tmLEZhCh9rWEXOzfLuzo6RfcXvg4V7lLXuLMRhvLjTn1+LmWHGaW6xnNkvapU8/bm2Ckriy3+05cTEsbpTJ9swf2Fg6Q2yDnn8ig=
-ns2.example.\t3600\tIN\tA\t192.0.2.2
-ns2.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. hnBX5fSoXikZeE903WDLD6o2u+1j+9mo+u5b1YRxlCvR1FPRnhV8byCTEpV8RyQdjN6YL/tCG+wyLDysdHiVkNMEQe8SIRTzJLXFD1OvvdpIe+tNA2yTEemrMEkJIDcQeXy5BqWQwZb+DckvOxwnAIsHgCidUGNVXQrqtC0hwJc=
-q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD R53BQ7CC2UVMUBFU5OCMM6PERS9TK9EN A RRSIG
-q04jkcevqvmu85r014c7dkba38o0ji5r.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. TolAxcK5GG0pkbK6DawH8immUjUF/HbrVlmD+QPB0te4JcawLHxARbigxoHQnwUNqhoU5CEj2f/ozPjWJ/F+sj3ZsLzC4dcGp4nMOE0cdP9SQ+5fxuq57/Aj26invkthydBMdk+kZSD5IDw2I4llR3Es+P1ZqA+qd4auIpcHsX4=
-r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD T644EBQK9BIBCNA874GIVR6JOJ62MLHV MX RRSIG
-r53bq7cc2uvmubfu5ocmm6pers9tk9en.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. CsWt2WIBFyVeGv5wE13EI3MyGa4lhoZIOBQQWphNLKeH7j5c5xKmaoeleKmsl2D1Ni1+sr8U5IwvWfHmjOqo0mo4zQdv6K/U6AcnwXd0hZ+jCWE0QNAJt4HJXC/7vBCeDcSZ1MJ95X24FxkToQRPFkboCoP/+9glOJAx6X+jnCE=
-t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tNSEC3\t1 1 12 AABBCCDD 0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM A HINFO AAAA RRSIG
-t644ebqk9bibcna874givr6joj62mlhv.example.\t3600\tIN\tRRSIG\tNSEC3 8 2 3600 20150420235959 20051021000000 38353 example. AI+9pSvUUyTVQiLMX0Iz/2yyL9CdFzOYYJkbYH6sJX7/649vikFsMSCTpz3UTBp17ubKtlr1sP5Xiu++RCXu0hL8k9AOBSzy1ZmCS3T24Nj20gzuueN77ov0NsVxAh/tyBJV5LoNG1TG7+AVbepsqVKOMvON4clunFHlbTCYueM=
-*.w.example.\t3600\tIN\tMX\t1 ai.example.
-*.w.example.\t3600\tIN\tRRSIG\tMX 8 2 3600 20150420235959 20051021000000 38353 example. OzXlQ4NOdqgULXY+nHuXWzomMR9WAha768A/zfm24C4/Ug5OIR0vkjNZ0Is2MoXPCMv2GI2X42BkIY9S60pjlJ26IITW8pzArt+xURsWfonw9/WF/mpa6r1IxXZ3QCWmS7aIrQ/sDw1u6UnsTJIaFZbE94DvyeU+/TZ8mN8tz2k=
-x.w.example.\t3600\tIN\tMX\t1 xx.example.
-x.w.example.\t3600\tIN\tRRSIG\tMX 8 3 3600 20150420235959 20051021000000 38353 example. nw5Z1G1XkM3R6uJNzohynT9cXnNwCDwORheT4aqmO3EcfJrrp6k5VjtdY5Bqtxo6FlCgybcsinZVdcIV+14374aQrvezjiZmiqECdCDHzO/X4XVaxk6ei5oj+22Pl4P6D3YLt6D+KlXZbdTmfRkgo8ZwQ9JceEYwvTrlPQw3ldQ=
-x.y.w.example.\t3600\tIN\tMX\t1 xx.example.
-x.y.w.example.\t3600\tIN\tRRSIG\tMX 8 4 3600 20150420235959 20051021000000 38353 example. fJTea7tirPJYIy10rt0PHyV08ZbfuyJ4dyh8B4ycCxiHZkRJgnNjTS4y+/csAKkaIvToub5f/ob53/4ZMg9f6SlTby6ybbwxY4bWoZsISXIjhw3mDdVm2FsJiz4r8hPQjTOLSE6wpZtbxgfwtXa7OiJbzgAuHg9KbgGk2PNPfns=
-xx.example.\t3600\tIN\tA\t192.0.2.10
-xx.example.\t3600\tIN\tRRSIG\tA 8 2 3600 20150420235959 20051021000000 38353 example. ZPoxxa+U0ZI5Do7mJsq5rGC+bpUNTwRtTZJrr+tREhQn/AWKVwJGJFTitzn5akmusIk3RLGIfZPOLECMu6o+sF924qKA+M66ts98HfQP8b+duBd7kFW5I0hqtq0pcRDJm/tyFRgDRTas0puUzgNt4jud4CGFD0SM0h/MsWnxSnE=
-xx.example.\t3600\tIN\tHINFO\t"KLH-10" "TOPS-20"
-xx.example.\t3600\tIN\tRRSIG\tHINFO 8 2 3600 20150420235959 20051021000000 38353 example. qp2kpSTjHgc2xFZKH/iaek8ACNFzq7EFsVpiWSoJdyf5V1CIZY7SdxTe0k4W+zyzcGQOzC1u1ehWGmZeyIQYig+fOVZrnBFdJJcbQ9//JQnqcF6O2eGa5jMyLJQ8NceSK9dTMNj45KX1SlCaHwzCareLZip2obzaRyJqjvXtzl4=
-xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
-xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 example. TX5v7Jnw/lo29b3jr0aSbRGUDrk/NJm/3mcdGgSXsIPObhEI82PGPLKpy6vTQDyoXVIMigG0XATN74gav/kF90aBsTRsm6ITKE09sccLR8OIg+lFaVtEjSroZBrBHRocWStD4yssaWrmhS/+g8IC3PTPEPXJDFkj46vK9Z/nlNU=
+    fn ldns_signzone_nsec_signed_zone_example_with_minus_b() {
+        let expected_signed_zone = r###";; Zone: example.org.
+;
+example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 1429574399 1129852800 28954 example.org. V1LINcwCh6ulr9LBERp2zTUW4QfvoUKiv8VX5P8S03SZ9hdNk2BDLzNJj5TJj6o4ki708+DNzyqVHdz+EgyGUR9wH/vT9PxgRrKzjhJ35ktkKFLO+r08XxLMfZ7sCQrVYYr+LRpzDbzGqQby2fisMbNY8V4Lq3c7C7INP64peag=
+;
+example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 1429574399 1129852800 28954 example.org. enga3YYnD/6JGZuWbiBWFeSGTKfV3wba/5UoYDeY43XPs5nN7BDWpDRTtksP4N8sRTlbmtzxxk7negGinm3XGDm+Pvxl651Q2Gujn6URX+vH+IDxkIYTcooVJTG1tEZqtKB/Nwa0kgmeO28Wf+/9XOT4gyqV2qTY6uOrnu9PE9w=
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 1429574399 1129852800 51331 example.org. VBK2AFt1u3O0HIBjJrvQ2mo4aRnQcF5j1ibZ1FVpPoi6qtQ9MeL0B67AZJOcEgX080miM4IR+OujTooU1Npor8TIfx1nKr9Yamxzt1hrZkZz4eIbZ68bXPIBuLuvD/5Br4x0TcrXL+R6/QaRErPnbpB8WIBRohofoqMVFRR0Og0=
+;
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1429574399 1129852800 28954 example.org. HJ+HG8Z6jgSuzeBTbNtgLXO4QXXGNbrqijGfNrSIjqLJi1w8S/ADsiamh9Kua6EtwP653uYWmG34pA2mE8TDq6jjJp4ExCEs0fuYBsw7dkNiG++yh8oSr7jVHkYm3sQuDZC2984c4zIKolJD85dsGZ9Pp5b/YFdzQUj1nrhwIs8=
+some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 example.org. rkKQ2NCHw8tTQhxMDV+BvDThJC+mXUolpmjjVB7H1ziYDUhF18j4MbigGzQI9L6FXFPmwR6HIYexOnend0+2x2mHefnEGcoYVPVyRV6zTD4jFxJTy2l4mumEk8gPbTvN0Tgg4bMkWZWTeOivMmIcAXO+s06ICw2XKSq/LzL4kWc=
+;
 "###.replace("\\t", "\t");
 
-        let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
-        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
-        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
         // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
         // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
         // stdout.
-        // more control via specific CLI arguments over the output format to
-        // better match that of the example in RFC 4035 Appendix A without
-        // also introducing extra comments that `ldns-signzone -b` adds.
-        // Specifically the following options are used to make the output a
-        // better match to that of RFC 5155 Appendix A:
-        //
-        //   -T outputs RRSIG timestamps in YYYYMMDDHHmmSS format. -L outputs
-        //   NSEC3 hash mappings. -R orders RRSIGs after the records they
-        //   sign.
-        //
-        // We use RSASHA256 (type 8) signing keys instead of RSASHA1 (type 5)
-        // used by RFC 5155 Appendix A as we don't support type 5 (as it is
-        // NOT RECOMMENDED by RFC 8624) and because RSASHA256 signatures are
-        // consistent for the same input unlike ECDSAP256SHA256 for example.
         //
         // Signature validity period (expiration via `-e` and inception via
-        // `-i`) and NSEC3 options (extra iterations via `-t12` and salt via
-        // `-saabbccdd`) are set to match those in the RFC 5155 Appendix A
-        // example.
-        //
-        // We use -P (note the capital) because without it the standard, ldns
-        // based, opt-out behaviour is to include insecure delegations in the
-        // NSEC3 chain but the RFC 5155 Appendix A signed zone assumes that
-        // insecure delegations (such as c.example which lacks a DS record and
-        // is thus an insecure delegation) are omitted from the NSEC3 chain.
-        // Both behaviours are valid according to RFC 5155 as it states in
-        // section 7.1 on Zone Signing: "Owner names that correspond to
-        // unsigned delegations MAY have a corresponding NSEC3 RR", note the
-        // "MAY".
+        // `-i`) are specified to make output matching more deterministic.
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "-T",
-            "-L",
-            "-R",
             "-f-",
             "-e",
             "20150420235959",
             "-i",
             "20051021000000",
-            "-n",
-            "-t12",
-            "-saabbccdd",
-            "-P",
+            "-b",
             &zone_file_path,
             &ksk_path,
             &zsk_path,
         ])
         .run();
 
+        assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
-        // assert_eq!(res.stderr, ""); // Commented out due to NSEC3 iterations warning.
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn dnst_signzone_nsec3_signed_zone_example_with_minus_b() {
+        let expected_signed_zone = r###";; Zone: example.org.
+;
+example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 1429574399 1129852800 28954 example.org. V1LINcwCh6ulr9LBERp2zTUW4QfvoUKiv8VX5P8S03SZ9hdNk2BDLzNJj5TJj6o4ki708+DNzyqVHdz+EgyGUR9wH/vT9PxgRrKzjhJ35ktkKFLO+r08XxLMfZ7sCQrVYYr+LRpzDbzGqQby2fisMbNY8V4Lq3c7C7INP64peag=
+;
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 1429574399 1129852800 51331 example.org. VBK2AFt1u3O0HIBjJrvQ2mo4aRnQcF5j1ibZ1FVpPoi6qtQ9MeL0B67AZJOcEgX080miM4IR+OujTooU1Npor8TIfx1nKr9Yamxzt1hrZkZz4eIbZ68bXPIBuLuvD/5Br4x0TcrXL+R6/QaRErPnbpB8WIBRohofoqMVFRR0Og0=
+example.org.\t239\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t239\tIN\tRRSIG\tNSEC3PARAM 8 2 239 1429574399 1129852800 28954 example.org. IHWhCUqMv3MqMfeQgKhqqSBHVBku1KWXR8kqwnYK2WIPh8lip3TQPvvp/30VWZmuzHy6ixgO35rmPLwQEJmUIkjFFhAR+YLdqOlxN0gxIU7t3kwyyjNsKlRZhiNTwb9dDGhaSkkae4zww9ZT9reZVIvDQ6y79hiriLYEB30o2QY=
+;
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 SOA RRSIG DNSKEY NSEC3PARAM  ;{ flags: -, from: example.org., to: some.example.org.}
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. O4eZ+kgHciA7xfgjHwM2OxREhwQr49bsTujdBFXNxwFmhlaB9kfMd8d+WIYSZLvhcchh5a8cOAsCc0FRmelEAAs3wh0LzWPjmzVsLIU3iM/dgjyYm524jD0HMJDw2OYo8d6RKeF2anCbA/ynno5OmJd8TZ/h1tZ5BTso/mtZckI=
+;
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1429574399 1129852800 28954 example.org. HJ+HG8Z6jgSuzeBTbNtgLXO4QXXGNbrqijGfNrSIjqLJi1w8S/ADsiamh9Kua6EtwP653uYWmG34pA2mE8TDq6jjJp4ExCEs0fuYBsw7dkNiG++yh8oSr7jVHkYm3sQuDZC2984c4zIKolJD85dsGZ9Pp5b/YFdzQUj1nrhwIs8=
+;
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG  ;{ flags: -, from: some.example.org., to: example.org.}
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. fpbF8OsVXpUwFzsTRmGmVcEJ5+h/5FrlyqO+goyUapRudSPS7Izxblz+RE3IRu1eYOdYdU62Sz9hnpRK2NCs7NuBacLRGKiudNI5fv/Z0XF3nELjM3TSk7WYfCOFAjgoEGK2OKZrNWUTONsdaFNeJbs/SyzW+77nbWYZ4Al16gQ=
+;
+"###.replace("\\t", "\t");
+
+        let zone_file_path = mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
+        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
+        // stdout.
+        //
+        // Signature validity period (expiration via `-e` and inception via
+        // `-i`) are specified to make output matching more deterministic.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20150420235959",
+            "-i",
+            "20051021000000",
+            "-b",
+            "-n",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_signed_zone);
         assert_eq!(res.exit_code, 0);
     }
 
