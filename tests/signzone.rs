@@ -74,6 +74,38 @@ fn signzone_only_ksk() {
     verify_signed_zone(dnst_out_path);
 }
 
+#[ignore = "should only be run if ldns command line tools are installed"]
+#[test]
+fn signzone_with_both_ksk_and_zsk() {
+    let temp_dir = tempdir().unwrap().into_path();
+    let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
+    let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
+
+    assert_org_ldns_cmd_eq_new_ldns_cmd(
+        &[
+            LDNS_CMD,
+            "-b",
+            "-f",
+            &ldns_out_path,
+            TEST_ZONE_PATH,
+            KSK_FILE_BASE_PATH,
+            ZSK_FILE_BASE_PATH,
+        ],
+        &[
+            LDNS_CMD,
+            "-b",
+            "-f",
+            &dnst_out_path,
+            TEST_ZONE_PATH,
+            KSK_FILE_BASE_PATH,
+            ZSK_FILE_BASE_PATH,
+        ],
+        false,
+    );
+
+    verify_signed_zone(dnst_out_path);
+}
+
 fn verify_signed_zone(dnst_out_path: String) {
     let verify_output = Command::new("ldns-verify-zone")
         .args([&dnst_out_path])
