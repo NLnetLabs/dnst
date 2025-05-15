@@ -6,7 +6,6 @@ mod common;
 use common::assert_org_ldns_cmd_eq_new_ldns_cmd;
 use const_format::concatcp;
 use jiff::{ToSpan, Unit, Zoned};
-use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tempfile::tempdir;
 
@@ -83,7 +82,7 @@ fn signzone_nsec_minus_b() {
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
-    const TS_FMT: &'static str = "%Y%m%d%H%M%S";
+    const TS_FMT: &str = "%Y%m%d%H%M%S";
     let now = Zoned::now().round(Unit::Second).unwrap();
     let inception_ts = now.saturating_sub(1.month()).strftime(TS_FMT).to_string();
     let expiration_ts = now.saturating_add(1.month()).strftime(TS_FMT).to_string();

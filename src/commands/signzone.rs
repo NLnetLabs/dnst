@@ -2971,7 +2971,7 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
             secure-deleg.example.org.\t240\tIN\tNSEC\texample.org. NS DS RRSIG NSEC\n\
         ";
 
-        let args = vec![
+        let args = [
             "-f-",
             "-e",
             "20241127162422",
