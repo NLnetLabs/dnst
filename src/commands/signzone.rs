@@ -3250,14 +3250,7 @@ xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new([
-            "dnst",
-            "signzone",
-            "-f-",
-            "-H",
-            &zone_file_path,
-        ])
-        .run();
+        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-H", &zone_file_path]).run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3311,15 +3304,7 @@ xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new([
-            "dnst",
-            "signzone",
-            "-f-",
-            "-n",
-            "-H",
-            &zone_file_path,
-        ])
-        .run();
+        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-n", "-H", &zone_file_path]).run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
