@@ -624,7 +624,7 @@ impl SignZone {
         // Post-process arguments.
         let signing_mode = if self.hash_only {
             SigningMode::HashOnly
-        } else if self.key_paths.is_empty() {
+        } else if self.allow_zonemd_without_signing {
             SigningMode::None
         } else {
             SigningMode::HashAndSign
