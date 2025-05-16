@@ -87,13 +87,12 @@ assets = [
     # TODO: Extend Ploutos to generate the man pages from sources.
     #{ source = "doc/routinator.1", dest = "/usr/share/man/man1/routinator.1", mode = "644", doc = true },
 ]
-# Set Provides and Obsoletes per https://docs.fedoraproject.org/en-US/packaging-guidelines/#renaming-or-replacing-existing-packages.
-obsoletes = "ldns < 0:1.8.4-2"
 
 # These get set using cargo-generate-rpm --set-metadata at package build time.
 #post_install_script = ...
 #pre_uninstall_script = ...
 #post_uninstall_script = ...
 
-[package.metadata.generate-rpm.conflicts]
-ldns-utils = "*"
+# Set Obsoletes per https://docs.fedoraproject.org/en-US/packaging-guidelines/#renaming-or-replacing-existing-packages.
+[package.metadata.generate-rpm.obsoletes]
+ldns = "< 0:1.8.4-2"
