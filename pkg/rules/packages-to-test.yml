@@ -52,15 +52,15 @@ include:
     published_pkg: 'ldns'
 
   - pkg: 'dnst'
-    image: 'rockylinux:9'
+    image: 'rockylinux:8'
     target: 'x86_64'
-    test-image: 'almalinux:9'
+    test-image: ''
     published_pkg: 'ldns'
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
     target: 'x86_64'
-    test-image: 'centos:9-Stream'
+    test-image: ''
     published_pkg: 'ldns'
 
 # 'mode' is not used by the package building workflow job, but is used by the package testing workflow job.
