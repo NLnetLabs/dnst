@@ -29,25 +29,25 @@ include:
     image: 'rockylinux:8'
     target: 'x86_64'
     test-mode: 'fresh-install'
-    published_pkg: 'ldns'
+    published_pkg: 'ldns-utils'
 
   - pkg: 'dnst'
     image: 'rockylinux:8'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
-    published_pkg: 'ldns'
+    published_pkg: 'ldns-utils'
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
     target: 'x86_64'
     test-mode: 'fresh-install'
-    published_pkg: 'ldns'
+    published_pkg: 'ldns-utils'
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
-    published_pkg: 'ldns'
+    published_pkg: 'ldns-utils'
 
 # Disable upgrade testing on Rocky Linux 9 and Debian Bookworm as we haven't published any packages for
 # those O/S versions yet.
