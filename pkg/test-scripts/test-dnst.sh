@@ -10,6 +10,10 @@ case $1 in
     ldns-keygen -v
     dnst nsec3-hash nlnetlabs.nl
     ldns-nsec3-hash nlnetlabs.nl
+    man dnst
+    man dnst-keygen
+    man ldns
+    man ldns-keygen
     ;;
 
   post-upgrade)
@@ -19,5 +23,9 @@ case $1 in
     ldns-keygen -v
     dnst nsec3-hash nlnetlabs.nl
     ldns-nsec3-hash nlnetlabs.nl
+    man dnst
+    man dnst-keygen
+    man ldns
+    man ldns-keygen
     ;;
 esac
