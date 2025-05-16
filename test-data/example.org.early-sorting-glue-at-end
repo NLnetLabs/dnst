@@ -1,0 +1,5 @@
+example.org.                          240 IN SOA  example.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
+example.org.                          240 IN NS   earlier-sorting.org.
+example.org.                          240 IN A    128.140.76.106
+some.example.org.                     240 IN A    1.1.1.1
+earlier-sorting.org.                  240 IN A    128.140.76.106
