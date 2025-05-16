@@ -311,6 +311,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=add-static-openssl-feature#13deee29c0ca5d9a326bb3a73e7ab043009094b3"
 dependencies = [
  "arc-swap",
  "bytes",
