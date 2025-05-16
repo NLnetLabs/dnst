@@ -70,7 +70,7 @@ ARG CARGO_ARGS
 FROM ${BASE_IMG} AS build
 ARG CARGO_ARGS
 
-RUN apk add --no-cache rust cargo
+RUN apk add --no-cache openssl-dev rust cargo
 
 WORKDIR /tmp/build
 COPY . .
