@@ -54,10 +54,8 @@ pub fn assert_org_ldns_cmd_eq_new_ldns_cmd(
     assert_eq!(
         std::str::from_utf8(&org_ldns_cmd_out.stdout),
         std::str::from_utf8(&new_ldns_cmd_out.stdout),
-        "Stdout content mismatch for original ldns command: {}",
-        {
-            eprintln!("{}", std::str::from_utf8(&new_ldns_cmd_out.stdout).unwrap());
-            org_ldns_cmd.join(" ")
-        }
+        "Stdout content mismatch for original ldns command: {}, compared to new ldns emulation command: {}",
+        org_ldns_cmd.join(" "),
+        new_ldns_cmd.join(" ")
     );
 }
