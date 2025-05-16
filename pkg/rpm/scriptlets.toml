@@ -8,7 +8,11 @@ if [ $1 -eq 2 ]; then
 fi
 
 # Create symbolic links
+ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-keygen
+ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-key2ds
 ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-nsec3-hash
+ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-notify
+ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-update
 '''
 
 post_uninstall_script = '''

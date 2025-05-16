@@ -3,6 +3,10 @@
 case "$1" in
 configure)
     # Create symbolic links
+    ln -s /usr/bin/dnst /usr/bin/ldns-keygen
+    ln -s /usr/bin/dnst /usr/bin/ldns-key2ds
     ln -s /usr/bin/dnst /usr/bin/ldns-nsec3-hash
+    ln -s /usr/bin/dnst /usr/bin/ldns-notify
+    ln -s /usr/bin/dnst /usr/bin/ldns-update
     ;;
 esac
