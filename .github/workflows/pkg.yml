@@ -23,6 +23,7 @@ jobs:
       docker_sanity_check_command: --version
 
       package_build_rules: pkg/rules/packages-to-build.yml
+      package_test_rules: pkg/rules/packages-to-test.yml
       package_test_scripts_path: pkg/test-scripts/test-<package>.sh
 
       cross_build_args: --features static-openssl
