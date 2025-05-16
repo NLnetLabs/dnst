@@ -12,7 +12,6 @@ case $1 in
     ldns-nsec3-hash nlnetlabs.nl
     man dnst
     man dnst-keygen
-    man ldns
     man ldns-keygen
     ;;
 
@@ -25,7 +24,6 @@ case $1 in
     ldns-nsec3-hash nlnetlabs.nl
     man dnst
     man dnst-keygen
-    man ldns
     man ldns-keygen
     ;;
 esac
