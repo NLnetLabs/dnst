@@ -25,13 +25,13 @@ ring = ["domain/ring"]
 
 # For building in a cargo cross container that lacks openssl-dev so cannot
 # successfully compile the Rust OpenSSL crate.
-static-openssl = ["openssl/vendored"]
+static-openssl = ["domain/openssl/vendored"]
 
 [dependencies]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "add-static-openssl-feature", features = [
     "bytes",
     "net",
     "resolv",
@@ -53,7 +53,7 @@ _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 test_bin = "0.4.0"
 tempfile = "3.14.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "add-static-openssl-feature", features = [
     "unstable-stelline",
 ] }
 
