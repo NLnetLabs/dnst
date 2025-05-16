@@ -4,11 +4,8 @@
 pkg:
   - 'dnst'
 image:
-  - "ubuntu:xenial"   # ubuntu/16.04
-  - "ubuntu:bionic"   # ubuntu/18.04
   - "ubuntu:focal"    # ubuntu/20.04
   - "ubuntu:jammy"    # ubuntu/22.04
-  - "debian:stretch"  # debian/9
   - "debian:buster"   # debian/10
   - "debian:bullseye" # debian/11
   - "debian:bookworm" # debian/12
@@ -24,6 +21,9 @@ test-image:
   # here, then 'included' entries will no longer overwrite each other because they alter a key that is present
   # in the original matrix. This is just how GitHub Actions matrix include rules work.
   - ""
+test-mode:   
+  - 'fresh-install'
+  - 'upgrade-from-published'
 include:
   # package for the Raspberry Pi 4b as an ARMv7 cross compiled variant of the Debian Bullseye upon which
   # Raspbian 11 is based.
@@ -43,26 +43,28 @@ include:
     target: 'aarch64-unknown-linux-musl'
 
   - pkg: 'dnst'
-    image: 'centos:7'
+    image: 'rockylinux:8'
     target: 'x86_64'
+    test-mode: 'fresh-install'
     published_pkg: 'ldns'
 
   - pkg: 'dnst'
     image: 'rockylinux:8'
     target: 'x86_64'
+    test-mode: 'upgrade-from-published'
     published_pkg: 'ldns'
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
     target: 'x86_64'
+    test-mode: 'fresh-install'
     published_pkg: 'ldns'
 
-# 'mode' is not used by the package building workflow job, but is used by the package testing workflow job.
-# Ploutos will not include this key when using this matrix definition to generate package building matrix
-# permutations but will use it when generating package testing permutations.
-test-mode:   
-  - 'fresh-install'
-  - 'upgrade-from-published'
+  - pkg: 'dnst'
+    image: 'rockylinux:9'
+    target: 'x86_64'
+    test-mode: 'upgrade-from-published'
+    published_pkg: 'ldns'
 
 # Disable upgrade testing on Rocky Linux 9 and Debian Bookworm as we haven't published any packages for
 # those O/S versions yet.
