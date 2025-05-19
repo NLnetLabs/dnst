@@ -15,22 +15,22 @@
 #   mode:        (optional) set to 'copy' for cross-compiled targets.
 #   cargo_args:  (optional) can be used when testing, e.g. set to '--no-default-features' to speed up the Krill
 #                build.
-# include:
-#   - platform:    'linux/amd64'
-#     shortname:   'amd64'
-#     mode:        'build'
+include:
+  - platform:    'linux/amd64'
+    shortname:   'amd64'
+    mode:        'build'
 
-#   - platform:    'linux/arm/v6'
-#     shortname:   'armv6'
-#     crosstarget: 'arm-unknown-linux-musleabihf'
-#     mode:        'copy'
+  - platform:    'linux/arm/v6'
+    shortname:   'armv6'
+    crosstarget: 'arm-unknown-linux-musleabihf'
+    mode:        'copy'
 
-#   - platform:    'linux/arm/v7'
-#     shortname:   'armv7'
-#     crosstarget: 'armv7-unknown-linux-musleabihf'
-#     mode:        'copy'
+  - platform:    'linux/arm/v7'
+    shortname:   'armv7'
+    crosstarget: 'armv7-unknown-linux-musleabihf'
+    mode:        'copy'
 
-#   - platform:    'linux/arm64'
-#     shortname:   'arm64'
-#     crosstarget: 'aarch64-unknown-linux-musl'
-#     mode:        'copy'
+  - platform:    'linux/arm64'
+    shortname:   'arm64'
+    crosstarget: 'aarch64-unknown-linux-musl'
+    mode:        'copy'
