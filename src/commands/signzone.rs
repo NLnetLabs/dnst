@@ -243,10 +243,6 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
-    /// Do not require that key names match the apex.
-    #[arg(short = 'M', default_value_t = false)]
-    no_require_keys_match_apex: bool,
-
     /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
@@ -499,7 +495,6 @@ impl LdnsCommand for SignZone {
             order_nsec3_rrs_by_unhashed_owner_name: extra_comments,
             zonefile_path,
             key_paths,
-            no_require_keys_match_apex: false,
             invoked_as_ldns: true,
         })))
     }
@@ -661,6 +656,7 @@ impl SignZone {
         };
 
         let mut signing_keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
+
         let mut zone_signing_keys = Vec::new();
 
         if signing_mode == SigningMode::HashAndSign {
@@ -727,7 +723,7 @@ impl SignZone {
 
                 // Verify that the owner of the public key matches the apex of the
                 // zone.
-                if !self.no_require_keys_match_apex && public_key.owner() != soa_rr.owner() {
+                if public_key.owner() != soa_rr.owner() {
                     return Err(format!(
                         "Zone apex ({}) does not match the expected apex ({})",
                         soa_rr.owner(),
@@ -2213,7 +2209,6 @@ mod test {
             preceed_zone_with_hash_list: false,
             order_rrsigs_after_the_rtype_they_cover: false,
             order_nsec3_rrs_by_unhashed_owner_name: false,
-            no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
             invoked_as_ldns: false,
@@ -2224,14 +2219,13 @@ mod test {
 
         // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["-bdunpM", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
                 set_soa_serial_to_epoch_time: true,
                 use_nsec3: true,
                 nsec3_opt_out_flags_only: true,
-                no_require_keys_match_apex: true,
                 order_rrsigs_after_the_rtype_they_cover: true,
                 order_nsec3_rrs_by_unhashed_owner_name: true,
                 expiration,
@@ -2404,7 +2398,6 @@ mod test {
             preceed_zone_with_hash_list: false,
             order_rrsigs_after_the_rtype_they_cover: false,
             order_nsec3_rrs_by_unhashed_owner_name: false,
-            no_require_keys_match_apex: false,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
             invoked_as_ldns: true,
