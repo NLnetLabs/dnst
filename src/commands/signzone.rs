@@ -4078,13 +4078,9 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
-        // As the UNIX epoch timestamp 1234567890 (from the SOA SERIAL)
-        // represents a date and time in 2009, the UNIX timestamp for the time
-        // now will be a larger than the SOA SERIAL. Below override the time
-        // now in the FakeEnv used to use this mock time now instead. The code
-        // handling `-u` should thus overwrite the SOA SERIAL in the zone file
-        // with the one we provide.
-        let time_now = RealEnv.seconds_since_epoch();
+        // Simulate that the time now is later than the 1234567890 SOA SERIAL
+        // in the zonefile.
+        let time_now = 1234567891;
         let expected_soa_line = format!("example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. {} 28800 7200 604800 239\n", time_now);
 
         let res = FakeCmd::new([
@@ -4113,9 +4109,8 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
-        // As the UNIX epoch timestamp 1234567890 (from the SOA SERIAL), use a
-        // time that is older than that so that the code handling `-u` should
-        // then ignore it and instead increment the zone file SOA SERIAL.
+        // Simulate that the time now is earlier than the 1234567890 SOA
+        // SERIAL in the zonefile.
         let time_now = 1234567889;
         let expected_soa_line = "example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. 1234567891 28800 7200 604800 239\n";
 
