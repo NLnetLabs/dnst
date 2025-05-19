@@ -4182,6 +4182,57 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         assert!(!dir.path().join("missing_zonefile.signed").exists());
     }
 
+    #[test]
+    fn dnst_signzone_nsec3_signed_zone_example_with_minus_capital_l() {
+        let expected_signed_zone = r###"; H(example.org) = 8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org
+; H(some.example.org) = vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org
+example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 1429574399 1129852800 28954 example.org. V1LINcwCh6ulr9LBERp2zTUW4QfvoUKiv8VX5P8S03SZ9hdNk2BDLzNJj5TJj6o4ki708+DNzyqVHdz+EgyGUR9wH/vT9PxgRrKzjhJ35ktkKFLO+r08XxLMfZ7sCQrVYYr+LRpzDbzGqQby2fisMbNY8V4Lq3c7C7INP64peag=
+example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 1429574399 1129852800 51331 example.org. VBK2AFt1u3O0HIBjJrvQ2mo4aRnQcF5j1ibZ1FVpPoi6qtQ9MeL0B67AZJOcEgX080miM4IR+OujTooU1Npor8TIfx1nKr9Yamxzt1hrZkZz4eIbZ68bXPIBuLuvD/5Br4x0TcrXL+R6/QaRErPnbpB8WIBRohofoqMVFRR0Og0=
+example.org.\t239\tIN\tRRSIG\tNSEC3PARAM 8 2 239 1429574399 1129852800 28954 example.org. IHWhCUqMv3MqMfeQgKhqqSBHVBku1KWXR8kqwnYK2WIPh8lip3TQPvvp/30VWZmuzHy6ixgO35rmPLwQEJmUIkjFFhAR+YLdqOlxN0gxIU7t3kwyyjNsKlRZhiNTwb9dDGhaSkkae4zww9ZT9reZVIvDQ6y79hiriLYEB30o2QY=
+example.org.\t239\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j
+example.org.\t239\tIN\tNSEC3PARAM\t1 0 0 -
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. O4eZ+kgHciA7xfgjHwM2OxREhwQr49bsTujdBFXNxwFmhlaB9kfMd8d+WIYSZLvhcchh5a8cOAsCc0FRmelEAAs3wh0LzWPjmzVsLIU3iM/dgjyYm524jD0HMJDw2OYo8d6RKeF2anCbA/ynno5OmJd8TZ/h1tZ5BTso/mtZckI=
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t238\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 SOA RRSIG DNSKEY NSEC3PARAM
+some.example.org.\t240\tIN\tA\t1.2.3.4
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 1429574399 1129852800 28954 example.org. HJ+HG8Z6jgSuzeBTbNtgLXO4QXXGNbrqijGfNrSIjqLJi1w8S/ADsiamh9Kua6EtwP653uYWmG34pA2mE8TDq6jjJp4ExCEs0fuYBsw7dkNiG++yh8oSr7jVHkYm3sQuDZC2984c4zIKolJD85dsGZ9Pp5b/YFdzQUj1nrhwIs8=
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 1429574399 1129852800 28954 example.org. fpbF8OsVXpUwFzsTRmGmVcEJ5+h/5FrlyqO+goyUapRudSPS7Izxblz+RE3IRu1eYOdYdU62Sz9hnpRK2NCs7NuBacLRGKiudNI5fv/Z0XF3nELjM3TSk7WYfCOFAjgoEGK2OKZrNWUTONsdaFNeJbs/SyzW+77nbWYZ4Al16gQ=
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG
+"###.replace("\\t", "\t");
+
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-minimum");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
+        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
+        // stdout.
+        //
+        // Signature validity period (expiration via `-e` and inception via
+        // `-i`) are specified to make output matching more deterministic.
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-e",
+            "20150420235959",
+            "-i",
+            "20051021000000",
+            "-n",
+            "-L",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run();
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.stdout, expected_signed_zone);
+        assert_eq!(res.exit_code, 0);
+    }
+
     // TODO: Add a test for https://rfc-annotations.research.icann.org/rfc6840.html#section-5.1?
 
     // ------------ Helper functions -----------------------------------------
