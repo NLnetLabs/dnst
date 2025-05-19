@@ -35,14 +35,7 @@ include:
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
-    rpm_yum_repo: |
-      [powertools]
-      name=Rocky Linux PowerTools
-      mirrorlist=https://mirrors.rockylinux.org/mirrorlist?arch=$basearch&repo=PowerTools-$releasever
-      gpgcheck=1
-      enabled=1
-      countme=1
-      gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-rockyofficial
+    rpm_yum_extra_args: --enablerepo powertools
 
   # - pkg: 'dnst'
   #   image: 'rockylinux:9'
@@ -54,15 +47,7 @@ include:
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
-    rpm_yum_repo: |
-      [crb]
-      name=Rocky Linux CRB
-      mirrorlist=https://mirrors.rockylinux.org/mirrorlist?arch=$basearch&repo=CRB-$releasever$rltype
-      gpgcheck=1
-      enabled=1
-      countme=1
-      metadata_expire=6h
-      gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+    rpm_yum_extra_args: --enablerepo crb
 
 # Disable upgrade testing on Rocky Linux 9 and Debian Bookworm as we haven't published any packages for
 # those O/S versions yet.
