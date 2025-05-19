@@ -94,10 +94,6 @@ Options
       Hash only, don't sign. With this option, the normally mandatory <KEY>...
       argument can be omitted.
 
-.. option:: -M
-
-      Do not require that key names match the apex of the zone to sign.
-
 .. option:: -h, --help
 
       Print the help text (short summary with ``-h``, long help with
