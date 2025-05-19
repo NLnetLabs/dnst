@@ -929,7 +929,7 @@ impl SignZone {
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
-            Self::bump_soa_serial(&mut records)?;
+            Self::bump_soa_serial(&env, &mut records)?;
         }
 
         // Find the apex.
@@ -1431,6 +1431,7 @@ impl SignZone {
     }
 
     fn bump_soa_serial(
+        env: &impl Env,
         records: &mut SortedRecords<
             StoredName,
             ZoneRecordData<Bytes, StoredName>,
@@ -1452,7 +1453,7 @@ impl SignZone {
         // that the SOA serial can be interpreted as a unix timestamp which
         // may not be the intention of the zone owner.
 
-        let now = Serial::now();
+        let now = Serial::from(env.seconds_since_epoch());
         let new_serial = if now > old_soa.serial() {
             now
         } else {
@@ -2138,6 +2139,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::SignZone;
+    use crate::env::Env;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
@@ -4265,6 +4267,68 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
         assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn set_soa_serial_to_epoch_time() {
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Simulate that the time now is later than the 1234567890 SOA SERIAL
+        // in the zonefile.
+        let time_now = 1234567891;
+        let expected_soa_line = format!("example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. {} 28800 7200 604800 239\n", time_now);
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-u",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run_with_modified_env(|env| env.set_seconds_since_epoch(time_now));
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            filter_lines_containing_all(&res.stdout, &["SOA", "hostmaster"]),
+            expected_soa_line,
+        );
+    }
+
+    #[test]
+    fn increment_soa_serial() {
+        let zone_file_path =
+            mk_test_data_abs_path_string("test-data/example.org.rfc9077-min-is-soa-ttl");
+        let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+        let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+        // Simulate that the time now is earlier than the 1234567890 SOA
+        // SERIAL in the zonefile.
+        let time_now = 1234567889;
+        let expected_soa_line = "example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. 1234567891 28800 7200 604800 239\n";
+
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-f-",
+            "-u",
+            &zone_file_path,
+            &ksk_path,
+            &zsk_path,
+        ])
+        .run_with_modified_env(|env| env.set_seconds_since_epoch(time_now));
+
+        assert_eq!(res.stderr, "");
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            filter_lines_containing_all(&res.stdout, &["SOA", "hostmaster"]),
+            expected_soa_line,
+        );
     }
 
     // TODO: Add a test for https://rfc-annotations.research.icann.org/rfc6840.html#section-5.1?
