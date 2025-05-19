@@ -657,9 +657,6 @@ impl SignZone {
 
         let mut signing_keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
 
-        // First split the key into Key Signing Keys (KSK) that sign the
-        // DNSKEY RRset and Zone Signing Keys (ZSK) that sign the zone.
-        let mut key_signing_keys = Vec::new();
         let mut zone_signing_keys = Vec::new();
 
         if signing_mode == SigningMode::HashAndSign {
@@ -726,7 +723,7 @@ impl SignZone {
 
                 // Verify that the owner of the public key matches the apex of the
                 // zone.
-                if !self.no_require_keys_match_apex && public_key.owner() != soa_rr.owner() {
+                if public_key.owner() != soa_rr.owner() {
                     return Err(format!(
                         "Zone apex ({}) does not match the expected apex ({})",
                         soa_rr.owner(),
