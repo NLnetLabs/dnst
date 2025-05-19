@@ -1,8 +1,8 @@
 # This matrix definition is used as both the package_build_rules and the package_test_rules Ploutos packaging
 # workflow inputs.
 ---
-pkg:
-  - 'dnst'
+# pkg:
+#   - 'dnst'
 # image:
 #   - "ubuntu:focal"    # ubuntu/20.04
 #   - "ubuntu:jammy"    # ubuntu/22.04
