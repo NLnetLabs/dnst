@@ -36,12 +36,29 @@ include:
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
+    rpm_yum_repo: |
+      [powertools]
+      name=Rocky Linux PowerTools
+      mirrorlist=https://mirrors.rockylinux.org/mirrorlist?arch=$basearch&repo=PowerTools-$releasever
+      gpgcheck=1
+      enabled=1
+      countme=1
+      gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-rockyofficial
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
     target: 'x86_64'
     test-mode: 'fresh-install'
     published_pkg: 'ldns-utils'
+    rpm_yum_repo: |
+      [crb]
+      name=Rocky Linux CRB
+      mirrorlist=https://mirrors.rockylinux.org/mirrorlist?arch=$basearch&repo=CRB-$releasever$rltype
+      gpgcheck=1
+      enabled=1
+      countme=1
+      metadata_expire=6h
+      gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
