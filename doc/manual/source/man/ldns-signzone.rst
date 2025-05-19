@@ -26,6 +26,10 @@ Arguments
       Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
       RRSIG resource records will be skipped when loading the zonefile.
 
+      Note: Unlike the original LDNS, the origin must be explicitly specified
+      either via an ``$ORIGIN`` directive in the zonefile or using the ``-o``
+      command line argument.
+
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.

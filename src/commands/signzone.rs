@@ -150,8 +150,18 @@ pub struct SignZone {
     #[arg(short = 'u', default_value_t = false)]
     set_soa_serial_to_epoch_time: bool,
 
-    // SKIPPED: -v
-    // This should be handled at the dnst top level, not per subcommand.
+    /// Use NSEC3 instead of NSEC
+    #[arg(short = 'n', default_value_t = false, group = "nsec3")]
+    use_nsec3: bool,
+
+    /// Sign DNSKEYs with all keys instead of the minimal set
+    #[arg(short = 'A', default_value_t = false)]
+    sign_dnskeys_with_all_keys: bool,
+
+    /// Sign with every unique algorithm in the provided keys
+    #[arg(short = 'U', default_value_t = false)]
+    sign_with_every_unique_algorithm: bool,
+
     /// Add a ZONEMD resource record
     ///
     /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
@@ -172,18 +182,6 @@ pub struct SignZone {
     /// Allow ZONEMDs to be added without signing
     #[arg(short = 'Z', requires = "zonemd")]
     allow_zonemd_without_signing: bool,
-
-    /// Sign DNSKEYs with all keys instead of minimal
-    #[arg(short = 'A', default_value_t = false)]
-    sign_dnskeys_with_all_keys: bool,
-
-    /// Sign with every unique algorithm in the provided keys
-    #[arg(short = 'U', default_value_t = false)]
-    sign_with_every_unique_algorithm: bool,
-
-    /// Use NSEC3 instead of NSEC
-    #[arg(short = 'n', default_value_t = false, group = "nsec3")]
-    use_nsec3: bool,
 
     /// Hashing algorithm
     #[arg(
@@ -243,14 +241,6 @@ pub struct SignZone {
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
 
-    /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'T',
-        default_value_t = false
-    )]
-    use_yyyymmddhhmmss_rrsig_format: bool,
-
     /// Preceed the zone output by a list that contains the NSEC3 hashes of the
     /// original ownernames.
     #[arg(
@@ -261,15 +251,6 @@ pub struct SignZone {
     )]
     preceed_zone_with_hash_list: bool,
 
-    /// Order RRSIG RRs by the record type that they cover.
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'R',
-        default_value_t = false,
-        default_value_if("extra_comments", "true", Some("true")),
-    )]
-    order_rrsigs_after_the_rtype_they_cover: bool,
-
     /// Order NSEC3 RRs by unhashed owner name.
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
@@ -279,6 +260,23 @@ pub struct SignZone {
         requires = "nsec3",
     )]
     order_nsec3_rrs_by_unhashed_owner_name: bool,
+
+    /// Order RRSIG RRs by the record type that they cover.
+    #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
+        short = 'R',
+        default_value_t = false,
+        default_value_if("extra_comments", "true", Some("true")),
+    )]
+    order_rrsigs_after_the_rtype_they_cover: bool,
+
+    /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
+    #[arg(
+        help_heading = Some("OUTPUT FORMATTING"),
+        short = 'T',
+        default_value_t = false
+    )]
+    use_yyyymmddhhmmss_rrsig_format: bool,
 
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
