@@ -2135,7 +2135,7 @@ mod test {
     use crate::env::fake::FakeCmd;
 
     use super::SignZone;
-    use crate::env::{Env, RealEnv};
+    use crate::env::Env;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
