@@ -10,7 +10,7 @@ image:
   # - "debian:bullseye" # debian/11
   # - "debian:bookworm" # debian/12
   - 'rockylinux:8'    # compatible with EOL centos:8
-  # - 'rockylinux:9'
+  - 'rockylinux:9'
 target:
   - 'x86_64'
 # include:
