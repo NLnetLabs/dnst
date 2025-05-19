@@ -194,7 +194,7 @@ impl FakeCmd {
                 .map(|s| (s, Arc::new(CurrStepValue::new()))),
         };
 
-        (env_modifier)(&mut env);
+        env_modifier(&mut env);
 
         let exit_code = run(&mut env);
 
