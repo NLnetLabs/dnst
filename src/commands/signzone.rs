@@ -1445,7 +1445,7 @@ impl SignZone {
             // are in sorted order children appear in the iteration order
             // after their parent.
             if rr.owner() != zone_name {
-                if rr.owner().starts_with(zone_name) {
+                if rr.owner().ends_with(zone_name) {
                     // Found a child node. Skip it.
                     continue;
                 } else {
