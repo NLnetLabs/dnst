@@ -1471,13 +1471,7 @@ impl SignZone {
             }
         }
 
-        if let Some(expected_origin) = origin {
-            Err(format!(
-                "Invalid zone file: Cannot find SOA record for expected origin '{expected_origin}'"
-            ))?
-        } else {
-            Err("Invalid zone file: Cannot find SOA record")?
-        }
+        Err("Invalid zone file: Cannot find SOA record".into())
     }
 
     fn mk_bumped_soa_rdata(
