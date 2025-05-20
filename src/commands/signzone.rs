@@ -2733,8 +2733,6 @@ mod test {
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
 
-        // TODO: Remove outdated references to -b which the tests are no longer using.
-
         // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
         // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
         // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
