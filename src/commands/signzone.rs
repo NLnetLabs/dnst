@@ -755,7 +755,7 @@ impl SignZone {
                 // zone.
                 if public_key.owner() != apex {
                     return Err(format!(
-                        "Zone apex ({apex}) does not match the expected apex ({})",
+                        "Public key owner {} does not match zone apex {apex}",
                         public_key.owner()
                     )
                     .into());
