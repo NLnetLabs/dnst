@@ -976,16 +976,6 @@ impl SignZone {
         // better for ldns-signzone to strip out NSEC(3)s on loading anyway as
         // it should only operate on unsigned zone input.
 
-        if !zonemd.is_empty() {
-            Self::replace_apex_zonemd_with_placeholder(
-                &mut records,
-                &apex,
-                zone_class,
-                soa_serial,
-                new_rr_default_ttl,
-            );
-        }
-
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
         if self.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
@@ -1133,13 +1123,12 @@ impl SignZone {
         };
 
         records
-            .sign_zone(&apex, &signing_config, &zone_signing_keys)
+            .sign_zone(apex, &signing_config, &zone_signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
-            let _ =
-                records.remove_first_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+            let _ = records.remove_first_by_name_class_rtype(apex, None, Some(Rtype::ZONEMD));
 
             let zonemd_rrs = Self::create_zonemd_digest_and_records(
                 &records,
@@ -1752,7 +1741,7 @@ impl SignZone {
         ttl: Ttl,
     ) {
         // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-        let _ = records.remove_all_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+        let _ = records.remove_all_by_name_class_rtype(apex, None, Some(Rtype::ZONEMD));
 
         // Insert a single placeholder ZONEMD at apex for creating the
         // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).

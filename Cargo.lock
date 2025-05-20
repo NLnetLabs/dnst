@@ -337,7 +337,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#2a390420af5f0f09f1a9bb31145844cb1409e163"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#8e4280af39757b8cc3f1116da97554845c62e5b2"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -558,6 +558,7 @@ version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c04ef77ae73f3cf50510712722f0c4e8b46f5aaa1bf5ffad2ae213e6495e78e5"
 dependencies = [
+ "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde",
