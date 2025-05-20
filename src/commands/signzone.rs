@@ -2733,16 +2733,6 @@ mod test {
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-simple");
 
-        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
-        // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
-        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
-        // RFC 4035 Appendix A.
-        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
-        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
-        // Use RSASHA256 (type 8) signing keys as they produce consistent
-        // signatures for the same input, and are supported by us unlike
-        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
-        // zone but we do not support.
         let res = FakeCmd::new([
             "dnst",
             "signzone",
@@ -2785,16 +2775,6 @@ mod test {
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc8976-complex");
 
-        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
-        // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
-        // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
-        // RFC 4035 Appendix A.
-        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
-        // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
-        // Use RSASHA256 (type 8) signing keys as they produce consistent
-        // signatures for the same input, and are supported by us unlike
-        // RSASHA1 (type 5) which is used by the RFC 4035 Appendix A signed
-        // zone but we do not support.
         let res = FakeCmd::new([
             "dnst",
             "signzone",
@@ -3062,10 +3042,7 @@ some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
     fn rfc_4035_nsec_signed_zone_example() {
         // Modified from the version in RFC 4035 replacing the keys used with
         // ones we have the private key for and using a key algorithm that we
-        // support (8 instead of 5). Matches output produced by dnst signzone
-        // -b (not ldns-signzone -b as the -b output is suppressed by
-        // ldns-signzone when using -f-) in order to get the same ordering as
-        // both the original ldns-signzone and the example in RFC 4035.
+        // support (8 instead of 5).
         let expected_signed_zone = r###"example.\t3600\tIN\tSOA\tns1.example. bugs.x.w.example. 1081539377 3600 300 3600000 3600
 example.\t3600\tIN\tRRSIG\tSOA 8 1 3600 20040509183619 20040409183619 38353 example. PTJr4PGqaoA7hl8SqD3qyoAqN+oEYuKsBjYaKWgyPxGIb4Z377Ru2kkT9QUsb6ETFCLVMpa315NwMwXhqTiWlak/gTF5OTf/+lTTP0H1sNVv4X3NwRGOzwzfxzgHY0/Rav/FrUjNZCmTA6KMo3i1rrMCG9FzCsnP1TQk9152Uiw=
 example.\t3600\tIN\tNS\tns1.example.
@@ -3135,11 +3112,10 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040509183619 20040409183619 38353 
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
-        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
         // Use -A to get the second DNSKEY RRSIG as included in RFC 4035 Appendix A.
         // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
         // RFC 4035 Appendix A.
-        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -R to get similar ordering to that of RFC 4035 Appendix A.
         // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
         // Use RSASHA256 (type 8) signing keys as they produce consistent
         // signatures for the same input, and are supported by us unlike
@@ -3338,10 +3314,6 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 exam
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
-        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
-        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
-        // stdout.
-        //
         // Signature validity period (expiration via `-e` and inception via
         // `-i`) are specified to make output matching more deterministic.
         let res = FakeCmd::new([
@@ -3393,10 +3365,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 142
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
-        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
-        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
-        // stdout.
-        //
         // Signature validity period (expiration via `-e` and inception via
         // `-i`) are specified to make output matching more deterministic.
         let res = FakeCmd::new([
