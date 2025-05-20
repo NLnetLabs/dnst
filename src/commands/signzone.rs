@@ -4406,10 +4406,9 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+31967");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.+008+38353");
 
-        // Use dnst signzone instead of ldns-signzone so that -b works with -f-.
         // Use -T to output RRSIG timestmaps in YYYYMMDDHHmmSS format to match
         // RFC 4035 Appendix A.
-        // Use -b to get similar ordering to that of RFC 4035 Appendix A.
+        // Use -R to get similar ordering to that of RFC 4035 Appendix A.
         // Use -e and -i to generate RRSIG timestamps that match RFC 4035 Appendix A.
         let res = FakeCmd::new([
             "dnst",
@@ -4478,10 +4477,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
         let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
 
-        // Use `dnst signzone` mode instead of `ldns-signzone` mode to capture
-        // `-b` output, as `ldns-signzone` disables `-b` if the output is sent
-        // stdout.
-        //
         // Signature validity period (expiration via `-e` and inception via
         // `-i`) are specified to make output matching more deterministic.
         let res = FakeCmd::new([
