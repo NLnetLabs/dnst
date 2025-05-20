@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::Path;
 
 use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend, UdpConnect};
@@ -9,6 +9,7 @@ use domain::resolv::StubResolver;
 
 use super::Env;
 use super::Stream;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Use real I/O
 pub struct RealEnv;
@@ -19,15 +20,28 @@ impl Env for RealEnv {
     }
 
     fn stdout(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stdout()))
+        Stream::new(FmtWriter(io::stdout()), io::stdout().is_terminal())
     }
 
     fn stderr(&self) -> Stream<impl fmt::Write> {
-        Stream(FmtWriter(io::stderr()))
+        Stream::new(FmtWriter(io::stderr()), io::stderr().is_terminal())
     }
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {
         path.as_ref().into()
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        let now = SystemTime::now();
+        let value = match now.duration_since(UNIX_EPOCH) {
+            Ok(value) => value,
+            Err(_) => UNIX_EPOCH.duration_since(now).unwrap(),
+        };
+        value.as_secs() as u32
+    }
+
+    fn set_seconds_since_epoch(&mut self, _seconds: u32) {
+        // NO OP
     }
 
     fn dgram(
