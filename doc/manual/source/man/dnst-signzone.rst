@@ -4,7 +4,7 @@ dnst signzone
 Synopsis
 --------
 
-:program:`dnst signzone` ``[OPTIONS]`` ``<ZONEFILE>`` ``<KEY>...``
+:program:`dnst signzone` ``[OPTIONS]`` ``<ZONE NAME>`` ``<ZONEFILE>`` ``<KEY>...``
 
 Description
 -----------
@@ -17,6 +17,11 @@ i.e. WITHOUT the ``.private`` or ``.key`` extension. Both ``.private`` and
 
 Arguments
 ---------
+
+.. option:: <ZONE NAME>
+
+      Set the owner name of the apex of the zone. Will also be used as if an
+      initial $ORIGIN directive were supplied in the given zonefile.
 
 .. option:: <ZONEFILE>
 
@@ -48,11 +53,6 @@ Options
 
       Set the inception date of signatures to this date (see
       :ref:`dnst-signzone-dates`). Defaults to now.
-
-.. option:: -o <DOMAIN>
-
-      Set the origin for the zone (only necessary for zonefiles with relative
-      names and no $ORIGIN).
 
 .. option:: -u
 
