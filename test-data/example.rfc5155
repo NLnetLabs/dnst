@@ -1,3 +1,7 @@
+; Extracted using ldns-readzone -s from the signed zone defined at
+; https://datatracker.ietf.org/doc/html/rfc5155#appendix-A
+; Keys have been replaced by newer algorithm 8 instead of older algorithm 5
+; which we do not support, and to match key pairs stored alongside this file.
 example.        3600    IN      SOA     ns1.example. bugs.x.w.example. 1 3600 300 3600000 3600
 xx.example.     3600    IN      AAAA    2001:db8::f00:baaa
 xx.example.     3600    IN      HINFO   "KLH-10" "TOPS-20"
