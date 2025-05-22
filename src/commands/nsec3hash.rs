@@ -16,6 +16,7 @@ use crate::Args;
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[derive(Clone, Debug, clap::Args)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Nsec3Hash {
     /// The hashing algorithm to use
     #[arg(

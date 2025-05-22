@@ -6,7 +6,7 @@ use std::path::Path;
 
 mod real;
 
-#[cfg(test)]
+#[cfg(any(test, fuzzing))]
 pub mod fake;
 
 use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};

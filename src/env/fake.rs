@@ -194,9 +194,26 @@ impl FakeEnv {
     }
 }
 
+impl From<FakeCmd> for FakeEnv {
+    fn from(value: FakeCmd) -> Self {
+        Self {
+            cmd: value,
+            stdout: FakeStream::new(),
+            stderr: FakeStream::new(),
+            stelline: None,
+        }
+    }
+}
+
 /// A type to used to mock stdout and stderr
 #[derive(Clone, Default)]
 pub struct FakeStream(Arc<Mutex<String>>);
+
+impl FakeStream {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 impl fmt::Write for FakeStream {
     fn write_str(&mut self, s: &str) -> fmt::Result {
