@@ -4,7 +4,7 @@ ldns-signzone
 Synopsis
 --------
 
-:program:`ldns-signzone` ``[OPTIONS]`` ``<ZONE NAME>`` ``<ZONEFILE>`` ``<KEY>...``
+:program:`ldns-signzone` ``[OPTIONS]`` ``<ZONEFILE>`` ``<KEY>...``
 
 Description
 -----------
@@ -19,20 +19,16 @@ compatible with the original with some exceptions which are noted below.
 Arguments
 ---------
 
-.. option:: <ZONE NAME>
-
-      Set the owner name of the apex of the zone. Will also be used as if an
-      initial $ORIGIN directive were supplied in the given zonefile.
-
-      Note: Unlike the original LDNS, the owner name of the zone will not be
-      detected if the zonefile uses relative names and no $ORIGIN directive.
-
 .. option:: <ZONEFILE>
 
       The zonefile to sign.
 
       Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
       RRSIG resource records will be skipped when loading the zonefile.
+
+      Note: Unlike the original LDNS, the origin must be explicitly specified
+      either via an ``$ORIGIN`` directive in the zonefile or using the ``-o``
+      command line argument.
 
 .. option:: <KEY>...
 
@@ -110,6 +106,14 @@ Options
 
       Use NSEC3 instead of NSEC. If specified, you can use extra options (see
       :ref:`ldns-signzone-nsec3-options`).
+
+.. option:: -o <DOMAIN>
+
+      Use this as the origin for the zone (only necessary for zonefiles with
+      relative names and no $ORIGIN).
+
+      Note: Unlike the original LDNS, the origin is NOT set to the owner of
+      the first SOA found.
 
 .. option:: -u
 

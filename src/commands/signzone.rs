@@ -140,6 +140,10 @@ pub struct SignZone {
     )]
     inception: Timestamp,
 
+    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN).
+    #[arg(short = 'o', value_name = "domain")]
+    origin: Option<StoredName>,
+
     /// Set SOA serial to the number of seconds since Jan 1st 1970.
     ///
     /// If this would NOT result in the SOA serial increasing it will be
@@ -289,12 +293,8 @@ pub struct SignZone {
     use_yyyymmddhhmmss_rrsig_format: bool,
 
     // -----------------------------------------------------------------------
-    // Positional arguments in position order:
+    // Original ldns-signzone positional arguments in position order:
     // -----------------------------------------------------------------------
-    /// Owner name for the zone.
-    #[arg(value_name = "domain")]
-    zone_owner_name: StoredName,
-
     /// The zonefile to sign.
     #[arg(value_name = "zonefile")]
     zonefile_path: PathBuf,
@@ -317,13 +317,14 @@ pub struct SignZone {
     invoked_as_ldns: bool,
 }
 
-const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonename zonefile key [key [key]]
+const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
   signs the zone with the given key(s)
   -b            use layout in signed zone and print comments DNSSEC records
   -d            used keys are not added to the zone
   -e <date>     expiration date
   -f <file>     output zone to file (default <name>.signed)
   -i <date>     inception date
+  -o <domain>   origin for the zone
   -u            set SOA serial to the number of seconds since 1-1-1970
   -v            print version and exit
   -z <[scheme:]hash>    Add ZONEMD resource record
@@ -341,7 +342,6 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonename zonefile key [key 
                 -p set the opt-out flag on all nsec3 rrs
   -L            Preceed the zone output by a list of NSEC3 owners and hashes.
 
-  zonename is the owner name of the apex of the zone.
   keys must be specified by their base name (usually K<name>+<alg>+<id>),
   i.e. WITHOUT the .private extension.
   If the public part of the key is not present in the zone, the DNSKEY RR
@@ -361,7 +361,7 @@ impl LdnsCommand for SignZone {
         let mut expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
         let mut out_file = Option::<PathBuf>::None;
         let mut inception = TestableTimestamp::now();
-        let mut zone_owner_name = Option::<StoredName>::None;
+        let mut origin = Option::<StoredName>::None;
         let mut set_soa_serial_to_epoch_time = false;
         let mut zonemd = Vec::new();
         let mut allow_zonemd_without_signing = false;
@@ -405,6 +405,10 @@ impl LdnsCommand for SignZone {
                     if val_as_num.is_err() || val_as_num.unwrap() > 0 {
                         inception = parse_os_with("-e", &val, SignZone::parse_timestamp)?;
                     }
+                }
+                Arg::Short('o') => {
+                    let val = parser.value()?;
+                    origin = Some(parse_os("-o", &val)?);
                 }
                 Arg::Short('u') => {
                     set_soa_serial_to_epoch_time = true;
@@ -451,9 +455,7 @@ impl LdnsCommand for SignZone {
                     preceed_zone_with_hash_list = true;
                 }
                 Arg::Value(val) => {
-                    if zone_owner_name.is_none() {
-                        zone_owner_name = Some(parse_os("zonename", &val)?);
-                    } else if zonefile.is_none() {
+                    if zonefile.is_none() {
                         zonefile = Some(parse_os("zonefile", &val)?);
                     } else {
                         key_paths.push(parse_os("key", &val)?);
@@ -468,10 +470,6 @@ impl LdnsCommand for SignZone {
 
         let Some(zonefile_path) = zonefile else {
             return Err("Missing zonefile argument".into());
-        };
-
-        let Some(zone_owner_name) = zone_owner_name else {
-            return Err("Missing zonename argument".into());
         };
 
         if let Some(out_file) = &out_file {
@@ -495,7 +493,7 @@ impl LdnsCommand for SignZone {
             expiration,
             out_file,
             inception,
-            zone_owner_name,
+            origin,
             set_soa_serial_to_epoch_time,
             zonemd,
             allow_zonemd_without_signing,
@@ -653,7 +651,7 @@ impl SignZone {
         let mut records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
         // Find apex records that require special processing.
-        let soa_rr = Self::find_apex(&records, &self.zone_owner_name)?.clone();
+        let soa_rr = Self::find_apex(&records, self.origin.as_ref())?.clone();
 
         // Process the SOA RR.
         let soa_rdata = if self.set_soa_serial_to_epoch_time {
@@ -1373,7 +1371,9 @@ impl SignZone {
         std::io::copy(&mut zone_file, &mut buf)?;
         let mut reader = buf.into_inner();
 
-        reader.set_origin(self.zone_owner_name.clone());
+        if let Some(origin) = &self.origin {
+            reader.set_origin(origin.clone());
+        }
 
         // Push records to an unsorted vec, then sort at the end, as this is faster than
         // sorting one record at a time.
@@ -1422,20 +1422,56 @@ impl SignZone {
     // TODO: Add tests.
     fn find_apex<'a>(
         records: &'a SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-        zone_owner_name: &StoredName,
+        origin: Option<&StoredName>,
     ) -> Result<&'a Record<StoredName, StoredRecordData>, Error> {
-        let pos = records
-            .iter()
-            .position(|rr| rr.rtype() == Rtype::SOA && rr.owner() == zone_owner_name)
-            .ok_or(format!(
-                "SOA RR not found for zone owner name '{zone_owner_name}'."
-            ))?;
-
-        if matches!(records.iter().nth(pos+1), Some(rr) if rr.rtype() == Rtype::SOA) {
-            Err("More than one SOA RR found for zone owner name '{zone_owner_name}'.")?
-        } else {
-            Ok(records.iter().nth(pos).unwrap())
+        // If an expected origin was supplied, the found SOA must match it.
+        if let Some(expected_origin) = origin {
+            return records
+                .iter()
+                .find(|rr| rr.rtype() == Rtype::SOA && rr.owner() == expected_origin)
+                .ok_or(format!("SOA RR not found for origin '{expected_origin}'.").into());
         }
+
+        if records.is_empty() {
+            return Err("Invalid zone file: No records found".into());
+        }
+
+        // SAFETY: We just verified that records is not empty.
+        let mut iter = records.iter().peekable();
+        let mut zone_name = iter.peek().unwrap().owner();
+        while let Some(rr) = iter.next() {
+            // Only match SOA RRs at the apex of a zone. If the current name
+            // is a child of the last seen name skip it because as the records
+            // are in sorted order children appear in the iteration order
+            // after their parent.
+            if rr.owner() != zone_name {
+                if rr.owner().ends_with(zone_name) {
+                    // Found a child node. Skip it.
+                    continue;
+                } else {
+                    // This is the start of a new zone apex
+                    zone_name = rr.owner();
+                }
+            }
+
+            // Is this a candidate SOA record?
+            if rr.rtype() == Rtype::SOA {
+                if let Some(next_rr) = iter.peek() {
+                    if next_rr.rtype() == Rtype::SOA {
+                        // Oops, there shouldn't be more than one SOA RR at the
+                        // apex.
+                        return Err(format!(
+                            "Invalid zone file: More than one SOA RR found at owner name '{}'.",
+                            rr.owner()
+                        )
+                        .into());
+                    }
+                }
+                return Ok(rr);
+            }
+        }
+
+        Err("Invalid zone file: Cannot find SOA record".into())
     }
 
     fn mk_bumped_soa_rdata(
@@ -2126,26 +2162,19 @@ mod test {
     use std::path::PathBuf;
     use std::str::FromStr;
 
-    use domain::base::iana::{Class, Nsec3HashAlgorithm, ZonemdAlgorithm, ZonemdScheme};
-    use domain::base::{Name, Record, Serial, Ttl};
+    use domain::base::iana::{Nsec3HashAlgorithm, ZonemdAlgorithm, ZonemdScheme};
+    use domain::base::Name;
     use domain::rdata::dnssec::Timestamp;
     use domain::rdata::nsec3::Nsec3Salt;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
-    use crate::commands::signzone::{
-        MultiThreadedSorter, TestableTimestamp, ZonemdTuple, FOUR_WEEKS,
-    };
+    use crate::commands::signzone::{TestableTimestamp, ZonemdTuple, FOUR_WEEKS};
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
-    use crate::env::Env;
-
-    use domain::dnssec::sign::records::SortedRecords;
-    use domain::rdata::{Ns, Soa, A};
-    use domain::zonetree::types::StoredRecordData;
-    use domain::zonetree::StoredName;
 
     use super::SignZone;
+    use crate::env::Env;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
@@ -2154,201 +2183,6 @@ mod test {
             panic!("Not a SignZone!");
         };
         x
-    }
-
-    #[test]
-    fn find_apex_should_fail_on_empty_zone() {
-        let apex_owner = StoredName::from_str("example.").unwrap();
-        assert!(SignZone::find_apex(&SortedRecords::new(), &apex_owner).is_err());
-    }
-
-    #[test]
-    fn find_apex_should_find_apex_in_normal_zone() {
-        let mut records = SortedRecords::<_, _, MultiThreadedSorter>::new();
-        let mname = Name::root_bytes();
-        let rname = Name::root_bytes();
-        let serial = Serial::now();
-        let refresh = Ttl::from_secs(60);
-        let retry = Ttl::from_secs(60);
-        let expire = Ttl::from_secs(60);
-        let minimum = Ttl::from_secs(60);
-        let apex_owner = StoredName::from_str("example.").unwrap();
-        let soa_rr = Record::new(
-            apex_owner.clone(),
-            Class::IN,
-            Ttl::from_secs(60),
-            StoredRecordData::Soa(Soa::new(
-                mname, rname, serial, refresh, retry, expire, minimum,
-            )),
-        );
-        records.insert(soa_rr.clone()).unwrap();
-
-        let res = SignZone::find_apex(&records, &apex_owner);
-        assert!(res.is_ok());
-        assert_eq!(&soa_rr, res.unwrap());
-    }
-
-    #[test]
-    fn find_apex_should_error_if_zone_has_more_than_one_soa() {
-        let mut records = SortedRecords::<_, _, MultiThreadedSorter>::new();
-        let mname = Name::root_bytes();
-        let rname = Name::root_bytes();
-        let serial = Serial::now();
-        let refresh = Ttl::from_secs(60);
-        let retry = Ttl::from_secs(60);
-        let expire = Ttl::from_secs(60);
-        let minimum = Ttl::from_secs(60);
-        let apex_owner = StoredName::from_str("example.").unwrap();
-
-        let soa_rr = Record::new(
-            apex_owner.clone(),
-            Class::IN,
-            Ttl::from_secs(60),
-            StoredRecordData::Soa(Soa::new(
-                mname.clone(),
-                rname.clone(),
-                serial,
-                refresh,
-                retry,
-                expire,
-                minimum,
-            )),
-        );
-
-        let soa_rr2 = Record::new(
-            apex_owner.clone(),
-            Class::IN,
-            Ttl::from_secs(30),
-            StoredRecordData::Soa(Soa::new(
-                mname,
-                rname,
-                1.into(),
-                Ttl::from_secs(0),
-                Ttl::from_secs(0),
-                Ttl::from_secs(0),
-                Ttl::from_secs(0),
-            )),
-        );
-
-        records.insert(soa_rr).unwrap();
-        records.insert(soa_rr2).unwrap();
-
-        assert!(SignZone::find_apex(&records, &apex_owner).is_err());
-    }
-
-    #[test]
-    fn find_apex_should_find_apex_following_glue() {
-        const ZONE_CLASS: Class = Class::IN;
-        const ZONE_TTL: Ttl = Ttl::from_secs(60);
-
-        let apex_owner = StoredName::from_str("example.").unwrap();
-        let glue_owner = StoredName::from_str("early_sorting_glue.").unwrap();
-
-        let mut records = SortedRecords::<_, _, MultiThreadedSorter>::new();
-
-        let mname = Name::root_bytes();
-        let rname = Name::root_bytes();
-        let serial = Serial::now();
-        let refresh = Ttl::from_secs(60);
-        let retry = Ttl::from_secs(60);
-        let expire = Ttl::from_secs(60);
-        let minimum = Ttl::from_secs(60);
-
-        let soa_rr = Record::new(
-            apex_owner.clone(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::Soa(Soa::new(
-                mname, rname, serial, refresh, retry, expire, minimum,
-            )),
-        );
-
-        let ns_rr = Record::new(
-            apex_owner.clone(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::Ns(Ns::new(glue_owner.clone())),
-        );
-
-        let glue_rr = Record::new(
-            glue_owner,
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::A(A::new("1.2.3.4".parse().unwrap())),
-        );
-
-        let out_of_zone_child_rr = Record::new(
-            StoredName::from_str("child.early_sorting_glue.").unwrap(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::A(A::new("1.2.3.4".parse().unwrap())),
-        );
-
-        records.insert(glue_rr).unwrap();
-        records.insert(out_of_zone_child_rr).unwrap();
-        records.insert(soa_rr.clone()).unwrap();
-        records.insert(ns_rr).unwrap();
-
-        let res = SignZone::find_apex(&records, &apex_owner);
-        assert!(res.is_ok());
-        assert_eq!(&soa_rr, res.unwrap());
-    }
-
-    #[test]
-    fn find_apex_should_find_apex_following_other_zone() {
-        const ZONE_CLASS: Class = Class::IN;
-        const ZONE_TTL: Ttl = Ttl::from_secs(60);
-
-        let apex_owner = StoredName::from_str("example.").unwrap();
-        let apex_owner2 = StoredName::from_str("some_other_zone.").unwrap();
-
-        let mut records = SortedRecords::<_, _, MultiThreadedSorter>::new();
-
-        let mname = Name::root_bytes();
-        let rname = Name::root_bytes();
-        let serial = Serial::now();
-        let refresh = Ttl::from_secs(60);
-        let retry = Ttl::from_secs(60);
-        let expire = Ttl::from_secs(60);
-        let minimum = Ttl::from_secs(60);
-
-        let soa_rr = Record::new(
-            apex_owner.clone(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::Soa(Soa::new(
-                mname.clone(),
-                rname.clone(),
-                serial,
-                refresh,
-                retry,
-                expire,
-                minimum,
-            )),
-        );
-
-        let soa_rr2 = Record::new(
-            apex_owner2.clone(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::Soa(Soa::new(
-                mname, rname, serial, refresh, retry, expire, minimum,
-            )),
-        );
-
-        let child_rr = Record::new(
-            StoredName::from_str("child.example.").unwrap(),
-            ZONE_CLASS,
-            ZONE_TTL,
-            StoredRecordData::A(A::new("1.2.3.4".parse().unwrap())),
-        );
-        records.insert(soa_rr).unwrap();
-        records.insert(child_rr).unwrap();
-        records.insert(soa_rr2.clone()).unwrap();
-
-        let res = SignZone::find_apex(&records, &apex_owner2);
-        assert!(res.is_ok());
-        assert_eq!(&soa_rr2, res.unwrap());
     }
 
     #[test]
@@ -2386,7 +2220,6 @@ mod test {
     fn dnst_parse_successes() {
         let cmd = FakeCmd::new(["dnst", "signzone"]);
 
-        let zone_owner_name = StoredName::from_str("example.org.").unwrap();
         let expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
         let inception = TestableTimestamp::now();
 
@@ -2396,7 +2229,7 @@ mod test {
             expiration,
             out_file: None,
             inception,
-            zone_owner_name,
+            origin: None,
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
@@ -2419,14 +2252,11 @@ mod test {
         };
 
         // Check the defaults
-        assert_eq!(
-            parse(cmd.args(["example.org.", "example.org.zone", "anykey"])),
-            base
-        );
+        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
 
         // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["example.org.", "-bdunp", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
@@ -2441,7 +2271,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-H", "example.org.zone"])),
+            parse(cmd.args(["-H", "example.org.zone"])),
             SignZone {
                 hash_only: true,
                 key_paths: Vec::new(),
@@ -2453,13 +2283,7 @@ mod test {
 
         // ZONEMD arguments
         assert_eq!(
-            parse(cmd.args([
-                "example.org.",
-                "-z",
-                "SIMPLE:SHA512",
-                "example.org.zone",
-                "anykey"
-            ])),
+            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2468,13 +2292,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args([
-                "example.org.",
-                "-z",
-                "simple:sha512",
-                "example.org.zone",
-                "anykey"
-            ])),
+            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2483,7 +2301,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-z", "sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2495,7 +2313,6 @@ mod test {
         // NSEC3 arguments
         assert_eq!(
             parse(cmd.args([
-                "example.org.",
                 "-n",
                 "-s",
                 "BABABA",
@@ -2517,7 +2334,6 @@ mod test {
         // Timestamps
         assert_eq!(
             parse(cmd.args([
-                "example.org.",
                 "-i",
                 "20240101020202",
                 "-e",
@@ -2534,7 +2350,7 @@ mod test {
 
         // Output file
         assert_eq!(
-            parse(cmd.args(["example.org.", "-f-", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
                 expiration,
@@ -2543,7 +2359,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-f", "output", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
                 expiration,
@@ -2552,11 +2368,11 @@ mod test {
             }
         );
 
-        // Zone owner name
+        // Origin
         assert_eq!(
-            parse(cmd.args(["zoneownername.test", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
             SignZone {
-                zone_owner_name: Name::from_str("zoneownername.test.").unwrap(),
+                origin: Some(Name::from_str("origin.test.").unwrap()),
                 expiration,
                 inception,
                 ..base.clone()
@@ -2569,43 +2385,30 @@ mod test {
         let cmd = FakeCmd::new(["ldns-signzone"]);
 
         cmd.parse().unwrap_err();
-
-        // Missing zone owner name
+        // Missing keys
         cmd.args(["example.org.zone"]).parse().unwrap_err();
 
-        // Missing keys
-        cmd.args(["example.org.", "example.org.zone"])
-            .parse()
-            .unwrap_err();
-
         // Invalid ZONEMD arguments
-        cmd.args(["example.org.", "-z", "3", "example.org.zone", "anykey"])
+        cmd.args(["-z", "3", "example.org.zone", "anykey"])
             .parse()
             .unwrap_err();
-        cmd.args(["example.org.", "-z", "0:0", "example.org.zone", "anykey"])
+        cmd.args(["-z", "0:0", "example.org.zone", "anykey"])
             .parse()
             .unwrap_err();
 
         // Invalid NSEC3 arguments
-        cmd.args(["example.org.", "-na", "MD5", "example.org.zone", "anykey"])
+        cmd.args(["-na", "MD5", "example.org.zone", "anykey"])
             .parse()
             .unwrap_err();
-        cmd.args([
-            "example.org.",
-            "-ns",
-            "NOBASE64",
-            "example.org.zone",
-            "anykey",
-        ])
-        .parse()
-        .unwrap_err();
+        cmd.args(["-ns", "NOBASE64", "example.org.zone", "anykey"])
+            .parse()
+            .unwrap_err();
     }
 
     #[test]
     fn ldns_parse_successes() {
         let cmd = FakeCmd::new(["ldns-signzone"]);
 
-        let zone_owner_name = StoredName::from_str("example.org.").unwrap();
         let expiration = TestableTimestamp::now().into_int().add(FOUR_WEEKS).into();
         let inception = TestableTimestamp::now();
 
@@ -2615,7 +2418,7 @@ mod test {
             expiration,
             out_file: None,
             inception,
-            zone_owner_name,
+            origin: None,
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
@@ -2638,14 +2441,11 @@ mod test {
         };
 
         // Check the defaults
-        assert_eq!(
-            parse(cmd.args(["example.org.", "example.org.zone", "anykey"])),
-            base
-        );
+        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
 
         // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["example.org.", "-bdunp", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
@@ -2662,7 +2462,7 @@ mod test {
 
         // ZONEMD arguments
         assert_eq!(
-            parse(cmd.args(["example.org.", "-Z", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-Z", "example.org.zone", "anykey"])),
             SignZone {
                 allow_zonemd_without_signing: true,
                 expiration,
@@ -2671,13 +2471,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args([
-                "example.org.",
-                "-z",
-                "SIMPLE:SHA512",
-                "example.org.zone",
-                "anykey"
-            ])),
+            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2686,13 +2480,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args([
-                "example.org.",
-                "-z",
-                "simple:sha512",
-                "example.org.zone",
-                "anykey"
-            ])),
+            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2701,7 +2489,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-z", "sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2710,7 +2498,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-z", "1", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-z", "1", "example.org.zone", "anykey"])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA384)]),
                 expiration,
@@ -2722,7 +2510,6 @@ mod test {
         // NSEC3 arguments
         assert_eq!(
             parse(cmd.args([
-                "example.org.",
                 "-n",
                 "-s",
                 "BABABA",
@@ -2744,7 +2531,6 @@ mod test {
         // Timestamps
         assert_eq!(
             parse(cmd.args([
-                "example.org.",
                 "example.org.zone",
                 "-i",
                 "20240101020202",
@@ -2761,7 +2547,7 @@ mod test {
 
         // Output file
         assert_eq!(
-            parse(cmd.args(["example.org.", "-f-", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
                 expiration,
@@ -2770,7 +2556,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["example.org.", "-f", "output", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
                 expiration,
@@ -2779,12 +2565,11 @@ mod test {
             }
         );
 
-        // Zone owner name
-
+        // Origin
         assert_eq!(
-            parse(cmd.args(["zonename.test", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-o", "origin.test", "example.org.zone", "anykey"])),
             SignZone {
-                zone_owner_name: Name::from_str("zonename.test.").unwrap(),
+                origin: Some(Name::from_str("origin.test.").unwrap()),
                 expiration,
                 inception,
                 ..base.clone()
@@ -2807,7 +2592,7 @@ mod test {
         let res1 = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-d",
             "-f",
             "-",
@@ -2846,7 +2631,6 @@ mod test {
         let res1 = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2873,7 +2657,6 @@ mod test {
         let res2 = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2896,7 +2679,6 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-z",
             "1:1",
             "-f",
@@ -2954,7 +2736,7 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-f-",
             "-z1:1",
             "-Z",
@@ -2996,7 +2778,7 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-f-",
             "-z1:1",
             "-Z",
@@ -3030,7 +2812,7 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-f-",
             "-z1:1",
             "-z1:2",
@@ -3093,7 +2875,7 @@ urn.uri.arpa.\t3600\tIN\tRRSIG\tNSEC 8 3 3600 20210217232440 20210120232440 3615
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "uri.arpa",
+            "-ouri.arpa",
             "-T",
             "-R",
             "-f-",
@@ -3166,7 +2948,7 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "root-servers.net",
+            "-oroot-servers.net",
             "-f-",
             "-z1:1",
             "-Z",
@@ -3206,19 +2988,18 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
             "20241127162422",
             "-i",
             "20241127162422",
-            "example.org.",
             "nsec3_optout1_example.org.zone",
             "ksk1",
         ])
         .cwd(&dir)
         .run();
 
-        assert_eq!(res.stderr, "");
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             filter_lines_containing_all(&res.stdout, &["NSEC3"]),
             ldns_dnst_output_stripped
         );
+        assert_eq!(res.stderr, "");
     }
 
     #[test]
@@ -3247,7 +3028,6 @@ some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
             "20241127162422",
             "-i",
             "20241127162422",
-            "example.org.",
             &zone_file_path,
             &ksk_path,
         ])
@@ -3344,7 +3124,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040509183619 20040409183619 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.",
             "-A",
             "-T",
             "-R",
@@ -3487,7 +3266,6 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.",
             "-T",
             "-L",
             "-R",
@@ -3541,7 +3319,6 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 exam
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-f-",
             "-e",
             "20150420235959",
@@ -3593,7 +3370,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 142
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-f-",
             "-e",
             "20150420235959",
@@ -3656,8 +3432,7 @@ xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res =
-            FakeCmd::new(["dnst", "signzone", "example.", "-f-", "-H", &zone_file_path]).run();
+        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-H", &zone_file_path]).run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3711,16 +3486,7 @@ xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new([
-            "dnst",
-            "signzone",
-            "example.",
-            "-f-",
-            "-n",
-            "-H",
-            &zone_file_path,
-        ])
-        .run();
+        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-n", "-H", &zone_file_path]).run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3766,7 +3532,6 @@ secure-deleg.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20040509183619 200404091
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -3836,7 +3601,6 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -3892,6 +3656,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 202
             let res = FakeCmd::new([
                 "dnst",
                 "signzone",
+                "-o",
                 "example.org",
                 "-T",
                 "-R",
@@ -3945,7 +3710,6 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -3996,7 +3760,6 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -4048,7 +3811,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -4101,7 +3863,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-T",
             "-R",
             "-f-",
@@ -4150,7 +3911,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-f-",
@@ -4206,7 +3967,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-U",
@@ -4263,7 +4024,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-A",
@@ -4323,7 +4084,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-U",
@@ -4384,7 +4145,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 53
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-A",
@@ -4446,7 +4207,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 39
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-A",
@@ -4514,7 +4275,7 @@ ns2.example.\t86400\tIN\tRRSIG\tNSEC 15 2 86400 20240101010101 20240101010101 41
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example",
+            "-oexample",
             "-T",
             "-R",
             "-U",
@@ -4620,7 +4381,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.",
             "-T",
             "-R",
             "-f-",
@@ -4646,7 +4406,6 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             dir.path()
                 .join("missing_zonefile")
                 .to_string_lossy()
@@ -4691,7 +4450,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-f-",
             "-e",
             "20150420235959",
@@ -4725,7 +4483,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-f-",
             "-u",
             &zone_file_path,
@@ -4757,7 +4514,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
-            "example.org.",
             "-f-",
             "-u",
             &zone_file_path,

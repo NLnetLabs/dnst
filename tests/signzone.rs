@@ -11,11 +11,9 @@ use tempfile::tempdir;
 
 const LDNS_CMD: &str = "ldns-signzone";
 const TEST_DATA_DIR: &str = "test-data/";
-const JELTE_ZONE_NAME: &str = "jelte.nlnetlabs.nl";
 const JELTE_ZONE_PATH: &str = concatcp!(TEST_DATA_DIR, "jelte.nlnetlabs.nl");
 const JELTE_KSK_PATH: &str = concatcp!(TEST_DATA_DIR, "Kjelte.nlnetlabs.nl.+008+31310");
 const JELTE_ZSK_PATH: &str = concatcp!(TEST_DATA_DIR, "Kjelte.nlnetlabs.nl.+008+19779");
-const RFC_5155_ZONE_NAME: &str = "example.";
 const RFC_5155_ZONE_PATH: &str = concatcp!(TEST_DATA_DIR, "example.rfc5155");
 const RFC_5155_KSK_PATH: &str = concatcp!(TEST_DATA_DIR, "Kexample.+008+31967");
 const RFC_5155_ZSK_PATH: &str = concatcp!(TEST_DATA_DIR, "Kexample.+008+38353");
@@ -41,7 +39,6 @@ fn signzone_only_zsk() {
             "-b",
             "-f",
             &dnst_out_path,
-            JELTE_ZONE_NAME,
             JELTE_ZONE_PATH,
             JELTE_ZSK_PATH,
         ],
@@ -72,7 +69,6 @@ fn signzone_only_ksk() {
             "-b",
             "-f",
             &dnst_out_path,
-            JELTE_ZONE_NAME,
             JELTE_ZONE_PATH,
             JELTE_KSK_PATH,
         ],
@@ -104,7 +100,6 @@ fn signzone_with_both_ksk_and_zsk() {
             "-b",
             "-f",
             &dnst_out_path,
-            JELTE_ZONE_NAME,
             JELTE_ZONE_PATH,
             JELTE_KSK_PATH,
             JELTE_ZSK_PATH,
@@ -151,7 +146,6 @@ fn signzone_nsec_minus_b() {
             &inception_ts,
             "-f",
             &dnst_out_path,
-            JELTE_ZONE_NAME,
             JELTE_ZONE_PATH,
             JELTE_KSK_PATH,
         ],
@@ -183,7 +177,6 @@ fn signzone_with_nsec3_no_opt_out() {
             "-n",
             "-f",
             &dnst_out_path,
-            RFC_5155_ZONE_NAME,
             RFC_5155_ZONE_PATH,
             RFC_5155_KSK_PATH,
             RFC_5155_ZSK_PATH,
@@ -218,7 +211,6 @@ fn signzone_with_nsec3_opt_out() {
             "-p",
             "-f",
             &dnst_out_path,
-            RFC_5155_ZONE_NAME,
             RFC_5155_ZONE_PATH,
             RFC_5155_KSK_PATH,
             RFC_5155_ZSK_PATH,
