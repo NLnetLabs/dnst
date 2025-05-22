@@ -5,16 +5,16 @@ use core::str::FromStr;
 
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
+use std::time::UNIX_EPOCH;
 //use std::ffi::OsString;
 use std::fmt::{self, Display};
-use std::fs::File;
+use std::fs::{metadata, File};
 use std::io::Write as IoWrite;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 use tokio::time::Duration;
 
 use bytes::{BufMut, Bytes};
-use clap::builder::ValueParser;
 use serde::{Deserialize, Serialize};
 
 use domain::base::iana::nsec3::Nsec3HashAlgorithm;
@@ -25,14 +25,14 @@ use domain::base::zonefile_fmt::{self, Formatter, ZonefileFmt};
 use domain::base::{
     CanonicalOrd, Name, NameBuilder, Record, RecordData, Rtype, Serial, ToName, Ttl,
 };
-use domain::crypto::sign::{FromBytesError, KeyPair, SecretKeyBytes};
+use domain::crypto::sign::{KeyPair, SecretKeyBytes};
 use domain::dnssec::common::parse_from_bind;
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
 use domain::dnssec::sign::denial::nsec3::mk_hashed_nsec3_owner_name;
 use domain::dnssec::sign::denial::nsec3::GenerateNsec3Config;
 use domain::dnssec::sign::error::SigningError;
-use domain::dnssec::sign::keys::keyset::KeyType;
+use domain::dnssec::sign::keys::keyset::{KeyType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
 use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
 use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
@@ -61,6 +61,7 @@ use super::nsec3hash::Nsec3Hash;
 //------------ Constants -----------------------------------------------------
 
 const FOUR_WEEKS: u64 = 2419200;
+const TWO_WEEKS: u64 = 1209600;
 
 //------------ Signer --------------------------------------------------------
 
@@ -106,10 +107,6 @@ pub struct Signer {
     #[arg(short = 'f', value_name = "file")]
     out_file: Option<PathBuf>,
 
-    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN)
-    #[arg(short = 'o', value_name = "domain")]
-    origin: Option<StoredName>,
-
     /// Set SOA serial to the number of seconds since Jan 1st 1970
     ///
     /// If this would NOT result in the SOA serial increasing it will be
@@ -119,85 +116,15 @@ pub struct Signer {
 
     // SKIPPED: -v
     // This should be handled at the dnst top level, not per subcommand.
-    /// Add a ZONEMD resource record
-    ///
-    /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
-    /// <scheme> currently only supports "SIMPLE" (1).
-    ///
-    /// Can occur more than once, but only one per unique scheme and hash
-    /// tuple will be added.
-    #[arg(
-        short = 'z',
-        value_name = "[scheme:]hash",
-        value_parser = Self::parse_zonemd_tuple,
-        action = clap::ArgAction::Append
-    )]
-    // Clap doesn't support HashSet (without complex workarounds), therefore
-    // the uniqueness of the tuples need to be checked at runtime.
-    zonemd: Vec<ZonemdTuple>,
-
     /// Allow ZONEMDs to be added without signing
-    #[arg(short = 'Z', requires = "zonemd")]
+    #[arg(short = 'Z',
+	//requires = "zonemd"
+    )]
     allow_zonemd_without_signing: bool,
-
-    /// Use NSEC3 instead of NSEC
-    #[arg(short = 'n', default_value_t = false, group = "nsec3")]
-    use_nsec3: bool,
-
-    /// Hashing algorithm
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 'a',
-        value_name = "algorithm",
-        default_value = "SHA-1",
-        value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg),
-        requires = "nsec3"
-    )]
-    algorithm: Nsec3HashAlgorithm,
-
-    /// Number of hash iterations
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 't',
-        value_name = "number",
-        default_value_t = 0,
-        requires = "nsec3"
-    )]
-    iterations: u16,
-
-    /// Salt
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 's',
-        value_name = "string",
-        default_value_t = Nsec3Salt::empty(),
-        requires = "nsec3"
-    )]
-    salt: Nsec3Salt<Bytes>,
-
-    /// Set the opt-out flag on all NSEC3 RRs
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 'p',
-        default_value_t = false,
-        requires = "nsec3",
-        conflicts_with = "nsec3_opt_out"
-    )]
-    nsec3_opt_out_flags_only: bool,
 
     // -----------------------------------------------------------------------
     // Extra options not supported by the original ldns-signzone:
     // -----------------------------------------------------------------------
-    /// Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 'P',
-        default_value_t = false,
-        requires = "nsec3",
-        conflicts_with = "nsec3_opt_out_flags_only"
-    )]
-    nsec3_opt_out: bool,
-
     /// Hash only, don't sign
     #[arg(short = 'H', default_value_t = false)]
     hash_only: bool,
@@ -216,7 +143,7 @@ pub struct Signer {
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'L',
         default_value_t = false,
-        requires = "nsec3"
+        //requires = "nsec3"
     )]
     preceed_zone_with_hash_list: bool,
 
@@ -229,22 +156,39 @@ pub struct Signer {
     )]
     order_rrsigs_after_the_rtype_they_cover: bool,
 
-    /// Order NSEC3 RRs by unhashed owner name.
+    /// Order NSEC5 RRs by unhashed owner name.
+    /// The zonefile to sign
+    //    #[arg(value_name = "zonefile")]
+    //    zonefile_path: PathBuf,
+
     #[arg(
         help_heading = Some("OUTPUT FORMATTING"),
         short = 'O',
         default_value_t = false,
         default_value_if("extra_comments", "true", Some("true")),
-        requires = "nsec3",
+        //requires = "nsec3",
     )]
     order_nsec3_rrs_by_unhashed_owner_name: bool,
 
     /// Subcommand
     #[arg()]
     cmd: String,
+
+    value: Option<String>,
 }
 
 impl Signer {
+    fn parse_zonemd_set(arg: &str) -> Result<HashSet<ZonemdTuple>, Error> {
+        let mut set = HashSet::new();
+        if arg != "" {
+            for a in arg.split(',') {
+                let zonemd_tuple = Self::parse_zonemd_tuple(a)?;
+                set.insert(zonemd_tuple);
+            }
+        }
+        Ok(set)
+    }
+
     fn parse_zonemd_tuple(arg: &str) -> Result<ZonemdTuple, Error> {
         let scheme;
         let hash_alg;
@@ -287,36 +231,6 @@ impl Signer {
         }
     }
 
-    fn parse_zonemd_tuple_ldns(arg: &str) -> Result<ZonemdTuple, Error> {
-        let scheme;
-        let hash_alg;
-
-        fn parse_zonemd_scheme_ldns(s: &str) -> Result<ZonemdScheme, Error> {
-            match s.to_lowercase().as_str() {
-                "simple" | "1" => Ok(ZonemdScheme::SIMPLE),
-                _ => Err("unknown ZONEMD scheme name or number".into()),
-            }
-        }
-
-        fn parse_zonemd_hash_alg_ldns(h: &str) -> Result<ZonemdAlgorithm, Error> {
-            match h.to_lowercase().as_str() {
-                "sha384" | "1" => Ok(ZonemdAlgorithm::SHA384),
-                "sha512" | "2" => Ok(ZonemdAlgorithm::SHA512),
-                _ => Err("unknown ZONEMD algorithm name or number".into()),
-            }
-        }
-
-        if let Some((s, h)) = arg.split_once(':') {
-            scheme = parse_zonemd_scheme_ldns(s)?;
-            hash_alg = parse_zonemd_hash_alg_ldns(h)?;
-        } else {
-            scheme = ZonemdScheme::SIMPLE;
-            hash_alg = parse_zonemd_hash_alg_ldns(arg)?;
-        };
-
-        Ok(ZonemdTuple(scheme, hash_alg))
-    }
-
     pub fn parse_timestamp(arg: &str) -> Result<Timestamp, Error> {
         // We can't just use Timestamp::from_str from the domain crate because
         // ldns-signzone treats YYYYMMDD as a special case and domain does
@@ -341,21 +255,20 @@ impl Signer {
         res.map_err(|err| Error::from(format!("Invalid timestamp: {err}")))
     }
 
+    fn file_modified(filename: impl AsRef<Path>) -> Result<UnixTime, Error> {
+        let md = metadata(filename)?;
+        let modified = md.modified()?;
+        modified
+            .try_into()
+            .map_err(|e| format!("unable to convert from SystemTime: {e}").into())
+    }
+
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
 
-        let signing_mode = if self.hash_only {
-            SigningMode::HashOnly
-        } else {
-            SigningMode::HashAndSign
-        };
-
         if self.cmd == "create" {
-            let _origin = self
-                .origin
-                .ok_or::<Error>("origin option expected\n".into())?;
-            let state_file = self
+            let signer_state_file = self
                 .signer_state
                 .ok_or::<Error>("state file option expected\n".into())?;
             let zonefile_in = self
@@ -373,46 +286,184 @@ impl Signer {
                 .ok_or::<Error>("keyset-state option expected\n".into())?;
             const ONE_DAY: u64 = 86400;
             let sc = SignerConfig {
-                state_file: state_file.clone(),
+                signer_state: signer_state_file.clone(),
                 zonefile_in,
                 zonefile_out,
                 keyset_state,
                 inception_offset: Duration::from_secs(ONE_DAY),
                 signature_lifetime: Duration::from_secs(FOUR_WEEKS),
+                minimal_remaining_validity: Duration::from_secs(TWO_WEEKS),
+                use_nsec3: false,
+                algorithm: Nsec3HashAlgorithm::SHA1,
+                iterations: 0,
+                salt: Nsec3Salt::empty(),
+                opt_out: false,
+                zonemd: HashSet::new(),
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
             let mut file = File::create(self.signer_config)?;
             write!(file, "{json}")?;
+
+            let signer_state = SignerState {
+                config_modified: UNIX_EPOCH.try_into().expect("should not fail"),
+                keyset_state_modified: UNIX_EPOCH.try_into().expect("should not fail"),
+                zonefile_modified: UNIX_EPOCH.try_into().expect("should not fail"),
+                minimum_expiration: UNIX_EPOCH.try_into().expect("should not fail"),
+            };
+            let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
+            let mut file = File::create(signer_state_file)?;
+            write!(file, "{json}")?;
+
             return Ok(());
         }
 
+        // Record the modified times of the files before reading them. This
+        // avoids race conditions.
+        let signer_config_modified = Self::file_modified(self.signer_config.clone())?;
+
         let file = File::open(self.signer_config.clone())?;
-        let sc: SignerConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
+        let mut sc: SignerConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.signer_config).into()
         })?;
 
+        let file = File::open(sc.signer_state.clone())?;
+        let mut signer_state: SignerState =
+            serde_json::from_reader(file).map_err::<Error, _>(|e| {
+                format!("error loading {:?}: {e}\n", self.keyset_state).into()
+            })?;
+
+        let keyset_state_modified = Self::file_modified(sc.keyset_state.clone())?;
         let file = File::open(sc.keyset_state.clone())?;
         let kss: KeySetState = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.keyset_state).into()
         })?;
 
-        let out_file = sc.zonefile_out.clone();
+        let mut config_changed = false;
+        let mut state_changed = false;
+        let mut res = Ok(());
 
-        // ldns-signzone only shows these warnings if verbosity < 1 but offers
-        // no way to configure the verbosity level. I assume the intent was to
-        // add support for a -q (--quiet) option or similar but that was never
-        // done.
-        match self.iterations {
-            500.. => Self::write_extreme_iterations_warning(&env),
-            1.. => Self::write_non_zero_iterations_warning(&env),
-            _ => { /* Good, nothing to warn about */ }
+        if self.cmd == "sign" {
+            // Copy modified times to the state file. Do we need to be clever
+            // and avoid updating the state file if modified times do not
+            // change?
+            signer_state.config_modified = signer_config_modified;
+            signer_state.keyset_state_modified = keyset_state_modified;
+            let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
+            signer_state.zonefile_modified = zonefile_modified;
+            state_changed = true;
+            res = self.go_further(env, &sc, &mut signer_state, &kss)
+        } else if self.cmd == "show" {
+            todo!();
+        } else if self.cmd == "cron" {
+            // Simple automatic signer. Re-sign the zone when needed.
+            // The zone needs to be signed when one or more of the three
+            // input files has changed (signer config, keyset state or the
+            // unsigned zone file.
+            // The zone also needs to be signed when the remaining signature
+            // lifetime is not long enough anymore.
+
+            let mut need_resign = false;
+            if signer_config_modified != signer_state.config_modified {
+                need_resign = true;
+            }
+            if keyset_state_modified != signer_state.keyset_state_modified {
+                need_resign = true;
+            }
+            let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
+            if zonefile_modified != signer_state.zonefile_modified {
+                todo!();
+            }
+            let now = UnixTime::now();
+            if now + sc.minimal_remaining_validity > signer_state.minimum_expiration {
+                todo!();
+            }
+            if need_resign {
+                println!("Signing zone");
+                signer_state.config_modified = signer_config_modified;
+                signer_state.keyset_state_modified = keyset_state_modified;
+                let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
+                signer_state.zonefile_modified = zonefile_modified;
+                state_changed = true;
+                res = self.go_further(env, &sc, &mut signer_state, &kss)
+            }
+        } else if self.cmd == "set-use-nsec3" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.use_nsec3 = arg
+                .parse()
+                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
+            config_changed = true;
+        } else if self.cmd == "set-algorithm" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.algorithm = Nsec3Hash::parse_nsec3_alg(&arg).map_err::<Error, _>(|_| {
+                format!("unable to parse as NSEC3 hash algorithm: {arg}\n").into()
+            })?;
+            config_changed = true;
+        } else if self.cmd == "set-iterations" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.iterations = arg
+                .parse()
+                .map_err::<Error, _>(|_| format!("unable to parse as u16: {arg}\n").into())?;
+            config_changed = true;
+            match sc.iterations {
+                500.. => Self::write_extreme_iterations_warning(&env),
+                1.. => Self::write_non_zero_iterations_warning(&env),
+                _ => { /* Good, nothing to warn about */ }
+            }
+        } else if self.cmd == "set-salt" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.salt = arg
+                .parse()
+                .map_err::<Error, _>(|_| format!("unable to parse as salt: {arg}\n").into())?;
+            config_changed = true;
+        } else if self.cmd == "set-opt-out" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.opt_out = arg
+                .parse()
+                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
+            config_changed = true;
+        } else if self.cmd == "set-zonemd" {
+            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
+            sc.zonemd = Self::parse_zonemd_set(&arg)
+                .map_err::<Error, _>(|_| format!("unable to parse as zonemd: {arg}\n").into())?;
+            config_changed = true;
+        } else {
+            return Err(format!("unknown subcommand {}\n", self.cmd).into());
         }
+
+        if config_changed {
+            let json = serde_json::to_string_pretty(&sc).expect("should not fail");
+            let mut file = File::create(self.signer_config)?;
+            write!(file, "{json}")?;
+        }
+        if state_changed {
+            let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
+            let mut file = File::create(sc.signer_state)?;
+            write!(file, "{json}")?;
+        }
+        res
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn go_further(
+        &self,
+        env: impl Env,
+        sc: &SignerConfig,
+        signer_state: &mut SignerState,
+        kss: &KeySetState,
+    ) -> Result<(), Error> {
+        let signing_mode = if self.hash_only {
+            SigningMode::HashOnly
+        } else {
+            SigningMode::HashAndSign
+        };
 
         // Read the zone file.
-        let mut records = self.load_zone(&env.in_cwd(&sc.zonefile_in))?;
+        let origin = kss.keyset.name().to_bytes();
+        let mut records = self.load_zone(&env.in_cwd(&sc.zonefile_in), origin.clone())?;
 
-        for r in kss.dnskey_rrset {
-            let zonefile = domain::zonefile::inplace::Zonefile::from((r + "\n").as_ref() as &str);
+        for r in &kss.dnskey_rrset {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
             for entry in zonefile {
                 let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
 
@@ -428,8 +479,9 @@ impl Signer {
                 records.insert(r).unwrap();
             }
         }
-        for r in kss.cds_rrset {
-            let zonefile = domain::zonefile::inplace::Zonefile::from((r + "\n").as_ref() as &str);
+        for r in &kss.cds_rrset {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
             for entry in zonefile {
                 let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
 
@@ -445,22 +497,6 @@ impl Signer {
                 records.insert(r).unwrap();
             }
         }
-
-        // Extract the SOA RR from the loaded zone.
-        let Some(soa_rr) = records.find_soa() else {
-            return Err(format!(
-                "Zone file '{}' does not contain a SOA record",
-                sc.zonefile_in.display()
-            )
-            .into());
-        };
-        let ZoneRecordData::Soa(_) = soa_rr.first().data() else {
-            return Err(format!(
-                "Zone file '{}' contains an invalid SOA record",
-                sc.zonefile_in.display()
-            )
-            .into());
-        };
 
         let mut keys = Vec::new();
         for (k, v) in kss.keyset.keys() {
@@ -498,23 +534,8 @@ impl Signer {
         }
 
         let signing_keys: Vec<_> = keys.iter().map(|k| k).collect();
-        self.go_further(env, &sc, records, signing_mode, &signing_keys, out_file)
-    }
+        let out_file = sc.zonefile_out.clone();
 
-    #[allow(clippy::too_many_arguments)]
-    fn go_further(
-        &self,
-        env: impl Env,
-        sc: &SignerConfig,
-        mut records: SortedRecords<
-            StoredName,
-            ZoneRecordData<Bytes, StoredName>,
-            MultiThreadedSorter,
-        >,
-        signing_mode: SigningMode,
-        signing_keys: &[&SigningKey<Bytes, KeyPair>],
-        out_file: PathBuf,
-    ) -> Result<(), Error> {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
@@ -524,7 +545,7 @@ impl Signer {
         };
 
         // Make sure, zonemd arguments are unique
-        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
+        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(sc.zonemd.clone());
 
         // Change the SOA serial.
         if self.set_soa_serial_to_epoch_time {
@@ -569,7 +590,7 @@ impl Signer {
 
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
-        if self.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
+        if sc.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
             // Create a collection of NSEC3 hashes that can later be used for
             // debug output.
             let mut hash_provider = Nsec3HashMap::new();
@@ -602,7 +623,7 @@ impl Signer {
 
                 if rrset.rtype() == Rtype::NS && *owner != apex {
                     delegation = Some(owner.clone());
-                    if self.nsec3_opt_out {
+                    if sc.opt_out {
                         // Delegations are ignored for NSEC3. Ignore this
                         // entry but keep looking for other types at the
                         // same owner name.
@@ -611,14 +632,9 @@ impl Signer {
                     }
                 }
 
-                let hashed_name = mk_hashed_nsec3_owner_name(
-                    owner,
-                    self.algorithm,
-                    self.iterations,
-                    &self.salt,
-                    &apex,
-                )
-                .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
+                let hashed_name =
+                    mk_hashed_nsec3_owner_name(owner, sc.algorithm, sc.iterations, &sc.salt, &apex)
+                        .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
                 let hash_info = Nsec3HashInfo::new(owner.clone(), false);
                 hash_provider
                     .hashes_by_unhashed_owner
@@ -643,9 +659,9 @@ impl Signer {
 
                     let hashed_name = mk_hashed_nsec3_owner_name(
                         &suffix,
-                        self.algorithm,
-                        self.iterations,
-                        &self.salt,
+                        sc.algorithm,
+                        sc.iterations,
+                        &sc.salt,
                         &apex,
                     )
                     .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
@@ -681,16 +697,11 @@ impl Signer {
                 // Note: Assuming that we want to later be able to support
                 // transition between NSEC <-> NSEC3 we will need to be able to
                 // sign with more than one hashing configuration at once.
-                if self.use_nsec3 {
-                    let params =
-                        Nsec3param::new(self.algorithm, 0, self.iterations, self.salt.clone());
+                if sc.use_nsec3 {
+                    let params = Nsec3param::new(sc.algorithm, 0, sc.iterations, sc.salt.clone());
                     let mut nsec3_config = GenerateNsec3Config::new(params);
-                    if self.nsec3_opt_out {
+                    if sc.opt_out {
                         nsec3_config = nsec3_config.with_opt_out();
-                    } else if self.nsec3_opt_out_flags_only {
-                        nsec3_config = nsec3_config
-                            .with_opt_out()
-                            .without_opt_out_excluding_owner_names_of_unsigned_delegations();
                     }
                     SigningConfig::new(DenialConfig::Nsec3(nsec3_config), inception, expiration)
                 } else {
@@ -700,15 +711,15 @@ impl Signer {
                         expiration,
                     )
                 }
-            }
-
-            SigningMode::None => {
-                SigningConfig::new(DenialConfig::AlreadyPresent, inception, expiration)
-            }
+            } /*
+                          SigningMode::None => {
+                              SigningConfig::new(DenialConfig::AlreadyPresent, inception, expiration)
+                          }
+              */
         };
 
         records
-            .sign_zone(&mut signing_config, signing_keys)
+            .sign_zone(&mut signing_config, &signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
@@ -729,7 +740,7 @@ impl Signer {
                 Self::update_zonemd_rrsig(
                     &apex,
                     &mut records,
-                    signing_keys,
+                    &signing_keys,
                     &zonemd_rrs,
                     inception,
                     expiration,
@@ -737,6 +748,52 @@ impl Signer {
                 .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
             }
         }
+
+        let now_ts = Timestamp::now();
+        // Note that truncating the u64 from as_secs() to u32 is fine because
+        // Timestamp is designed for this situation.
+        let expire_ts: Timestamp = (Duration::from_secs(now_ts.into_int() as u64)
+            .saturating_add(sc.signature_lifetime)
+            .as_secs() as u32)
+            .into();
+        let ts = records
+            .iter()
+            // Get RRSIG rdata. Also include whether the record is at the
+            // apex or not.
+            .filter_map(|r| {
+                let at_apex = r.owner() == &origin;
+                if let ZoneRecordData::Rrsig(rrsig) = r.data() {
+                    Some((at_apex, rrsig))
+                } else {
+                    None
+                }
+            })
+            // Ignore any RRSIGs that cover DNSKEY, CDS, or CDNSKEY at the apex.
+            .filter(|(a, s)| {
+                let rtype = s.type_covered();
+                !a || (rtype != Rtype::DNSKEY && rtype != Rtype::CDS && rtype != Rtype::CDNSKEY)
+            })
+            // Extract the expiration date.
+            .map(|(_, s)| s.expiration())
+            // Timestamps are only partially ordered. Clamp to now and
+            // now+signature_lifetime.
+            .map(|t| {
+                if t < now_ts {
+                    now_ts
+                } else if t > expire_ts {
+                    expire_ts
+                } else {
+                    t
+                }
+            })
+            // Assume PartialOrd is fine now.
+            .min_by(|t1, t2| t1.partial_cmp(t2).expect("Should not fail"));
+        let minimum_expiration = if let Some(ts) = ts {
+            ts.into()
+        } else {
+            UnixTime::now() + sc.signature_lifetime
+        };
+        signer_state.minimum_expiration = minimum_expiration;
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
         // compatibility with ldns-signzone, re-order them to be in canonical
@@ -931,6 +988,7 @@ impl Signer {
     fn load_zone(
         &self,
         zonefile_path: &Path,
+        origin: Name<Bytes>,
     ) -> Result<SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>, Error> {
         // Don't use Zonefile::load() as it knows nothing about the size of
         // the original file so uses default allocation which allocates more
@@ -947,9 +1005,7 @@ impl Signer {
         std::io::copy(&mut zone_file, &mut buf)?;
         let mut reader = buf.into_inner();
 
-        if let Some(origin) = &self.origin {
-            reader.set_origin(origin.clone());
-        }
+        reader.set_origin(origin.clone());
 
         // Push records to an unsorted vec, then sort at the end, as this is faster than
         // sorting one record at a time.
@@ -1063,88 +1119,11 @@ impl Signer {
         Ok(())
     }
 
-    fn load_private_key(key_path: &Path) -> Result<SecretKeyBytes, Error> {
-        let private_data = std::fs::read_to_string(key_path)
-            .map_err(Error::from)
-            .context(&format!(
-                "loading private key from file '{}'",
-                key_path.display(),
-            ))?;
-
-        // Note: Compared to the original ldns-signzone there is a minor
-        // regression here because at the time of writing the error returned
-        // from parsing indicates broadly the type of parsing failure but does
-        // note indicate the line number at which parsing failed.
-        let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|err| {
-            format!(
-                "Unable to parse BIND formatted private key file '{}': {}",
-                key_path.display(),
-                err
-            )
-        })?;
-
-        Ok(secret_key)
-    }
-
-    fn load_public_key(key_path: &Path) -> Result<Record<Name<Bytes>, Dnskey<Bytes>>, Error> {
-        let public_data = std::fs::read_to_string(key_path)
-            .map_err(Error::from)
-            .context(&format!(
-                "loading public key from file '{}'",
-                key_path.display(),
-            ))?;
-
-        // Note: Compared to the original ldns-signzone there is a minor
-        // regression here because at the time of writing the error returned
-        // from parsing indicates broadly the type of parsing failure but does
-        // note indicate the line number at which parsing failed.
-        let public_key_info = parse_from_bind(&public_data).map_err(|err| {
-            format!(
-                "Unable to parse BIND formatted public key file '{}': {}",
-                key_path.display(),
-                err
-            )
-        })?;
-
-        Ok(public_key_info)
-    }
-
-    fn mk_public_key_path(key_path: &Path) -> PathBuf {
-        if key_path.extension().and_then(|ext| ext.to_str()) == Some("key") {
-            key_path.to_path_buf()
-        } else {
-            PathBuf::from(format!("{}.key", key_path.display()))
-        }
-    }
-
-    fn mk_private_key_path(key_path: &Path) -> PathBuf {
-        if key_path.extension().and_then(|ext| ext.to_str()) == Some("private") {
-            key_path.to_path_buf()
-        } else {
-            PathBuf::from(format!("{}.private", key_path.display()))
-        }
-    }
-
-    fn mk_signing_key(
-        &self,
-        owner: Name<Bytes>,
-        private_key: &SecretKeyBytes,
-        public_key: Dnskey<Bytes>,
-    ) -> Result<SigningKey<Bytes, KeyPair>, FromBytesError> {
-        let key_pair = KeyPair::from_bytes(private_key, &public_key)?;
-        let signing_key = SigningKey::new(owner, public_key.flags(), key_pair);
-        Ok(signing_key)
-    }
-
     fn write_extreme_iterations_warning(env: &impl Env) {
         Self::write_iterations_warning(
             env,
             "NSEC3 iterations larger than 500 may cause validating resolvers to return SERVFAIL!",
         );
-    }
-
-    fn write_large_iterations_warning(env: &impl Env) {
-        Self::write_iterations_warning(env, "NSEC3 iterations larger than 100 may cause validating resolvers to return insecure responses!");
     }
 
     fn write_non_zero_iterations_warning(env: &impl Env) {
@@ -1368,13 +1347,28 @@ fn next_owner_hash_to_name(next_owner_hash_hex: &str, apex: &StoredName) -> Resu
 
 #[derive(Deserialize, Serialize)]
 struct SignerConfig {
-    state_file: PathBuf,
+    signer_state: PathBuf,
+    keyset_state: PathBuf,
     zonefile_in: PathBuf,
     zonefile_out: PathBuf,
-    keyset_state: PathBuf,
 
     inception_offset: Duration,
     signature_lifetime: Duration,
+    minimal_remaining_validity: Duration,
+    use_nsec3: bool,
+    algorithm: Nsec3HashAlgorithm,
+    iterations: u16,
+    salt: Nsec3Salt<Bytes>,
+    opt_out: bool,
+    zonemd: HashSet<ZonemdTuple>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct SignerState {
+    config_modified: UnixTime,
+    keyset_state_modified: UnixTime,
+    zonefile_modified: UnixTime,
+    minimum_expiration: UnixTime,
 }
 
 //------------ SigningMode ---------------------------------------------------
@@ -1387,15 +1381,11 @@ enum SigningMode {
 
     /// Only hash (NSEC/NSEC3) zone records, don't sign them.
     HashOnly,
-    // /// Only sign zone records, assume they are already hashed.
-    // SignOnly,
-    /// Neither hash or sign zone records (e.g. when just using ZONEMD).
-    None,
 }
 
 //------------ ZonemdTuple ---------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Hash, Serialize)]
 struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
 
 //------------ FileOrStdout --------------------------------------------------

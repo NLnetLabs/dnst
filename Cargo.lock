@@ -340,7 +340,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.10.3"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#3687103d94796978b7a9ce1e38dbda3a3a56ae56"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#6844f2d7d224a72d2b3b2c2a3614cf470063e8b7"
 dependencies = [
  "arc-swap",
  "bytes",
