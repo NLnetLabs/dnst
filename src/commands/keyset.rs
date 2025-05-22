@@ -189,6 +189,11 @@ impl Keyset {
             print_actions(&actions);
             state_changed = true;
         } else if self.cmd == "start-ksk-roll" {
+            if kss.keyset.keys().is_empty() {
+                // Avoid KSK roll without init.
+                return Err("not yet initialized\n".into());
+            }
+
             // Check for CSK.
             if ksc.use_csk {
                 return Err("wrong key roll, use start-csk-roll\n".into());
@@ -674,9 +679,9 @@ impl Keyset {
         } else if self.cmd == "show" {
             println!("state-file: {:?}", ksc.state_file);
             println!("use-csk: {}", ksc.use_csk);
-            println!("ksk-generate-params: {}", ksc.ksk_generate_params);
-            println!("zsk-generate-params: {}", ksc.zsk_generate_params);
-            println!("csk-generate-params: {}", ksc.csk_generate_params);
+            println!("ksk-algorithm: {}", ksc.ksk_generate_params);
+            println!("zsk-algorithm: {}", ksc.zsk_generate_params);
+            println!("csk-algorithm: {}", ksc.csk_generate_params);
             println!("ksk-validity: {:?}", ksc.ksk_validity);
             println!("zsk-validity: {:?}", ksc.zsk_validity);
             println!("csk-validity: {:?}", ksc.csk_validity);
