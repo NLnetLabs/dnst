@@ -1,0 +1,60 @@
+# This matrix definition is used as both the package_build_rules and the package_test_rules Ploutos packaging
+# workflow inputs.
+---
+pkg:
+  - 'dnst'
+image:
+  - "ubuntu:focal"    # ubuntu/20.04
+  - "ubuntu:jammy"    # ubuntu/22.04
+  - "debian:buster"   # debian/10
+  - "debian:bullseye" # debian/11
+  - "debian:bookworm" # debian/12
+published_pkg:
+  - 'ldnsutils'       # correct for Ubuntu/Debian
+target:
+  - 'x86_64'
+test-image:
+  # Set 'test-image' to the empty string for all matrix permutations so that the default ('image') will be used
+  # to launch an LXC container to test the created packages in. Why explicitly set what is already the default?
+  # If this isn't present, later entries in the include set below will overwrite earlier entries that differ
+  # only by their 'test-image' value. If however 'test-image' is present in the original matrix by defining it
+  # here, then 'included' entries will no longer overwrite each other because they alter a key that is present
+  # in the original matrix. This is just how GitHub Actions matrix include rules work.
+  - ""
+test-mode:   
+  - 'fresh-install'
+  - 'upgrade-from-published'
+include:
+  - pkg: 'dnst'
+    image: 'rockylinux:8'
+    target: 'x86_64'
+    test-mode: 'fresh-install'
+
+  - pkg: 'dnst'
+    image: 'rockylinux:8'
+    target: 'x86_64'
+    test-mode: 'upgrade-from-published'
+    published_pkg: 'ldns-utils'
+    rpm_yum_extra_args: --enablerepo powertools
+
+  - pkg: 'dnst'
+    image: 'rockylinux:9'
+    target: 'x86_64'
+    test-mode: 'fresh-install'
+
+  - pkg: 'dnst'
+    image: 'rockylinux:9'
+    target: 'x86_64'
+    test-mode: 'upgrade-from-published'
+    published_pkg: 'ldns-utils'
+    rpm_yum_extra_args: --enablerepo crb
+
+# Disable upgrade testing on Rocky Linux 9 and Debian Bookworm as we haven't published any packages for
+# those O/S versions yet.
+#test-exclude:
+#  - pkg: 'routinator'
+#    image: 'rockylinux:9'
+#    mode: 'upgrade-from-published'
+#  - pkg: 'routinator'
+#    image: 'debian:bookworm'
+#    mode: 'upgrade-from-published'
