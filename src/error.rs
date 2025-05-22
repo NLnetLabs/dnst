@@ -83,9 +83,9 @@ impl Error {
             "ERROR:"
         };
 
-        write!(err, "[{prog}] {error_marker} {error}");
+        writeln!(err, "[{prog}] {error_marker} {error}");
         for context in &self.0.context {
-            writeln!(err, "\n... while {context}");
+            writeln!(err, "... while {context}");
         }
     }
 
