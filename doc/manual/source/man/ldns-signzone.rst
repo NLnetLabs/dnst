@@ -112,9 +112,6 @@ Options
       Use this as the origin for the zone (only necessary for zonefiles with
       relative names and no $ORIGIN).
 
-      Note: Unlike the original LDNS, the origin is NOT set to the owner of
-      the first SOA found.
-
 .. option:: -u
 
       Set the SOA serial in the resulting zonefile to the given number of

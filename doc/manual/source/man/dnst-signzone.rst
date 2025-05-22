@@ -51,8 +51,7 @@ Options
 
 .. option:: -o <DOMAIN>
 
-      Set the origin for the zone (only necessary for zonefiles with relative
-      names and no $ORIGIN).
+      Set the origin for the zone. Mandatory.
 
 .. option:: -u
 
