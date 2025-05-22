@@ -8,12 +8,7 @@ repository = "https://github.com/nlnetlabs/dnst/"
 authors = ["NLnet Labs <dns-team@nlnetlabs.nl>"]
 description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
-# cargo-generate-rpm fails with error `Missing field: package.license` if this
-# is not set.
 license = "BSD-3-Clause"
-# RedHat Rust packaging tooling would like `license-file` to be set.
-# See: https://github.com/NLnetLabs/ploutos/pull/122#issuecomment-2480401273
-license-file = "LICENSE"
 keywords = ["DNS", "domain", "ldns"]
 rust-version = "1.79"
 
@@ -62,6 +57,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-stelline",
 ] }
 
+# Related reading: https://wiki.debian.org/Teams/RustPackaging/Policy
 [package.metadata.deb]
 depends = "$auto"
 section = "net"
@@ -91,6 +87,7 @@ maintainer-scripts = "pkg/debian"
 conflicts = "ldnsutils"
 replaces = "ldnsutils"
 
+# Related reading: https://docs.fedoraproject.org/en-US/packaging-guidelines/Rust/
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/dnst", dest = "/usr/bin/dnst", mode = "755" },
