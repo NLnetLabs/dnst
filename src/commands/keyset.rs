@@ -189,6 +189,11 @@ impl Keyset {
             print_actions(&actions);
             state_changed = true;
         } else if self.cmd == "start-ksk-roll" {
+            if kss.keyset.keys().is_empty() {
+                // Avoid KSK roll without init.
+                return Err("not yet initialized\n".into());
+            }
+
             // Check for CSK.
             if ksc.use_csk {
                 return Err("wrong key roll, use start-csk-roll\n".into());
