@@ -140,8 +140,8 @@ pub struct SignZone {
     )]
     inception: Timestamp,
 
-    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN).
-    #[arg(short = 'o', value_name = "domain")]
+    /// Origin for the zone.
+    #[arg(short = 'o', value_name = "domain", required = true)]
     origin: Option<StoredName>,
 
     /// Set SOA serial to the number of seconds since Jan 1st 1970.
@@ -1424,54 +1424,20 @@ impl SignZone {
         records: &'a SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         origin: Option<&StoredName>,
     ) -> Result<&'a Record<StoredName, StoredRecordData>, Error> {
-        // If an expected origin was supplied, the found SOA must match it.
         if let Some(expected_origin) = origin {
-            return records
+            // If an expected origin was supplied, the found SOA must match it
+            // and will be used as the apex.
+            records
                 .iter()
                 .find(|rr| rr.rtype() == Rtype::SOA && rr.owner() == expected_origin)
-                .ok_or(format!("SOA RR not found for origin '{expected_origin}'.").into());
+                .ok_or(format!("SOA record not found for origin '{expected_origin}'.").into())
+        } else {
+            // Otherwise take the first found SOA as the apex.
+            records
+                .iter()
+                .find(|rr| rr.rtype() == Rtype::SOA)
+                .ok_or("Invalid zone file: Cannot find SOA record".into())
         }
-
-        if records.is_empty() {
-            return Err("Invalid zone file: No records found".into());
-        }
-
-        // SAFETY: We just verified that records is not empty.
-        let mut iter = records.iter().peekable();
-        let mut zone_name = iter.peek().unwrap().owner();
-        while let Some(rr) = iter.next() {
-            // Only match SOA RRs at the apex of a zone. If the current name
-            // is a child of the last seen name skip it because as the records
-            // are in sorted order children appear in the iteration order
-            // after their parent.
-            if rr.owner() != zone_name {
-                if rr.owner().ends_with(zone_name) {
-                    // Found a child node. Skip it.
-                    continue;
-                } else {
-                    // This is the start of a new zone apex
-                    zone_name = rr.owner();
-                }
-            }
-
-            // Is this a candidate SOA record?
-            if rr.rtype() == Rtype::SOA {
-                if let Some(next_rr) = iter.peek() {
-                    if next_rr.rtype() == Rtype::SOA {
-                        // Oops, there shouldn't be more than one SOA RR at the
-                        // apex.
-                        return Err(format!(
-                            "Invalid zone file: More than one SOA RR found at owner name '{}'.",
-                            rr.owner()
-                        )
-                        .into());
-                    }
-                }
-                return Ok(rr);
-            }
-        }
-
-        Err("Invalid zone file: Cannot find SOA record".into())
     }
 
     fn mk_bumped_soa_rdata(
@@ -2175,6 +2141,7 @@ mod test {
 
     use super::SignZone;
     use crate::env::Env;
+    use domain::zonetree::StoredName;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
@@ -2229,7 +2196,7 @@ mod test {
             expiration,
             out_file: None,
             inception,
-            origin: None,
+            origin: Some(StoredName::from_str("example.org").unwrap()),
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
@@ -2252,11 +2219,14 @@ mod test {
         };
 
         // Check the defaults
-        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
+        assert_eq!(
+            parse(cmd.args(["-oexample.org", "example.org.zone", "anykey"])),
+            base
+        );
 
         // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-oexample.org", "-bdunp", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
@@ -2271,7 +2241,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-H", "example.org.zone"])),
+            parse(cmd.args(["-oexample.org", "-H", "example.org.zone"])),
             SignZone {
                 hash_only: true,
                 key_paths: Vec::new(),
@@ -2283,7 +2253,13 @@ mod test {
 
         // ZONEMD arguments
         assert_eq!(
-            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "SIMPLE:SHA512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2292,7 +2268,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "simple:sha512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2301,7 +2283,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "sha512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2313,6 +2301,7 @@ mod test {
         // NSEC3 arguments
         assert_eq!(
             parse(cmd.args([
+                "-oexample.org",
                 "-n",
                 "-s",
                 "BABABA",
@@ -2334,6 +2323,7 @@ mod test {
         // Timestamps
         assert_eq!(
             parse(cmd.args([
+                "-oexample.org",
                 "-i",
                 "20240101020202",
                 "-e",
@@ -2350,7 +2340,7 @@ mod test {
 
         // Output file
         assert_eq!(
-            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-oexample.org", "-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
                 expiration,
@@ -2359,7 +2349,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-f",
+                "output",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
                 expiration,
@@ -2631,6 +2627,7 @@ mod test {
         let res1 = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2657,6 +2654,7 @@ mod test {
         let res2 = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2667,9 +2665,9 @@ mod test {
         .cwd(&dir)
         .run();
 
+        assert_eq!(res2.stderr, "");
         assert_eq!(res2.exit_code, 0);
         assert_eq!(res2.stdout, res1.stdout);
-        assert_eq!(res2.stderr, "");
     }
 
     #[test]
@@ -2679,6 +2677,7 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-z",
             "1:1",
             "-f",
@@ -3124,6 +3123,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040509183619 20040409183619 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-A",
             "-T",
             "-R",
@@ -3266,6 +3266,7 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-T",
             "-L",
             "-R",
@@ -3290,7 +3291,7 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
-    fn ldns_signzone_nsec_signed_zone_example_with_minus_b() {
+    fn dnst_signzone_nsec_signed_zone_example_with_minus_b() {
         let expected_signed_zone = r###";; Zone: example.org.
 ;
 example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
@@ -3319,6 +3320,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 exam
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -3370,6 +3372,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 142
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -3432,7 +3435,15 @@ xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-H", &zone_file_path]).run();
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample.",
+            "-f-",
+            "-H",
+            &zone_file_path,
+        ])
+        .run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3486,7 +3497,16 @@ xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-n", "-H", &zone_file_path]).run();
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample.",
+            "-f-",
+            "-n",
+            "-H",
+            &zone_file_path,
+        ])
+        .run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3532,6 +3552,7 @@ secure-deleg.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20040509183619 200404091
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-T",
             "-R",
             "-f-",
@@ -3601,6 +3622,7 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-T",
             "-R",
             "-f-",
@@ -3710,6 +3732,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3760,6 +3783,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3811,6 +3835,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3863,6 +3888,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -4381,6 +4407,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-T",
             "-R",
             "-f-",
@@ -4406,6 +4433,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             dir.path()
                 .join("missing_zonefile")
                 .to_string_lossy()
@@ -4450,6 +4478,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -4483,6 +4512,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-f-",
             "-u",
             &zone_file_path,
@@ -4514,6 +4544,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-u",
             &zone_file_path,
