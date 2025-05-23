@@ -10,6 +10,7 @@ use domain::rdata::Soa;
 use domain::tsig::Key;
 use domain::utils::base16;
 use lexopt::Arg;
+use tracing::warn;
 
 use crate::env::Env;
 use crate::error::Error;
@@ -223,26 +224,17 @@ impl Notify {
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                writeln!(
-                    env.stderr(),
-                    "warning: invalid domain name \"{server}\", skipping."
-                );
+                warn!("invalid domain name \"{server}\", skipping.");
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                writeln!(
-                    env.stderr(),
-                    "warning: could not resolve host \"{name}\", skipping."
-                );
+                warn!("could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
             if hosts.is_empty() {
-                writeln!(
-                    env.stderr(),
-                    "skipping bad address: {name}: Name or service not known"
-                );
+                warn!("skipping bad address: {name}: Name or service not known");
                 continue;
             }
 
@@ -301,10 +293,7 @@ impl Notify {
                 writeln!(out, ";; MSG SIZE  rcvd: {}", msg.as_slice().len());
             }
             Err(e) => {
-                writeln!(
-                    env.stdout(),
-                    "warning: reply was not received or erroneous from: {socket}: {e}"
-                );
+                warn!("reply was not received or erroneous from: {socket}: {e}");
             }
         }
     }
@@ -586,5 +575,22 @@ mod tests {
         let res = cmd.run();
         assert_eq!(res.exit_code, 0);
         assert!(res.stderr.contains("Name or service not known"));
+    }
+
+    #[test]
+    fn invalid_domain_name() {
+        let rpl = "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            SCENARIO_END
+        ";
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", ""])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert!(res.stderr.contains("invalid domain name"));
     }
 }
