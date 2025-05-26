@@ -111,7 +111,11 @@ pub struct Signer {
     ///
     /// If this would NOT result in the SOA serial increasing it will be
     /// incremented instead.
-    #[arg(short = 'u', default_value_t = false)]
+    //
+    // Currently, there is no way signing can work without this. In the
+    // future with incremental signing we could just increment the
+    // version in the signed zone.
+    #[arg(short = 'u', default_value_t = true)]
     set_soa_serial_to_epoch_time: bool,
 
     // SKIPPED: -v
