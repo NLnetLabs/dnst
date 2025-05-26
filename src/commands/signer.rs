@@ -371,7 +371,7 @@ impl Signer {
             }
             let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
             if zonefile_modified != signer_state.zonefile_modified {
-                todo!();
+                need_resign = true;
             }
             let now = UnixTime::now();
             if now + sc.minimal_remaining_validity > signer_state.minimum_expiration {
