@@ -44,9 +44,14 @@ Arguments
       they are either already present in the zone, or specified in a ``.key``
       file, and have the Secure Entry Point flag set.
 
-      Note: supported DNSKEY algorithms are the ones supported by the
-      domain crate. Supported algorithms include RSASHA256, ECDSAP256SHA256,
-      and ED25519 but exclude RSHASHA1 and RSASHA1-NSEC3-SHA1.
+      Note: Unlike the original LDNS:
+        - Public keys corresponding to ``.private`` key MUST be supplied,
+          either as DNSKEY RRs in the given zone or as ``.key`` files. This
+          Implementation is not able to generate missing public keys.
+        - Supported DNSKEY algorithms are the ones supported by the
+          domain crate. Supported algorithms include RSASHA256,
+          ECDSAP256SHA256, and ED25519 but exclude RSHASHA1 and
+          RSASHA1-NSEC3-SHA1.
 
 Options
 -------
