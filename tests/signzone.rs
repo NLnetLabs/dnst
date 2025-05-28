@@ -21,7 +21,7 @@ const RFC_5155_ZSK_PATH: &str = concatcp!(TEST_DATA_DIR, "Kexample.+008+38353");
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_only_zsk() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
@@ -51,7 +51,7 @@ fn signzone_only_zsk() {
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_only_ksk() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
@@ -81,7 +81,7 @@ fn signzone_only_ksk() {
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_with_both_ksk_and_zsk() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
@@ -113,7 +113,7 @@ fn signzone_with_both_ksk_and_zsk() {
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_nsec_minus_b() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
@@ -158,7 +158,7 @@ fn signzone_nsec_minus_b() {
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_with_nsec3_no_opt_out() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
@@ -190,7 +190,7 @@ fn signzone_with_nsec3_no_opt_out() {
 #[ignore = "should only be run if ldns command line tools are installed"]
 #[test]
 fn signzone_with_nsec3_opt_out() {
-    let temp_dir = tempdir().unwrap().into_path();
+    let temp_dir = tempdir().unwrap().keep();
     let ldns_out_path = format!("{}/ldns.signed", temp_dir.display());
     let dnst_out_path = format!("{}/dnst.signed", temp_dir.display());
 
