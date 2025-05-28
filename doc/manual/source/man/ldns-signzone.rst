@@ -26,10 +26,6 @@ Arguments
       Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
       RRSIG resource records will be skipped when loading the zonefile.
 
-      Note: Unlike the original LDNS, the origin must be explicitly specified
-      either via an ``$ORIGIN`` directive in the zonefile or using the ``-o``
-      command line argument.
-
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.
@@ -109,13 +105,15 @@ Options
 
 .. option:: -o <DOMAIN>
 
-      Use this as the origin for the zone (only necessary for zonefiles with
-      relative names and no $ORIGIN).
+      Use this owner name as the apex of the zone.
+      
+      If not specified the owner name of the first SOA record will be used as
+      the apex of the zone.
 
 .. option:: -u
 
       Set the SOA serial in the resulting zonefile to the given number of
-      seconds since Jan 1st 1970.
+      seconds since January 1st 1970.
 
 .. option:: -u
 

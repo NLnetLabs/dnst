@@ -4,12 +4,14 @@ dnst signzone
 Synopsis
 --------
 
-:program:`dnst signzone` ``[OPTIONS]`` ``<ZONEFILE>`` ``<KEY>...``
+:program:`dnst signzone` ``[OPTIONS]`` ``-o <ORIGIN>`` ``<ZONEFILE>`` ``<KEY>...``
 
 Description
 -----------
 
 **dnst signzone** signs the zonefile with the given key(s).
+
+Signing a zone adds DNS Security Extensions (DNSSEC)  resource records 
 
 Keys must be specified by their base name (usually ``K<name>+<alg>+<id>``),
 i.e. WITHOUT the ``.private`` or ``.key`` extension. Both ``.private`` and
@@ -51,7 +53,7 @@ Options
 
 .. option:: -o <DOMAIN>
 
-      Set the origin for the zone. Mandatory.
+      Use this owner name as the apex of the zone. Mandatory.
 
 .. option:: -u
 
@@ -157,8 +159,6 @@ settings used.
 .. option:: -P
 
       Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations.
-
-.. TODO: document nsec3_opt_out
 
 .. _dnst-signzone-dates:
 
