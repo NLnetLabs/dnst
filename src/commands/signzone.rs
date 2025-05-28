@@ -720,8 +720,8 @@ impl SignZone {
                 // generate a public key from a private key. As such we cannot
                 // compare the key tag of any found DNSKEY RRs to that of the
                 // public key generated from the private key. Instead we attempt
-                // to construct a key pair from the found public key and each
-                // private key which tests that they match.
+                // to construct for each private key, a key pair from the
+                // private key and each public key which tests that they match.
                 for public_key in &found_public_keys {
                     // Attempt to create a key pair from this public key and every
                     // private key that we have.
