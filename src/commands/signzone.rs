@@ -4601,26 +4601,6 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         dir
     }
 
-    /// Filter a string slice for lines containing at least one of the provided patterns.
-    #[allow(dead_code)]
-    fn filter_lines_containing_any(src: &str, patterns: &[&str]) -> String {
-        if patterns.is_empty() {
-            // For consistency with str::contains() and filter_lines_containing_all()
-            String::from(src)
-        } else {
-            src.split_inclusive('\n')
-                .filter(|s| {
-                    for p in patterns {
-                        if s.contains(p) {
-                            return true;
-                        }
-                    }
-                    false
-                })
-                .collect()
-        }
-    }
-
     /// Filter a string slice for lines containing all provided patterns.
     fn filter_lines_containing_all(src: &str, patterns: &[&str]) -> String {
         src.split_inclusive('\n')
