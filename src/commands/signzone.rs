@@ -341,7 +341,6 @@ const LDNS_HELP: &str = r###"ldns-signzone [OPTIONS] zonefile key [key [key]]
                 -t [number] number of hash iterations
                 -s [string] salt
                 -p set the opt-out flag on all nsec3 rrs
-  -L            Preceed the zone output by a list of NSEC3 owners and hashes.
 
   keys must be specified by their base name (usually K<name>+<alg>+<id>),
   i.e. WITHOUT the .private extension.
@@ -451,9 +450,6 @@ impl LdnsCommand for SignZone {
                 }
                 Arg::Short('p') => {
                     nsec3_opt_out_flags_only = true;
-                }
-                Arg::Short('L') => {
-                    preceed_zone_with_hash_list = true;
                 }
                 Arg::Value(val) => {
                     if zonefile.is_none() {
