@@ -27,7 +27,6 @@ use core::fmt::Write;
 use core::ops::Add;
 use core::str::FromStr;
 
-use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt::{self, Display};
@@ -141,8 +140,8 @@ pub struct SignZone {
     )]
     inception: Timestamp,
 
-    /// Origin for the zone (for zonefiles with relative names and no $ORIGIN).
-    #[arg(short = 'o', value_name = "domain")]
+    /// Origin for the zone (REQUIRED).
+    #[arg(short = 'o', value_name = "domain", required = true)]
     origin: Option<StoredName>,
 
     /// Set SOA serial to the number of seconds since Jan 1st 1970.
@@ -651,30 +650,49 @@ impl SignZone {
         // Read the zone file.
         let mut records = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
-        // Extract the SOA RR from the loaded zone.
-        let Some(soa_rr) = records.find_soa() else {
-            return Err(format!(
-                "Zone file '{}' does not contain a SOA record",
-                self.zonefile_path.display()
-            )
-            .into());
+        // Find apex records that require special processing.
+        let soa_rr = Self::find_apex(&records, self.origin.as_ref())?.clone();
+
+        // Process the SOA RR.
+        let soa_rdata = if self.set_soa_serial_to_epoch_time {
+            let new_soa_rdata = Self::mk_bumped_soa_rdata(&env, &soa_rr);
+            records.update_data(
+                |rr| rr == &soa_rr,
+                ZoneRecordData::Soa(new_soa_rdata.clone()),
+            );
+            new_soa_rdata
+        } else {
+            // SAFETY: Already checked before this point.
+            let ZoneRecordData::Soa(soa_rdata) = soa_rr.data() else {
+                unreachable!()
+            };
+            soa_rdata.clone()
         };
-        let ZoneRecordData::Soa(_) = soa_rr.first().data() else {
-            return Err(format!(
-                "Zone file '{}' contains an invalid SOA record",
-                self.zonefile_path.display()
-            )
-            .into());
-        };
+        let soa_serial = soa_rdata.serial();
+        let apex = soa_rr.owner();
+        let zone_class = soa_rr.class();
+
+        // Use the SOA RR TTL as the TTL for any new RRs that we add for which
+        // there are otherwise no rules about what TTL to use for the RTYPE
+        // being added.
+        //
+        // Rationale:
+        // While in RFC 1033 section "RESOURCE RECORDS" it says to use the SOA
+        // MINIMUM time when the TTL to use for a new RR is unknown, neither
+        // dnssec-signzone nor ldns-signzone do that, instead they use the TTL
+        // of the SOA RR as the default, plus RFC 1033 predates RFC 1034 and
+        // it's thus unclear if it is relevant. So we will do the same as
+        // dnssec-signzone and ldns-signzone.
+        let new_rr_default_ttl = soa_rr.ttl();
 
         let mut signing_keys: Vec<SigningKey<Bytes, KeyPair>> = vec![];
 
         let mut zone_signing_keys = Vec::new();
 
         if signing_mode == SigningMode::HashAndSign {
-            let dnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::DNSKEY);
-            let cds_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDS);
-            let cdnskey_rrset = records.find_apex_rtype(soa_rr.owner(), Rtype::CDNSKEY);
+            let dnskey_rrset = records.find_apex_rtype(apex, Rtype::DNSKEY);
+            let cds_rrset = records.find_apex_rtype(apex, Rtype::CDS);
+            let cdnskey_rrset = records.find_apex_rtype(apex, Rtype::CDNSKEY);
 
             // Extract and validate the DNSKEY RRs from the loaded zone.
             let mut found_public_keys = vec![];
@@ -735,10 +753,9 @@ impl SignZone {
 
                 // Verify that the owner of the public key matches the apex of the
                 // zone.
-                if public_key.owner() != soa_rr.owner() {
+                if public_key.owner() != apex {
                     return Err(format!(
-                        "Zone apex ({}) does not match the expected apex ({})",
-                        soa_rr.owner(),
+                        "Public key owner {} does not match zone apex {apex}",
                         public_key.owner()
                     )
                     .into());
@@ -839,7 +856,10 @@ impl SignZone {
                 all_dnskeys.push(r.clone());
             }
             if !self.do_not_add_keys_to_zone {
-                let dnskey_ttl = dnskey_rrset.as_ref().map_or(soa_rr.ttl(), |r| r.ttl());
+                let dnskey_ttl = dnskey_rrset
+                    .as_ref()
+                    .map_or(new_rr_default_ttl, |r| r.ttl());
+
                 // Make sure that the DNSKEY RRset contains all keys.
                 for k in &signing_keys {
                     let pubkey = k.dnskey();
@@ -856,8 +876,7 @@ impl SignZone {
                     {
                         let pubkey: Dnskey<Bytes> = pubkey.convert();
                         let data = ZoneRecordData::Dnskey(pubkey);
-                        let record =
-                            Record::new(soa_rr.owner().clone(), soa_rr.class(), dnskey_ttl, data);
+                        let record = Record::new(apex.clone(), zone_class, dnskey_ttl, data);
                         dnskey_extra.push(record.clone());
                         all_dnskeys.push(record);
                     }
@@ -912,22 +931,6 @@ impl SignZone {
             }
         }
 
-        self.go_further(env, records, signing_mode, &zone_signing_keys, out_file)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn go_further(
-        &self,
-        env: impl Env,
-        mut records: SortedRecords<
-            StoredName,
-            ZoneRecordData<Bytes, StoredName>,
-            MultiThreadedSorter,
-        >,
-        signing_mode: SigningMode,
-        signing_keys: &[&SigningKey<Bytes, KeyPair>],
-        out_file: PathBuf,
-    ) -> Result<(), Error> {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
@@ -940,12 +943,15 @@ impl SignZone {
         let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(self.zonemd.clone());
 
         // Change the SOA serial.
-        if self.set_soa_serial_to_epoch_time {
-            Self::bump_soa_serial(&env, &mut records)?;
+        if !zonemd.is_empty() {
+            Self::replace_apex_zonemd_with_placeholder(
+                &mut records,
+                apex,
+                zone_class,
+                soa_serial,
+                new_rr_default_ttl,
+            );
         }
-
-        // Find the apex.
-        let (apex, zone_class, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
         // The original ldns-signzone filters out (with warnings) NSEC3 RRs,
         // or RRSIG RRs covering NSEC3 RRs, where the hashed owner name
@@ -969,16 +975,6 @@ impl SignZone {
         // to an unhashed owner name in the zone, and (b) that it would be
         // better for ldns-signzone to strip out NSEC(3)s on loading anyway as
         // it should only operate on unsigned zone input.
-
-        if !zonemd.is_empty() {
-            Self::replace_apex_zonemd_with_placeholder(
-                &mut records,
-                &apex,
-                zone_class,
-                soa_serial,
-                ttl,
-            );
-        }
 
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
@@ -1029,7 +1025,7 @@ impl SignZone {
                     self.algorithm,
                     self.iterations,
                     &self.salt,
-                    &apex,
+                    apex,
                 )
                 .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
                 let hash_info = Nsec3HashInfo::new(owner.clone(), false);
@@ -1059,7 +1055,7 @@ impl SignZone {
                         self.algorithm,
                         self.iterations,
                         &self.salt,
-                        &apex,
+                        apex,
                     )
                     .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
                     if hash_provider
@@ -1127,15 +1123,20 @@ impl SignZone {
         };
 
         records
-            .sign_zone(&apex, &signing_config, signing_keys)
+            .sign_zone(apex, &signing_config, &zone_signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
-            let _ = records.remove_first_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
+            let _ = records.remove_first_by_name_class_rtype(apex, None, Some(Rtype::ZONEMD));
 
             let zonemd_rrs = Self::create_zonemd_digest_and_records(
-                &records, &apex, zone_class, &zonemd, soa_serial, ttl,
+                &records,
+                apex,
+                zone_class,
+                &zonemd,
+                soa_serial,
+                new_rr_default_ttl,
             )?;
 
             // Add ZONEMD RRs to output records
@@ -1145,9 +1146,9 @@ impl SignZone {
 
             if signing_mode == SigningMode::HashAndSign {
                 Self::update_zonemd_rrsig(
-                    &apex,
+                    apex,
                     &mut records,
-                    signing_keys,
+                    &zone_signing_keys,
                     &zonemd_rrs,
                     self.inception,
                     self.expiration,
@@ -1237,7 +1238,7 @@ impl SignZone {
 
         let nsec3_cs = Nsec3CommentState {
             hashes: nsec3_hashes.as_ref(),
-            apex: &apex,
+            apex,
         };
 
         for owner_rrs in owner_rrs_iter {
@@ -1418,41 +1419,32 @@ impl SignZone {
         Ok(records)
     }
 
-    fn find_apex(
-        records: &SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
-    ) -> Result<(StoredName, Class, Ttl, Serial), Error> {
-        let soa = match records.find_soa() {
-            Some(soa) => soa,
-            None => {
-                return Err(Error::from("Invalid zone file: Cannot find SOA record"));
-            }
-        };
-
-        let (ttl, serial) = match *soa.first().data() {
-            ZoneRecordData::Soa(ref soa_data) => {
-                // RFC 9077 updated RFC 4034 (NSEC) and RFC 5155 (NSEC3) to
-                // say that the "TTL of the NSEC(3) RR that is returned MUST be
-                // the lesser of the MINIMUM field of the SOA record and the
-                // TTL of the SOA itself".
-                (min(soa_data.minimum(), soa.ttl()), soa_data.serial())
-            }
-            _ => unreachable!(),
-        };
-
-        Ok((soa.owner().clone(), soa.class(), ttl, serial))
+    fn find_apex<'a>(
+        records: &'a SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
+        origin: Option<&StoredName>,
+    ) -> Result<&'a Record<StoredName, StoredRecordData>, Error> {
+        if let Some(expected_origin) = origin {
+            // If an expected origin was supplied, the found SOA must match it
+            // and will be used as the apex.
+            records
+                .iter()
+                .find(|rr| rr.rtype() == Rtype::SOA && rr.owner() == expected_origin)
+                .ok_or(format!("SOA record not found for origin '{expected_origin}'.").into())
+        } else {
+            // Otherwise take the first found SOA as the apex.
+            records
+                .iter()
+                .find(|rr| rr.rtype() == Rtype::SOA)
+                .ok_or("Invalid zone file: Cannot find SOA record".into())
+        }
     }
 
-    fn bump_soa_serial(
+    fn mk_bumped_soa_rdata(
         env: &impl Env,
-        records: &mut SortedRecords<
-            StoredName,
-            ZoneRecordData<Bytes, StoredName>,
-            MultiThreadedSorter,
-        >,
-    ) -> Result<(), Error> {
+        old_soa_rr: &Record<StoredName, StoredRecordData>,
+    ) -> Soa<StoredName> {
         // SAFETY: Already checked before this point.
-        let old_soa_rr = records.find_soa().unwrap();
-        let ZoneRecordData::Soa(old_soa) = old_soa_rr.first().data() else {
+        let ZoneRecordData::Soa(old_soa) = old_soa_rr.data() else {
             unreachable!();
         };
 
@@ -1472,7 +1464,7 @@ impl SignZone {
             old_soa.serial().add(1)
         };
 
-        let new_soa = ZoneRecordData::Soa(Soa::new(
+        Soa::new(
             old_soa.mname().clone(),
             old_soa.rname().clone(),
             new_serial,
@@ -1480,11 +1472,7 @@ impl SignZone {
             old_soa.retry(),
             old_soa.expire(),
             old_soa.minimum(),
-        ));
-
-        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-
-        Ok(())
+        )
     }
 
     fn load_private_key(key_path: &Path) -> Result<SecretKeyBytes, Error> {
@@ -2152,6 +2140,7 @@ mod test {
 
     use super::SignZone;
     use crate::env::Env;
+    use domain::zonetree::StoredName;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> SignZone {
@@ -2206,7 +2195,7 @@ mod test {
             expiration,
             out_file: None,
             inception,
-            origin: None,
+            origin: Some(StoredName::from_str("example.org").unwrap()),
             set_soa_serial_to_epoch_time: false,
             zonemd: Vec::new(),
             allow_zonemd_without_signing: false,
@@ -2229,11 +2218,14 @@ mod test {
         };
 
         // Check the defaults
-        assert_eq!(parse(cmd.args(["example.org.zone", "anykey"])), base);
+        assert_eq!(
+            parse(cmd.args(["-oexample.org", "example.org.zone", "anykey"])),
+            base
+        );
 
         // The switches (TODO: missing -A and -U)
         assert_eq!(
-            parse(cmd.args(["-bdunp", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-oexample.org", "-bdunp", "example.org.zone", "anykey"])),
             SignZone {
                 extra_comments: true,
                 do_not_add_keys_to_zone: true,
@@ -2248,7 +2240,7 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-H", "example.org.zone"])),
+            parse(cmd.args(["-oexample.org", "-H", "example.org.zone"])),
             SignZone {
                 hash_only: true,
                 key_paths: Vec::new(),
@@ -2260,7 +2252,13 @@ mod test {
 
         // ZONEMD arguments
         assert_eq!(
-            parse(cmd.args(["-z", "SIMPLE:SHA512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "SIMPLE:SHA512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2269,7 +2267,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-z", "simple:sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "simple:sha512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2278,7 +2282,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-z", "sha512", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-z",
+                "sha512",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 zonemd: Vec::from([ZonemdTuple(ZonemdScheme::SIMPLE, ZonemdAlgorithm::SHA512)]),
                 expiration,
@@ -2290,6 +2300,7 @@ mod test {
         // NSEC3 arguments
         assert_eq!(
             parse(cmd.args([
+                "-oexample.org",
                 "-n",
                 "-s",
                 "BABABA",
@@ -2311,6 +2322,7 @@ mod test {
         // Timestamps
         assert_eq!(
             parse(cmd.args([
+                "-oexample.org",
                 "-i",
                 "20240101020202",
                 "-e",
@@ -2327,7 +2339,7 @@ mod test {
 
         // Output file
         assert_eq!(
-            parse(cmd.args(["-f-", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-oexample.org", "-f-", "example.org.zone", "anykey"])),
             SignZone {
                 out_file: Some(PathBuf::from("-")),
                 expiration,
@@ -2336,7 +2348,13 @@ mod test {
             }
         );
         assert_eq!(
-            parse(cmd.args(["-f", "output", "example.org.zone", "anykey"])),
+            parse(cmd.args([
+                "-oexample.org",
+                "-f",
+                "output",
+                "example.org.zone",
+                "anykey"
+            ])),
             SignZone {
                 out_file: Some(PathBuf::from("output")),
                 expiration,
@@ -2608,6 +2626,7 @@ mod test {
         let res1 = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2634,6 +2653,7 @@ mod test {
         let res2 = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-Z",
             "-z",
             "SIMPLE:SHA384",
@@ -2644,9 +2664,9 @@ mod test {
         .cwd(&dir)
         .run();
 
+        assert_eq!(res2.stderr, "");
         assert_eq!(res2.exit_code, 0);
         assert_eq!(res2.stdout, res1.stdout);
-        assert_eq!(res2.stderr, "");
     }
 
     #[test]
@@ -2656,6 +2676,7 @@ mod test {
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-z",
             "1:1",
             "-f",
@@ -3101,6 +3122,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20040509183619 20040409183619 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-A",
             "-T",
             "-R",
@@ -3243,6 +3265,7 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-T",
             "-L",
             "-R",
@@ -3267,7 +3290,7 @@ xx.example.\t3600\tIN\tRRSIG\tAAAA 8 2 3600 20150420235959 20051021000000 38353 
     }
 
     #[test]
-    fn ldns_signzone_nsec_signed_zone_example_with_minus_b() {
+    fn dnst_signzone_nsec_signed_zone_example_with_minus_b() {
         let expected_signed_zone = r###";; Zone: example.org.
 ;
 example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
@@ -3296,6 +3319,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 1429574399 1129852800 28954 exam
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -3347,6 +3371,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 142
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -3409,7 +3434,15 @@ xx.example.\t3600\tIN\tNSEC\texample. A HINFO AAAA RRSIG NSEC
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-H", &zone_file_path]).run();
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample.",
+            "-f-",
+            "-H",
+            &zone_file_path,
+        ])
+        .run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3463,7 +3496,16 @@ xx.example.\t3600\tIN\tAAAA\t2001:db8::f00:baaa
 
         let zone_file_path = mk_test_data_abs_path_string("test-data/example.rfc5155");
 
-        let res = FakeCmd::new(["dnst", "signzone", "-f-", "-n", "-H", &zone_file_path]).run();
+        let res = FakeCmd::new([
+            "dnst",
+            "signzone",
+            "-oexample.",
+            "-f-",
+            "-n",
+            "-H",
+            &zone_file_path,
+        ])
+        .run();
 
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_signed_zone);
@@ -3509,6 +3551,7 @@ secure-deleg.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20040509183619 200404091
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-T",
             "-R",
             "-f-",
@@ -3578,6 +3621,7 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-T",
             "-R",
             "-f-",
@@ -3595,6 +3639,64 @@ secure-deleg.example.org.\t240\tIN\tRRSIG\tDS 8 3 240 20240101010101 20240101010
         assert_eq!(res.stderr, "");
         assert_eq!(res.stdout, expected_zone);
         assert_eq!(res.exit_code, 0);
+    }
+
+    #[test]
+    fn earlier_sorting_non_authoritative_records_should_work() {
+        // Records with an owner name outside the zone that sort earlier in
+        // the zone than the zone apex (according to DNSSEC canonical sorting
+        // rules) should not be mistaken for the zone apex and should not be
+        // signed.
+        let expected_zone = r###"example.org.\t240\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 240
+example.org.\t240\tIN\tRRSIG\tSOA 8 2 240 20240101010101 20240101010101 28954 example.org. YaNm4bn+Yeee1QHQiZwfqgF+NNHNcdo9Ro+RdDSUhfqxo4QaGDN7vMnSeVWQClN8L8GnT/dE1uOJiuYRRRiB9GvoCNyik8V2kRQsz0E8OBZxMMyR7iirFJFQYFg61RsnXDglgblHX8DyltL3TWV1ynyEMDeDVrlatLkguZDG3/Y=
+earlier-sorting.org.\t240\tIN\tA\t128.140.76.106
+example.org.\t240\tIN\tA\t128.140.76.106
+example.org.\t240\tIN\tRRSIG\tA 8 2 240 20240101010101 20240101010101 28954 example.org. Nc33Gu7E46O6+3/VjGySyu4c3X+E7gyrD9xDvfy2T0WY/z4Hgh7ia9adToN5IA6antpJqdaYW3qBrBZ1aEb8c0wfZygkD//PJCRKwZxDNrwCTOc4AK37xk6WH72Acs/0w20zhk8PUuCxCerVAdNpr0FRgIpiOq9nD1RjEtbsd6g=
+example.org.\t240\tIN\tNS\tearlier-sorting.org.
+example.org.\t240\tIN\tRRSIG\tNS 8 2 240 20240101010101 20240101010101 28954 example.org. Q3kvq3ba3OVV3+58ztC/HA7duKCzW+E2VCKTShNBTH5TsP1saEefxvupgJaIzFtOvAMgFMx0Z12tLQ5he0Vbl71W3byJwTNy5ZqCKCuXDqqdJ3c9hKDCnKYF8Cd9diAW2fwbwb3igTsmWnI9mHy3aIDhlTHF9Ew8E6unim8Yr+U=
+example.org.\t240\tIN\tDNSKEY\t256 3 8 AwEAAcCIpalbX67WU8Z+gI/oaeD0EjOt41Py++X1HQauTfSB5gwivbGwIsqA+Qf5+/j3gcuSFRbFzyPfAb5x14jy/TU3MWXGfmJsJX/DeTqiMwfTQTTlWgMdqRi7JuQoDx3ueYOQOLTDPVqlyvF5/g7b9FUd4LO8G3aO2FfqRBjNG8px ;{id = 28954 (zsk), size = 1024b}
+example.org.\t240\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t240\tIN\tRRSIG\tDNSKEY 8 2 240 20240101010101 20240101010101 51331 example.org. ZJ64iFFKl4qhbwegRyTOsBW62RYImbPydKe1MhU2gIvXEki2ahO3Bf7VknfP3yQo1BKY/ZTmqN0OxQvEU+B5PZ77hoh9zO6ZMjjromzaD0+nD89v0zXL4OyP5kXNnwiCfWb15YJkPKpECYgfWRiV+fXetjxUByRFjaRVbbADCUI=
+example.org.\t240\tIN\tNSEC3PARAM\t1 0 0 -
+example.org.\t240\tIN\tRRSIG\tNSEC3PARAM 8 2 240 20240101010101 20240101010101 28954 example.org. LZ138ablhNW6CPWS8YRveDrhLKR+ykZIgr/GlI+7T+waP+E0o8apTao/cKwhzkimuDh847CodPK1pSA+YwJwcqVv+GSk7pyO8qVpBhZ0xzVCTbrMCGnCXQeR5br9inRD012EOYKsQ7hyK10qL2Wgtl20rbbGyGHEL4eXB1/0GE8=
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tNSEC3\t1 0 0 - VRCJ1RGALBB9EH2II8A43FBEIB1UFQF6 A NS SOA RRSIG DNSKEY NSEC3PARAM
+8um1kjcjmofvvmq7cb0op7jt39lg8r9j.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. qHniW1so5HoByg2VqsEq8nHOH3HXNE6pE5RyX9ubmafaS0Cv3JGBlob4gR/ASlLaSZpVZGROyfcQisfth7Byen9lsxhQyIrPhmGD3EGEU+Hl8mN2TI33Pgs0g3itqltue9WsOA9/PvLtT8XR8lAlKght93nPOLnO2igrHJKiX8Q=
+some.example.org.\t240\tIN\tA\t1.1.1.1
+some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20240101010101 20240101010101 28954 example.org. oodhdiTw+1yqsKaMP3elWNMxjjcLzikGpoOWAUMcn15giyCorEzkPVyd7qUDX/NuQ8cKQFcLD6u8QKSgH+5xBJiTsHtHmCt1JZHwm7qGD/nkXKNK7uH526m393sDjubUuyPBQe94xbUcBGl5f/wrbirt3yLL7nsfnH5zDsXz2fg=
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t240\tIN\tNSEC3\t1 0 0 - 8UM1KJCJMOFVVMQ7CB0OP7JT39LG8R9J A RRSIG
+vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t240\tIN\tRRSIG\tNSEC3 8 3 240 20240101010101 20240101010101 28954 example.org. ZNThpTrb27cbT7ewDsKIxqMgD5iaM1YgMlY1KtGcyWAxAYCR0wcZi8gTCSNjI21UwR+Hjvt0rNe4xs7AXbjbcbkjQmja2nyyvSos1UfvBBF+KbgXawi1zc5WLQkGKNw47evzw3cN+FMu7Ka/koGNaYQFgFww6GKTOamEQ1rXSHQ=
+"###.replace("\\t", "\t");
+
+        for zone_file_path in [
+            mk_test_data_abs_path_string("test-data/example.org.early-sorting-glue"),
+            mk_test_data_abs_path_string("test-data/example.org.early-sorting-glue-at-end"),
+        ] {
+            let ksk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+51331");
+            let zsk_path = mk_test_data_abs_path_string("test-data/Kexample.org.+008+28954");
+
+            let res = FakeCmd::new([
+                "dnst",
+                "signzone",
+                "-o",
+                "example.org",
+                "-T",
+                "-R",
+                "-f-",
+                "-e",
+                "20240101010101",
+                "-i",
+                "20240101010101",
+                "-n",
+                &zone_file_path,
+                &ksk_path,
+                &zsk_path,
+            ])
+            .run();
+
+            assert_eq!(res.stderr, "");
+            assert_eq!(res.stdout, expected_zone);
+            assert_eq!(res.exit_code, 0);
+        }
     }
 
     #[test]
@@ -3629,6 +3731,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3679,6 +3782,7 @@ some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20240101010101 20240101010101 28
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3730,6 +3834,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -3782,6 +3887,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tRRSIG\tNSEC3 8 3 238 202
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-T",
             "-R",
             "-f-",
@@ -4300,6 +4406,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.",
             "-T",
             "-R",
             "-f-",
@@ -4325,6 +4432,7 @@ xx.example.\t3600\tIN\tRRSIG\tNSEC 8 2 3600 20240101010101 20240101010101 38353 
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             dir.path()
                 .join("missing_zonefile")
                 .to_string_lossy()
@@ -4369,6 +4477,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-e",
             "20150420235959",
@@ -4402,6 +4511,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org.",
             "-f-",
             "-u",
             &zone_file_path,
@@ -4433,6 +4543,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         let res = FakeCmd::new([
             "dnst",
             "signzone",
+            "-oexample.org",
             "-f-",
             "-u",
             &zone_file_path,
