@@ -787,8 +787,10 @@ impl SignZone {
                 // );
             }
 
-            // First split the key into Key Signing Keys (KSK) that sign the
-            // DNSKEY RRset and Zone Signing Keys (ZSK) that sign the zone.
+            // First split the keys into Key Signing Keys (KSK) that sign the
+            // apex DNSKEY, CDS, and CDNSKEY RRsets and Zone Signing Keys
+            // (ZSK) that sign the rest of the zone based in the
+            // Secure Entry Point (SEP) flag.
             let mut key_signing_keys = Vec::new();
             for k in &signing_keys {
                 if k.is_secure_entry_point() {
