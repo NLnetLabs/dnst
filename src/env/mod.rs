@@ -32,6 +32,9 @@ pub trait Env {
     /// Equivalent to [`std::io::stderr`]
     fn stderr(&self) -> Stream<impl io::Write + Send + Sync + 'static>;
 
+    // /// Get a reference to stdin
+    // fn stdin(&self) -> impl io::Read;
+
     /// Make relative paths absolute.
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
 
