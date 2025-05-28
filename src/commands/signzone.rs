@@ -140,7 +140,7 @@ pub struct SignZone {
     )]
     inception: Timestamp,
 
-    /// Origin for the zone.
+    /// Origin for the zone (REQUIRED). 
     #[arg(short = 'o', value_name = "domain", required = true)]
     origin: Option<StoredName>,
 
