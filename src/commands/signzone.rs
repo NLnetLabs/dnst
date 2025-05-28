@@ -69,6 +69,7 @@ use lexopt::Arg;
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
+use tracing::warn;
 
 use crate::env::{Env, Stream};
 use crate::error::{Context, Error};
@@ -1564,7 +1565,7 @@ impl SignZone {
     }
 
     fn write_iterations_warning(env: &impl Env, text: &str) {
-        Error::write_warning(&mut env.stderr(), text);
+        warn!("{text}");
         writeln!(
             env.stderr(),
             "See: https://www.rfc-editor.org/rfc/rfc9276.html"
@@ -1801,17 +1802,17 @@ struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
 
 //------------ FileOrStdout --------------------------------------------------
 
-enum FileOrStdout<T: io::Write, U: fmt::Write> {
+enum FileOrStdout<T: io::Write, U: io::Write> {
     File(T),
     Stdout(Stream<U>),
 }
 
-impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
+impl<T: io::Write, U: io::Write> fmt::Write for FileOrStdout<T, U> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         match self {
             FileOrStdout::File(f) => f.write_all(s.as_bytes()).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(o) => {
-                o.write_str(s);
+            FileOrStdout::Stdout(f) => {
+                write!(f, "{s}");
                 Ok(())
             }
         }
