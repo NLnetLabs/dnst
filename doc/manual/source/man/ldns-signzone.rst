@@ -44,10 +44,9 @@ Arguments
       they are either already present in the zone, or specified in a ``.key``
       file, and have the Secure Entry Point flag set.
 
-      Note: Unlike the original LDNS, DNSKEY algorithms marked as ``MUST NOT``
-      or ``NOT RECOMMENDED`` in table 3.1 of RFC 8624 "Algorithm
-      Implementation Requirements and Usage Guidance for DNSSEC" are NOT
-      supported.
+      Note: supported DNSKEY algorithms are the ones supported by the
+      domain crate. Supported algorithms include RSASHA256, ECDSAP256SHA256,
+      and ED25519 but exclude RSHASHA1 and RSASHA1-NSEC3-SHA1.
 
 Options
 -------
