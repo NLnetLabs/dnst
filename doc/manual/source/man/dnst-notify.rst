@@ -9,19 +9,28 @@ Synopsis
 Description
 -----------
 
-**dnst notify** sends a NOTIFY message to the specified name servers. A name
-server can be specified as a domain name or IP address.
+**dnst notify** sends a NOTIFY message to the specified name servers.
 
 This tells them that an updated zone is available at the primaries. It can
 perform TSIG signatures, and it can add a SOA serial number of the updated
 zone. If a server already has that serial number it will disregard the message.
+
+Arguments
+---------
+
+.. option:: <SERVERS>...
+
+      One or more name servers to which NOTIFY messages will be sent, by
+      default on port 53.
+
+      Each name server can be specified as a domain name or IP address.
 
 Options
 -------
 
 .. option:: -z <ZONE>
 
-      The zone to send the NOTIFY for.
+      The zone to send the NOTIFY for. Mandatory.
 
 .. option:: -s <SOA VERSION>
 

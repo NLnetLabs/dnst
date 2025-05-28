@@ -9,17 +9,18 @@ Synopsis
 Description
 -----------
 
-**ldns-keygen** is used to generate a private/public keypair. When run, it will
-create 3 files; a ``.key`` file with the public DNSKEY, a ``.private`` file
-with the private keydata and a ``.ds`` file with the DS record of the DNSKEY
-record.
+**ldns-keygen** is used to generate a private/public keypair.
+
+When run, it will create 3 files; a ``.key`` file with the public DNSKEY, a
+``.private`` file with the private keydata and a ``.ds`` file with the DS
+record of the DNSKEY record.
 
 .. **ldns-keygen** can also be used to create symmetric keys (for TSIG) by
 .. selecting the appropriate algorithm: hmac-md5.sig-alg.reg.int, hmac-sha1,
 .. hmac-sha224, hmac-sha256, hmac-sha384 or hmac-sha512. In that case no DS record
 .. will be created and no .ds file.
 
-ldns-keygen prints the basename for the key files: ``K<name>+<alg>+<id>``
+**ldns-keygen** prints the basename for the key files: ``K<name>+<alg>+<id>``
 
 Options
 -------
