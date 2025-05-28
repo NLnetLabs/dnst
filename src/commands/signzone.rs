@@ -1419,7 +1419,6 @@ impl SignZone {
         Ok(records)
     }
 
-    // TODO: Add tests.
     fn find_apex<'a>(
         records: &'a SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>,
         origin: Option<&StoredName>,
