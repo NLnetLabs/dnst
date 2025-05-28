@@ -221,6 +221,10 @@ fn signzone_with_nsec3_opt_out() {
     verify_signed_zone(dnst_out_path);
 }
 
+// Note: We don't test for correct handling of early glue due to the original
+// LDNS signzone and verify commands not handling this case correctly. See:
+// https://github.com/NLnetLabs/ldns/issues/277.
+
 fn verify_signed_zone(dnst_out_path: String) {
     let verify_output = Command::new("ldns-verify-zone")
         .args([&dnst_out_path])
