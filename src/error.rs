@@ -42,6 +42,9 @@ impl fmt::Display for PrimaryError {
 //--- Interaction
 
 impl Error {
+    pub const RED: u8 = 31;
+    pub const YELLOW: u8 = 33;
+
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
         Self(Box::new(Information {
@@ -105,6 +108,12 @@ impl From<&str> for Error {
 impl From<String> for Error {
     fn from(error: String) -> Self {
         Self::new(&error)
+    }
+}
+
+impl From<fmt::Error> for Error {
+    fn from(error: fmt::Error) -> Self {
+        Self::new(&error.to_string())
     }
 }
 

@@ -1,0 +1,2 @@
+example.org.      239     IN      SOA     example.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
+some.example.org. 240 IN  A  1.2.3.4
