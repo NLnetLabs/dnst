@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -18,7 +19,6 @@ use crate::{parse_args, run, Args};
 
 use super::Env;
 use super::Stream;
-use std::net::SocketAddr;
 
 /// A command to run in a [`FakeEnv`]
 ///
