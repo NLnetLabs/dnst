@@ -18,6 +18,7 @@ use crate::{parse_args, run, Args};
 
 use super::Env;
 use super::Stream;
+use std::net::SocketAddr;
 
 /// A command to run in a [`FakeEnv`]
 ///
@@ -83,7 +84,8 @@ impl Env for FakeEnv {
 
     fn dgram(
         &self,
-        _addr: std::net::SocketAddr,
+        _src: SocketAddr,
+        _dst: SocketAddr,
     ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
            + Clone
            + Send
