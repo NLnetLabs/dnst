@@ -40,7 +40,8 @@ pub trait Env {
 
     fn dgram(
         &self,
-        socket: SocketAddr,
+        src: SocketAddr,
+        dest: SocketAddr,
     ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
            + Clone
            + Send
@@ -132,13 +133,14 @@ impl<E: Env> Env for &E {
 
     fn dgram(
         &self,
-        socket: SocketAddr,
+        src: SocketAddr,
+        dest: SocketAddr,
     ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
            + Clone
            + Send
            + Sync
            + 'static {
-        (**self).dgram(socket)
+        (**self).dgram(src, dest)
     }
 
     async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {

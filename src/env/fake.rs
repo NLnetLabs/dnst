@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsString;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -83,7 +84,8 @@ impl Env for FakeEnv {
 
     fn dgram(
         &self,
-        _addr: std::net::SocketAddr,
+        _src: SocketAddr,
+        _dst: SocketAddr,
     ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
            + Clone
            + Send
