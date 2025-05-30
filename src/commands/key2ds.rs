@@ -20,7 +20,6 @@ use crate::Args;
 use super::{Command, LdnsCommand};
 
 #[derive(Clone, Debug, Parser, PartialEq, Eq)]
-#[command(version)]
 pub struct Key2ds {
     /// ignore SEP flag (i.e. make DS records for any key)
     #[arg(long = "ignore-sep")]
@@ -103,7 +102,6 @@ impl LdnsCommand for Key2ds {
                     }
                     keyfile = Some(val);
                 }
-                Arg::Short('v') => return Ok(Self::report_version()),
                 Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
                 Arg::Long(x) => {
                     return Err(format!("Long options are not supported, but `--{x}` given").into())
