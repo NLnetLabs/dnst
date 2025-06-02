@@ -21,7 +21,7 @@ Arguments
 .. option:: <ZONEFILE>
 
       The zonefile to sign. Any existing NSEC(3) and/or RRSIG resource records
-      will be skipped when loaded the file.
+      will be skipped when loading the file.
 
 .. option:: <KEY>...
 
