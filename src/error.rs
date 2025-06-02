@@ -1,7 +1,8 @@
 use std::fmt;
-use std::{error, io};
+use std::io;
 
 use domain::base::wire::ParseError;
+use tracing::error;
 
 use crate::env::Env;
 
@@ -41,6 +42,9 @@ impl fmt::Display for PrimaryError {
 //--- Interaction
 
 impl Error {
+    pub const RED: u8 = 31;
+    pub const YELLOW: u8 = 33;
+
     /// Construct a new error from a string.
     pub fn new(error: &str) -> Self {
         Self(Box::new(Information {
@@ -57,33 +61,21 @@ impl Error {
 
     /// Pretty-print this error.
     pub fn pretty_print(&self, env: impl Env) {
-        use std::io::IsTerminal;
-        let mut err = env.stderr();
-
-        let error = match &self.0.primary {
+        let msg = match &self.0.primary {
             // Clap errors are already styled. We don't want our own pretty
             // styling around that and context does not make sense for command
             // line arguments either. So we just print the styled string that
             // clap produces and return.
             PrimaryError::Clap(e) => {
+                let mut err = env.stderr();
                 writeln!(err, "{}", e.render().ansi());
                 return;
             }
             PrimaryError::Other(error) => error,
         };
 
-        // NOTE: This is a multicall binary, so argv[0] is necessary for
-        // program operation.  We would fail very early if it didn't exist.
-        let prog = std::env::args().next().unwrap();
-        let term = std::io::stderr().is_terminal();
-
-        let error_marker = if term {
-            "\x1B[31mERROR:\x1B[0m"
-        } else {
-            "ERROR:"
-        };
-
-        writeln!(err, "[{prog}] {error_marker} {error}");
+        error!("{msg}");
+        let mut err = env.stderr();
         for context in &self.0.context {
             writeln!(err, "... while {context}");
         }
@@ -116,6 +108,12 @@ impl From<&str> for Error {
 impl From<String> for Error {
     fn from(error: String) -> Self {
         Self::new(&error)
+    }
+}
+
+impl From<fmt::Error> for Error {
+    fn from(error: fmt::Error) -> Self {
+        Self::new(&error.to_string())
     }
 }
 
@@ -165,7 +163,7 @@ impl fmt::Debug for Error {
 
 //--- Error
 
-impl error::Error for Error {}
+impl std::error::Error for Error {}
 
 //------------ Macros --------------------------------------------------------
 

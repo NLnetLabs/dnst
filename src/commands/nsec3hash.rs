@@ -175,7 +175,7 @@ mod tests {
         use domain::rdata::nsec3::Nsec3Salt;
 
         use crate::commands::nsec3hash::Nsec3Hash;
-        use crate::env::fake::{FakeCmd, FakeEnv, FakeStream};
+        use crate::env::fake::{FakeCmd, FakeEnv};
 
         // Note: For the types we use that are provided by the domain crate,
         // construction of them from bad inputs should be tested in that
@@ -187,8 +187,9 @@ mod tests {
         fn execute() {
             let env = FakeEnv {
                 cmd: FakeCmd::new(["unused"]),
-                stdout: FakeStream::default(),
-                stderr: FakeStream::default(),
+                stdout: Default::default(),
+                stderr: Default::default(),
+                seconds_since_epoch: Default::default(),
                 stelline: None,
             };
 
