@@ -14,6 +14,7 @@ use tokio::net::UdpSocket;
 
 use super::Env;
 use super::Stream;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Use real I/O
 pub struct RealEnv;
@@ -41,6 +42,19 @@ impl Env for RealEnv {
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> std::borrow::Cow<'a, std::path::Path> {
         path.as_ref().into()
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        let now = SystemTime::now();
+        let value = match now.duration_since(UNIX_EPOCH) {
+            Ok(value) => value,
+            Err(_) => UNIX_EPOCH.duration_since(now).unwrap(),
+        };
+        value.as_secs() as u32
+    }
+
+    fn set_seconds_since_epoch(&mut self, _seconds: u32) {
+        // NO OP
     }
 
     fn dgram(

@@ -17,8 +17,8 @@ use domain::stelline::parse_stelline::{self, Stelline};
 use crate::error::Error;
 use crate::{parse_args, run, Args};
 
-use super::Env;
 use super::Stream;
+use super::{Env, RealEnv};
 
 /// A command to run in a [`FakeEnv`]
 ///
@@ -53,6 +53,9 @@ pub struct FakeEnv {
     /// The mocked stderr
     pub stderr: FakeStream,
 
+    /// The mocked current time, if any
+    pub seconds_since_epoch: Option<u32>,
+
     pub stelline: Option<(Stelline, Arc<CurrStepValue>)>,
 }
 
@@ -80,6 +83,17 @@ impl Env for FakeEnv {
             Some(cwd) => cwd.join(path).into(),
             None => path.as_ref().into(),
         }
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        match self.seconds_since_epoch {
+            Some(seconds) => seconds,
+            None => RealEnv.seconds_since_epoch(),
+        }
+    }
+
+    fn set_seconds_since_epoch(&mut self, seconds: u32) {
+        self.seconds_since_epoch = Some(seconds);
     }
 
     fn dgram(
@@ -165,6 +179,7 @@ impl FakeCmd {
             cmd: self.clone(),
             stdout: Default::default(),
             stderr: Default::default(),
+            seconds_since_epoch: None,
             stelline: None,
         };
         parse_args(env)
@@ -172,17 +187,24 @@ impl FakeCmd {
 
     /// Run the [`FakeCmd`] in a [`FakeEnv`], returning a [`FakeResult`]
     pub fn run(&self) -> FakeResult {
-        let env = FakeEnv {
+        self.run_with_modified_env(|_| {})
+    }
+
+    pub fn run_with_modified_env<F: Fn(&mut FakeEnv)>(&self, env_modifier: F) -> FakeResult {
+        let mut env = FakeEnv {
             cmd: self.clone(),
             stdout: Default::default(),
             stderr: Default::default(),
+            seconds_since_epoch: None,
             stelline: self
                 .stelline
                 .clone()
                 .map(|s| (s, Arc::new(CurrStepValue::new()))),
         };
 
-        let exit_code = run(&env);
+        env_modifier(&mut env);
+
+        let exit_code = run(&mut env);
 
         FakeResult {
             exit_code,

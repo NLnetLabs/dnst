@@ -6,15 +6,15 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::{fmt, io};
 
-mod real;
+use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
+use domain::resolv::{stub::conf::ResolvConf, StubResolver};
+use tracing_subscriber::fmt::MakeWriter;
 
 #[cfg(test)]
 pub mod fake;
 
-use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
-use domain::resolv::{stub::conf::ResolvConf, StubResolver};
+mod real;
 pub use real::RealEnv;
-use tracing_subscriber::fmt::MakeWriter;
 
 pub trait Env {
     /// Get an iterator over the command line arguments passed to the program
@@ -37,6 +37,14 @@ pub trait Env {
 
     /// Make relative paths absolute.
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;
+
+    /// Get the number of seconds since the UNIX epoch.
+    fn seconds_since_epoch(&self) -> u32;
+
+    /// Set the number of seconds since the UNIX epoch.
+    ///
+    /// Only for use by FakeEnv, should not do anything in RealEnv.
+    fn set_seconds_since_epoch(&mut self, seconds: u32);
 
     fn dgram(
         &self,
@@ -107,14 +115,6 @@ impl<T: io::Write> Stream<T> {
 }
 
 impl<E: Env> Env for &E {
-    // fn make_connection(&self) {
-    //     todo!()
-    // }
-
-    // fn make_stub_resolver(&self) {
-    //     todo!()
-    // }
-
     fn args_os(&self) -> impl Iterator<Item = OsString> {
         (**self).args_os()
     }
@@ -129,6 +129,55 @@ impl<E: Env> Env for &E {
 
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
         (**self).in_cwd(path)
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        (**self).seconds_since_epoch()
+    }
+
+    fn set_seconds_since_epoch(&mut self, _seconds: u32) {
+        unreachable!()
+    }
+
+    fn dgram(
+        &self,
+        socket: SocketAddr,
+    ) -> impl AsyncConnect<Connection: AsyncDgramRecv + AsyncDgramSend + Send + Sync + Unpin + 'static>
+           + Clone
+           + Send
+           + Sync
+           + 'static {
+        (**self).dgram(socket)
+    }
+
+    async fn stub_resolver_from_conf(&self, config: ResolvConf) -> StubResolver {
+        (**self).stub_resolver_from_conf(config).await
+    }
+}
+
+impl<E: Env> Env for &mut E {
+    fn args_os(&self) -> impl Iterator<Item = OsString> {
+        (**self).args_os()
+    }
+
+    fn stdout(&self) -> Stream<impl io::Write> {
+        (**self).stdout()
+    }
+
+    fn stderr(&self) -> Stream<impl io::Write + Send + Sync + 'static> {
+        (**self).stderr()
+    }
+
+    fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path> {
+        (**self).in_cwd(path)
+    }
+
+    fn seconds_since_epoch(&self) -> u32 {
+        (**self).seconds_since_epoch()
+    }
+
+    fn set_seconds_since_epoch(&mut self, seconds: u32) {
+        (**self).set_seconds_since_epoch(seconds);
     }
 
     fn dgram(
