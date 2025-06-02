@@ -1,0 +1,240 @@
+.\" Man page generated from reStructuredText.
+.
+.
+.nr rst2man-indent-level 0
+.
+.de1 rstReportMargin
+\\$1 \\n[an-margin]
+level \\n[rst2man-indent-level]
+level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
+-
+\\n[rst2man-indent0]
+\\n[rst2man-indent1]
+\\n[rst2man-indent2]
+..
+.de1 INDENT
+.\" .rstReportMargin pre:
+. RS \\$1
+. nr rst2man-indent\\n[rst2man-indent-level] \\n[an-margin]
+. nr rst2man-indent-level +1
+.\" .rstReportMargin post:
+..
+.de UNINDENT
+. RE
+.\" indent \\n[an-margin]
+.\" old: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.nr rst2man-indent-level -1
+.\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.in \\n[rst2man-indent\\n[rst2man-indent-level]]u
+..
+.TH "LDNS-SIGNZONE" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.SH NAME
+ldns-signzone \- Sign the zone with the given key(s)
+.SH SYNOPSIS
+.sp
+\fBldns\-signzone\fP \fB[OPTIONS]\fP \fB<ZONEFILE>\fP \fB<KEY>...\fP
+.SH DESCRIPTION
+.sp
+\fBldns\-signzone\fP is used to generate a DNSSEC signed zone. When run it will
+create a new zonefile that contains RRSIG and NSEC(3) resource records, as
+specified in RFC 4033, RFC 4034, RFC 4035 and RFC 5155.
+.sp
+This is a re\-implementation of the original \fBldns\-signzone\fP which is largely
+compatible with the original with some exceptions which are noted below.
+.SH ARGUMENTS
+.INDENT 0.0
+.TP
+.B <ZONEFILE>
+The zonefile to sign.
+.sp
+Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
+RRSIG resource records will be skipped when loading the zonefile.
+.sp
+Note: Unlike the original LDNS, the origin must be explicitly specified
+either via an \fB$ORIGIN\fP directive in the zonefile or using the \fB\-o\fP
+command line argument.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B <KEY>...
+The keys to sign the zonefile with.
+.sp
+Keys must be specified by their base file name (usually
+\fBK<name>+<alg>+<id>\fP), i.e. WITHOUT the \fB\&.private\fP or \fB\&.key\fP
+extension, with an optional path prefix. The \fB\&.private\fP file is
+required to exist. The \fB\&.key\fP file will be used if a \fBDNSKEY\fP record
+corresponding to the \fB\&.private\fP key cannot be found.
+.sp
+Multiple keys can be specified. Key Signing Keys are used as such when
+they are either already present in the zone, or specified in a \fB\&.key\fP
+file, and have the Secure Entry Point flag set.
+.INDENT 7.0
+.TP
+.B Note: Unlike the original LDNS:
+.INDENT 7.0
+.IP \(bu 2
+Public keys corresponding to \fB\&.private\fP key MUST be supplied,
+either as DNSKEY RRs in the given zone or as \fB\&.key\fP files. This
+Implementation is not able to generate missing public keys.
+.IP \(bu 2
+Supported DNSKEY algorithms are the ones supported by the
+domain crate. Supported algorithms include RSASHA256,
+ECDSAP256SHA256, and ED25519 but exclude RSHASHA1 and
+RSASHA1\-NSEC3\-SHA1.
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.SH OPTIONS
+.INDENT 0.0
+.TP
+.B \-a
+Sign the DNSKEY records with all keys. By default it is signed with a
+minimal number of keys, to keep the response size for the DNSKEY query
+small, only the SEP keys that are passed are used. If there are no
+SEP keys, the DNSKEY RRset is signed with the non\-SEP keys. This option
+turns off the default and all keys are used to sign the DNSKEY RRset.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-b
+Augments the zone and the RR\(aqs with extra comment texts for a more
+readable layout, easier to debug. NSEC3 records will have the unhashed
+owner names in the comment text.
+.sp
+Without this option, only DNSKEY RR\(aqs will have their Key Tag annotated
+in the comment text.
+.sp
+Note: This option is ignored if the \fB\-f \-\fP is used.
+.sp
+Note: Unlike the original LDNS, DS records are printed without a
+bubblebabble version of the data in the comment text, and some ordering
+for easier consumption by humans is ONLY done if \fB\-b\fP is in effect,
+e.g. ordering RRSIGs after the record they cover, and ordering NSEC3
+hashes by unhashed owner name rather than by hashed owner name.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-d
+Do not add used keys to the resulting zonefile.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-e <DATE>
+Set the expiration timestamp of signatures to the given date (and time,
+optionally, see \fI\%Engine Options\fP for details about acceptable
+formats for the given \fB<DATE>\fP value). Defaults to 4 weeks from now.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-f <FILE>
+Write signed zone to file. Use \fB\-f \-\fP to output to stdout. Defaults to
+\fB<ZONEFILE>.signed\fP\&.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-h
+Print the help text.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-i <DATE>
+Set the inception timestamp of signatures to the given date (and time,
+optionally, see \fI\%Engine Options\fP for details about acceptable
+formats for the given \fB<DATE>\fP value). Defaults to now.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-n
+Use NSEC3 instead of NSEC. If specified, you can use extra options (see
+\fI\%NSEC3 options\fP).
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-o <DOMAIN>
+Use this as the origin for the zone (only necessary for zonefiles with
+relative names and no $ORIGIN).
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-u
+Set the SOA serial in the resulting zonefile to the given number of
+seconds since Jan 1st 1970.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-u
+Sign with every unique algorithm in the provided keys. The DNSKEY set is
+signed with all the SEP keys, plus all the non\-SEP keys that have an
+algorithm that was not present in the SEP key set.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-v
+Print the version and exit.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-z <[SCHEME:]HASH>
+Add a ZONEMD resource record. Accepts both mnemonics and numbers.
+This option can be provided more than once to add multiple ZONEMD RRs.
+However, only one per scheme\-hash tuple will be added.
+.nf
+HASH supports \fBsha384\fP (1) and \fBsha512\fP (2).
+SCHEME supports \fBsimple\fP (1), the default.
+.fi
+.sp
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-Z
+Allow adding ZONEMD RRs without signing the zone. With this option, the
+<KEY>... argument becomes optional and determines whether to sign the
+zone.
+.UNINDENT
+.SH NSEC3 OPTIONS
+.sp
+The following options can be used with \fB\-n\fP to override the default NSEC3
+settings used.
+.INDENT 0.0
+.TP
+.B \-a <ALGORITHM>
+Specify the hashing algorithm. Only SHA\-1 is supported.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-t <NUMBER>
+Set the number of extra hash iterations. Defaults to 0.
+.sp
+Note: The default value differs to that of the original LDNS which has a
+default of 1. The new default value is in accordance with RFC 9276
+\(dqGuidance for NSEC3 Parameter Settings\(dq.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-s <STRING>
+Specify the salt as a hex string. Defaults to \fB\-\fP, meaning empty salt.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-p
+Set the opt\-out flag on all NSEC3 RRs.
+.UNINDENT
+.SH ENGINE OPTIONS
+.sp
+Unlike the original LDNS, OpenSSL engines and their associated command line
+arguments are not supported by this re\-implementation.
+.SH DATES
+.sp
+A date can be a UNIX timestamp as seconds since the Epoch (1970\-01\-01
+00:00 UTC), or of the form \fB<YYYYMMdd[hhmmss]>\fP\&.
+.sp
+Note: RRSIG inception and expiration timestamps in the signed output zone will
+be in unsigned decimal integer form (indicating seconds since 1 January 1970
+00:00:00 UTC) unlike the original LDNS which produced timestamps in the form
+\fBYYYYMMDDHHmmSS\fP\&.
+.SH AUTHOR
+NLnet Labs
+.SH COPYRIGHT
+2024–2025, NLnet Labs
+.\" Generated by docutils manpage writer.
+.
