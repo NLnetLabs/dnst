@@ -1,7 +1,7 @@
 # dnst
 
 dnst
-:: Domain Name Service Tools - tools to assist DNS operators with zone and nameserver maintenance.
+:: Domain Name System Tools - a toolset to assist DNS operators with zone and nameserver maintenance.
 
 dnst is intended to offer both:
 - a supported drop-in (see below) replacement and upgrade path for a subset of the popular NLnet Labs LDNS example tools, re-implemented in the Rust prpgramming language powered by the NLnet Labs "domain" Rust library
