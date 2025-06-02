@@ -31,9 +31,7 @@ See https://dnst.docs.nlnetlabs.nl/.
 
 ## Compatibility with supported LDNS examples
 
-In LDNS mode the supported LDNS examples are very closely emulated by dnst, though there are some exceptions.
-
-See the documentation for details.
+ldns mode allows for one-to-one replacement of ldns by dnst, without having to change existing scripts, for example. In this mode, the supported ldns examples are very closely emulated by dnst, though there are some exceptions. Please see the documentation for details. 
 
 Incompatibilities, bug reports and feature requests should be reported at https://github.com/NLnetLabs/dnst/issues.
 
