@@ -338,8 +338,9 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#29f52db7c215ac25dde7e1f88ac5b23dc00bfc0d"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a11dd7f04a6a6d2aea0153c6e31f5ea7af8b2efdf52cdaeea7a9a592c7fefef9"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -370,8 +371,9 @@ dependencies = [
 
 [[package]]
 name = "domain-macros"
-version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#29f52db7c215ac25dde7e1f88ac5b23dc00bfc0d"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e197fdfd2cdb5fdeb7f8ddcf3aed5d5d04ecde2890d448b14ffb716f7376b70"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -783,15 +785,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "openssl-src"
-version = "300.5.0+3.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8ce546f549326b0e6052b649198487d91320875da901e7bd11a06d1ee3f9c2f"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "openssl-sys"
 version = "0.9.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -799,7 +792,6 @@ checksum = "90096e2e47630d78b7d1c20952dc621f957103f8bc2c8359ec81290d75238571"
 dependencies = [
  "cc",
  "libc",
- "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
