@@ -31,7 +31,7 @@ static-openssl = ["domain/static-openssl"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+domain = { version = "0.11.0", features = [
     "bytes",
     "net",
     "resolv",
@@ -64,9 +64,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
-    "unstable-stelline",
-] }
+domain = { version = "0.11.0", features = ["unstable-stelline"] }
 pretty_assertions = "1.4.1"
 
 # Related reading: https://wiki.debian.org/Teams/RustPackaging/Policy
