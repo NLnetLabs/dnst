@@ -13,8 +13,8 @@ dnst is not intended perform dig and drill-like functions; for this NLnet Labs o
 
 dnst supports two modes of operation:
 
-1. DNST mode: the default.
-2. LDNS emulation mode: activated by invoking dnst using the name of a supported LDNS example, e.g. ldns-keygen.
+1. dnst mode: the default.
+2. ldns emulation mode: activated by invoking dnst using the name of a supported ldns example, e.g. `ldns-keygen`.
 
 `dnst` currently offers drop-in (see below) replacement of the following LDNS examples:
 
