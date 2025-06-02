@@ -9,7 +9,7 @@ dnst is intended to offer both:
 
 It is NOT intended to be a dig-like query tool, for that see the NLnet Labs dnsi tool.
 
-## tl;dr
+## Summary
 
 dnst supports two modes of operation:
 
