@@ -16,7 +16,7 @@ dnst supports two modes of operation:
 1. DNST mode: the default.
 2. LDNS emulation mode: activated by invoking dnst using the name of a supported LDNS example, e.g. ldns-keygen.
 
-`dnst` currently offers drop-in *1 replacement of the following LDNS examples:
+`dnst` currently offers drop-in (see below) replacement of the following LDNS examples:
 
 - key2ds
 - keygen
