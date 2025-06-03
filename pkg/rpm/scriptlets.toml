@@ -18,6 +18,7 @@ ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-keygen
 ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-key2ds
 ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-nsec3-hash
 ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-notify
+ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-signzone
 ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-update
 '''
 
@@ -33,6 +34,7 @@ if [ $1 -eq 0 ] ; then
     rm -f /usr/bin/ldns-key2ds
     rm -f /usr/bin/ldns-nsec3-hash
     rm -f /usr/bin/ldns-notify
+    rm -f /usr/bin/ldns-signzone
     rm -f /usr/bin/ldns-update
 fi
 '''

@@ -7,6 +7,7 @@ configure)
     ln -f -s /usr/bin/dnst /usr/bin/ldns-key2ds
     ln -f -s /usr/bin/dnst /usr/bin/ldns-nsec3-hash
     ln -f -s /usr/bin/dnst /usr/bin/ldns-notify
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-signzone
     ln -f -s /usr/bin/dnst /usr/bin/ldns-update
     ;;
 esac
