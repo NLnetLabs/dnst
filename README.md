@@ -5,7 +5,7 @@ dnst
 
 dnst is intended to offer both:
 - a supported drop-in (see below) replacement and upgrade path for a subset of the popular NLnet Labs LDNS example tools, re-implemented in the Rust prpgramming language powered by the NLnet Labs "domain" Rust library
-- an envolving toolbox of commands to aid DNS operators in the maintenance and operation of their zones and nameservers.
+- an evolving toolbox of commands to aid DNS operators in the maintenance and operation of their zones and nameservers.
 
 dnst is not intended perform dig and drill-like functions; for this NLnet Labs offers [dnsi](https://github.com/NLnetLabs/dnsi).
 
