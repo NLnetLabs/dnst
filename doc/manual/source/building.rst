@@ -6,7 +6,7 @@ your system. The Rust compiler runs on, and compiles to, a great number of
 platforms, though not all of them are equally supported. The official `Rust
 Platform Support`_ page provides an overview of the various support levels.
 
-While some system distributions include Rust as system packages, Routinator
+While some system distributions include Rust as system packages, dnst
 relies on a relatively new version of Rust, currently |rustversion| or newer.
 We therefore suggest to use the canonical Rust installation via a tool called
 :program:`rustup`.
@@ -31,53 +31,59 @@ the Rust package manager. It is a tool that allows Rust packages to declare
 their various dependencies and ensure that you’ll always get a repeatable
 build. 
 
-Cargo fetches and builds dnst’s dependencies into an executable binary
-for your platform. By default you install from crates.io, but you can for
-example also install from a specific Git URL, as explained below.
+Cargo fetches and builds dnst’s dependencies into an executable binary for
+your platform. By default you install from crates.io, but you can also
+install from a specific Git URL.
 
-Installing the latest dnst release from crates.io is as simple as
-running:
+..
+    Installing the latest dnst release from crates.io is as simple as
+    running:
 
-.. code-block:: text
+    .. code-block:: text
 
-  cargo install --locked dnst
+    cargo install --locked dnst
 
-The command will build dnst and install it in the same directory that
-Cargo itself lives in, likely ``$HOME/.cargo/bin``. This means dnst
-will be in your path, too.
+    The command will build dnst and install it in the same directory that
+    Cargo itself lives in, likely ``$HOME/.cargo/bin``. This means dnst
+    will be in your path, too.
 
-Updating
-""""""""
+    Updating
+    """"""""
 
-If you want to update to the latest version of dnst, it’s recommended
-to update Rust itself as well, using:
+    If you want to update to the latest version of dnst, it’s recommended
+    to update Rust itself as well, using:
 
-.. code-block:: text
+    .. code-block:: text
 
-    rustup update
+        rustup update
 
-Use the ``--force`` option to overwrite an existing version with the latest
-Routinator release:
+    Use the ``--force`` option to overwrite an existing version with the latest
+    dnst release:
 
-.. code-block:: text
+    .. code-block:: text
 
-    cargo install --locked --force dnst
+        cargo install --locked --force dnst
 
-Installing Specific Versions
-""""""""""""""""""""""""""""
+    Installing Specific Versions
+    """"""""""""""""""""""""""""
 
-If you want to install a specific version of
-Routinator using Cargo, explicitly use the ``--version`` option. If needed,
-use the ``--force`` option to overwrite an existing version:
-        
-.. code-block:: text
+    If you want to install a specific version of
+    dnst using Cargo, explicitly use the ``--version`` option. If needed,
+    use the ``--force`` option to overwrite an existing version:
+            
+    .. code-block:: text
 
-    cargo install --locked --force dnst --version 0.1.0-rc1
+        cargo install --locked --force dnst --version 0.1.0-rc1
 
-All new features of dnst are built on a branch and merged via a `pull
-request <https://github.com/NLnetLabs/routinator/pulls>`_, allowing you to
-easily try them out using Cargo. If you want to try a specific branch from
-the repository you can use the ``--git`` and ``--branch`` options:
+    All new features of dnst are built on a branch and merged via a `pull
+    request <https://github.com/NLnetLabs/dnst/pulls>`_, allowing you to
+    easily try them out using Cargo. If you want to try a specific branch from
+    the repository you can use the ``--git`` and ``--branch`` options:
+
+Because dnst is not yet published on `crates.io
+<https://crates.io/crates/dnst>`_, you can currently only install it directly
+from GitHub using the ``--git`` option. If you want to try a specific branch,
+include the ``--branch`` option as well:
 
 .. code-block:: text
 
