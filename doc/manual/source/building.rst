@@ -24,18 +24,18 @@ Alternatively, visit the `Rust website
 Building and Updating
 ---------------------
 
-In Rust, a library or executable program such as dnst is called a
-*crate*. Crates are published on `crates.io
-<https://crates.io/crates/dnst>`_, the Rust package registry. Cargo is
-the Rust package manager. It is a tool that allows Rust packages to declare
-their various dependencies and ensure that you’ll always get a repeatable
-build. 
-
-Cargo fetches and builds dnst’s dependencies into an executable binary for
-your platform. By default you install from crates.io, but you can also
-install from a specific Git URL.
-
 ..
+    In Rust, a library or executable program such as dnst is called a
+    *crate*. Crates are published on `crates.io
+    <https://crates.io/crates/dnst>`_, the Rust package registry. Cargo is
+    the Rust package manager. It is a tool that allows Rust packages to declare
+    their various dependencies and ensure that you’ll always get a repeatable
+    build. 
+
+    Cargo fetches and builds dnst’s dependencies into an executable binary for
+    your platform. By default you install from crates.io, but you can also
+    install from a specific Git URL.
+
     Installing the latest dnst release from crates.io is as simple as
     running:
 
@@ -80,10 +80,17 @@ install from a specific Git URL.
     easily try them out using Cargo. If you want to try a specific branch from
     the repository you can use the ``--git`` and ``--branch`` options:
 
-Because dnst is not yet published on `crates.io
-<https://crates.io/crates/dnst>`_, you can currently only install it directly
-from GitHub using the ``--git`` option. If you want to try a specific branch,
-include the ``--branch`` option as well:
+In Rust, a library or executable program such as dnst is called a *crate*.
+Crates are normally published on `crates.io <https://crates.io/>`_, the Rust
+package registry. Cargo is the Rust package manager. It is a tool that allows
+Rust packages to declare their various dependencies and ensure that you’ll
+always get a repeatable build. 
+
+Cargo fetches and builds dnst’s dependencies into an executable binary for
+your platform. By default you install from crates.io, but because dnst is not
+yet published in the Rust package registry, you can currently only install it
+directly from GitHub using the ``--git`` option. If you want to try a
+specific branch, include the ``--branch`` option as well:
 
 .. code-block:: text
 
