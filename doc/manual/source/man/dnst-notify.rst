@@ -32,6 +32,10 @@ Options
 
       The zone to send the NOTIFY for. Mandatory.
 
+.. option:: -I <ADDRESS>
+
+      Source IP to send the message from.
+
 .. option:: -s <SOA VERSION>
 
       SOA version number to include in the NOTIFY message.

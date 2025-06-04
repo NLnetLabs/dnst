@@ -23,7 +23,7 @@ Arguments
 .. option:: <ZONEFILE>
 
       The zonefile to sign. Any existing NSEC(3) and/or RRSIG resource records
-      will be skipped when loaded the file.
+      will be skipped when loading the file.
 
 .. option:: <KEY>...
 
@@ -159,6 +159,8 @@ settings used.
 .. option:: -P
 
       Set the opt-out flag on all NSEC3 RRs and skip unsigned delegations.
+
+.. TODO: document nsec3_opt_out
 
 .. _dnst-signzone-dates:
 

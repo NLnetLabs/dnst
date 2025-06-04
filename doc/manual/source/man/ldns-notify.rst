@@ -23,9 +23,9 @@ Options
 
       The zone that is updated.
 
-.. ..option:: -I <ADDRESS>
+.. option:: -I <ADDRESS>
 
-..       Source IP to send the message from.
+       Source IP to send the message from.
 
 .. option:: -s <SOA VERSION>
 
