@@ -11,6 +11,15 @@ It depends on OpenSSL for its cryptography related functions.
 .. toctree::
    :maxdepth: 2
    :hidden:
+   :caption: Getting Started
+   :name: toc-getting-started
+
+   installation
+   building
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
    :caption: Reference
    :name: toc-reference
    
