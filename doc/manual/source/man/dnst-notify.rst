@@ -36,6 +36,10 @@ Options
 
       Source IP to send the message from.
 
+.. option:: -I <ADDRESS>
+
+      Source IP to send the message from.
+
 .. option:: -s <SOA VERSION>
 
       SOA version number to include in the NOTIFY message.
