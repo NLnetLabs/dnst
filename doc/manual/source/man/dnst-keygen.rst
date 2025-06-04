@@ -28,12 +28,20 @@ The following files will be created:
 
 Upon completion, ``K<name>+<alg>+<tag>`` will be printed.
 
+Arguments
+---------
+
+.. option:: <DOMAIN NAME>
+
+      The owner name of the apex of the zone which the generated key is
+      intended to sign.
+
 Options
 -------
 
 .. option:: -a <NUMBER OR MNEMONIC>
 
-      Use the given signing algorithm.
+      Use the given signing algorithm. Mandatory.
 
       Possible values are:
 

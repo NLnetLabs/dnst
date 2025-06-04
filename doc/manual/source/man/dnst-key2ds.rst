@@ -14,6 +14,13 @@ Description
 The following file will be created for each key: ``K<name>+<alg>+<id>.ds``. The
 base name ``K<name>+<alg>+<id>`` will be printed to stdout.
 
+Arguments
+---------
+
+.. option:: <KEYFILE>
+
+      ``<KEYFILE>`` must be a file containing one or more RFC 4034 ``DNSKEY``
+      resource records in presentation format.
 
 Options
 -------

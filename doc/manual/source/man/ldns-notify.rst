@@ -57,4 +57,3 @@ Options
 .. option:: -v
 
       Print the version and exit.
-
