@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-UPDATE" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-UPDATE" "1" "Jun 04, 2025" "0.1.0-rc1" "dnst"
 .SH NAME
 dnst-update \- Send a dynamic update packet to update an IP (or delete all existing IPs) for a domain name
 .SH SYNOPSIS
@@ -36,39 +36,44 @@ dnst-update \- Send a dynamic update packet to update an IP (or delete all exist
 \fB[<TSIG KEY NAME> <TSIG ALGORITHM> <TSIG KEY DATA>]\fP
 .SH DESCRIPTION
 .sp
-\fBdnst update\fP sends a dynamic update packet to update an IP (or delete all
-existing IPs) for a domain name.
+\fBdnst update\fP sends an RFC 2136 Dynamic Update message to the name servers
+for a zone to update an IP address (or delete all existing IP addresses) for a
+domain name.
+.sp
+The message to be sent can be optionally authenticated using a given TSIG key.
 .SH ARGUMENTS
 .INDENT 0.0
 .TP
 .B <DOMAIN NAME>
-The domain name to update the IP address of
+The domain name to update the IP address of.
 .UNINDENT
 .INDENT 0.0
 .TP
 .B <ZONE>
-The zone to send the update to (if omitted, derived from SOA record)
+The zone to send the update to (if omitted, derived from SOA record).
 .UNINDENT
 .INDENT 0.0
 .TP
 .B <IP>
-The IP to update the domain with (\fBnone\fP to remove any existing IPs)
+The IP address to update the domain with (\fBnone\fP to remove any
+existing IP addresses)
 .UNINDENT
 .INDENT 0.0
 .TP
 .B <TSIG KEY NAME>
-TSIG key name
+TSIG key name.
 .UNINDENT
 .INDENT 0.0
 .TP
 .B <TSIG ALGORITHM>
-TSIG algorithm (e.g. \(dqhmac\-sha256\(dq)
+TSIG algorithm (e.g. \(dqhmac\-sha256\(dq).
 .UNINDENT
 .INDENT 0.0
 .TP
 .B <TSIG KEY DATA>
 Base64 encoded TSIG key data.
 .UNINDENT
+.SH OPTIONS:
 .INDENT 0.0
 .TP
 .B \-h, \-\-help

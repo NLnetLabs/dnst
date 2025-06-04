@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYGEN" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-KEYGEN" "1" "Jun 04, 2025" "0.1.0-rc1" "dnst"
 .SH NAME
 dnst-keygen \- Generate a new key pair for a domain name
 .SH SYNOPSIS
@@ -57,11 +57,18 @@ in zone file format. It is only created for key signing keys.
 .sp
 .sp
 Upon completion, \fBK<name>+<alg>+<tag>\fP will be printed.
+.SH ARGUMENTS
+.INDENT 0.0
+.TP
+.B <DOMAIN NAME>
+The owner name of the apex of the zone which the generated key is
+intended to sign.
+.UNINDENT
 .SH OPTIONS
 .INDENT 0.0
 .TP
 .B \-a <NUMBER OR MNEMONIC>
-Use the given signing algorithm.
+Use the given signing algorithm. Mandatory.
 .sp
 Possible values are:
 .TS

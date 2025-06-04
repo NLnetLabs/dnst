@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "LDNS-KEYGEN" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "LDNS-KEYGEN" "1" "Jun 04, 2025" "0.1.0-rc1" "dnst"
 .SH NAME
 ldns-keygen \- Generate a new key pair for a domain name
 .SH SYNOPSIS
@@ -35,12 +35,13 @@ ldns-keygen \- Generate a new key pair for a domain name
 \fBldns\-keygen\fP \fB[OPTIONS]\fP \fB<DOMAIN NAME>\fP
 .SH DESCRIPTION
 .sp
-\fBldns\-keygen\fP is used to generate a private/public keypair. When run, it will
-create 3 files; a \fB\&.key\fP file with the public DNSKEY, a \fB\&.private\fP file
-with the private keydata and a \fB\&.ds\fP file with the DS record of the DNSKEY
-record.
+\fBldns\-keygen\fP is used to generate a private/public keypair.
 .sp
-ldns\-keygen prints the basename for the key files: \fBK<name>+<alg>+<id>\fP
+When run, it will create 3 files; a \fB\&.key\fP file with the public DNSKEY, a
+\fB\&.private\fP file with the private keydata and a \fB\&.ds\fP file with the DS
+record of the DNSKEY record.
+.sp
+\fBldns\-keygen\fP prints the basename for the key files: \fBK<name>+<alg>+<id>\fP
 .SH OPTIONS
 .INDENT 0.0
 .TP
@@ -49,6 +50,9 @@ Create a key with this algorithm. Specifying \(aqlist\(aq here gives a list of
 supported algorithms. Several alias names are also accepted (from older
 versions and other software), the list gives names from the RFC. Also the
 plain algorithm number is accepted.
+.sp
+Note: Unlike the original LDNS, this implementation does not support
+creation of symmetric keys (for TSIG).
 .UNINDENT
 .INDENT 0.0
 .TP
