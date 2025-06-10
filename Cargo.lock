@@ -325,6 +325,7 @@ dependencies = [
  "lazy_static",
  "lexopt",
  "octseq",
+ "openssl",
  "pretty_assertions",
  "rayon",
  "regex",
@@ -339,7 +340,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?rev=bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e#bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e"
+source = "git+https://github.com/NLnetLabs/domain.git?rev=a3e7ab0bc248bada2c2564bf77ddc58010d4ce25#a3e7ab0bc248bada2c2564bf77ddc58010d4ce25"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -371,7 +372,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?rev=bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e#bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e"
+source = "git+https://github.com/NLnetLabs/domain.git?rev=a3e7ab0bc248bada2c2564bf77ddc58010d4ce25#a3e7ab0bc248bada2c2564bf77ddc58010d4ce25"
 dependencies = [
  "proc-macro2",
  "quote",
