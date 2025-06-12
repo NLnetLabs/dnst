@@ -11,6 +11,13 @@ Description
 
 **dnst nsec3-hash** prints the NSEC3 hash of a given domain name.
 
+Arguments
+---------
+
+.. option:: <DOMAIN NAME>
+
+      The domain name to generate an NSEC3 hash for.
+
 Options
 -------
 

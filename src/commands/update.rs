@@ -363,7 +363,12 @@ impl Update {
         for name in nsnames {
             let found_ips = resolver.lookup_host(&name).await?;
             for socket in found_ips.port_iter(53) {
-                let dgram_connection = dgram::Connection::new(env.dgram(socket));
+                let local: SocketAddr = if socket.is_ipv4() {
+                    ([0u8; 4], 0).into()
+                } else {
+                    ([0u16; 8], 0).into()
+                };
+                let dgram_connection = dgram::Connection::new(env.dgram(local, socket));
 
                 let connection: Box<dyn SendRequest<_>> = if let Some(k) = &tsig_key {
                     Box::new(tsig::Connection::new(k.clone(), dgram_connection))

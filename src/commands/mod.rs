@@ -5,7 +5,6 @@ pub mod keygen;
 pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
-pub mod signer;
 pub mod signzone;
 pub mod update;
 
@@ -64,10 +63,6 @@ pub enum Command {
     #[command(name = "signzone")]
     SignZone(self::signzone::SignZone),
 
-    /// Sign the zone with the given key(s)
-    #[command(name = "signer")]
-    SignZoneNg(self::signer::Signer),
-
     /// Send a NOTIFY packet to DNS servers
     ///
     /// This tells them that an updated zone is available at the primaries. It can perform TSIG
@@ -103,7 +98,6 @@ impl Command {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
-            Self::SignZoneNg(signzone_ng) => signzone_ng.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Keyset(keyset) => keyset.execute(env),
             Self::Help(help) => help.execute(),

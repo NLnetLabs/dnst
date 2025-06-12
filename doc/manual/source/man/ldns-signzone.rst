@@ -26,6 +26,10 @@ Arguments
       Note: Unlike the original LDNS, any existing NSEC(3), NSEC3PARAM and/or
       RRSIG resource records will be skipped when loading the zonefile.
 
+      Note: Unlike the original LDNS, the origin must be explicitly specified
+      either via an ``$ORIGIN`` directive in the zonefile or using the ``-o``
+      command line argument.
+
 .. option:: <KEY>...
 
       The keys to sign the zonefile with.
@@ -40,10 +44,14 @@ Arguments
       they are either already present in the zone, or specified in a ``.key``
       file, and have the Secure Entry Point flag set.
 
-      Note: Unlike the original LDNS, DNSKEY algorithms marked as ``MUST NOT``
-      or ``NOT RECOMMENDED`` in table 3.1 of RFC 8624 "Algorithm
-      Implementation Requirements and Usage Guidance for DNSSEC" are NOT
-      supported.
+      Note: Unlike the original LDNS:
+        - Public keys corresponding to ``.private`` key MUST be supplied,
+          either as DNSKEY RRs in the given zone or as ``.key`` files. This
+          implementation is not able to generate missing public keys.
+        - Supported DNSKEY algorithms are the ones supported by the
+          domain crate. Supported algorithms include RSASHA256,
+          ECDSAP256SHA256, and ED25519 but exclude RSHASHA1 and
+          RSASHA1-NSEC3-SHA1.
 
 Options
 -------
@@ -105,16 +113,15 @@ Options
 
 .. option:: -o <DOMAIN>
 
-      Use this as the origin for the zone (only necessary for zonefiles with
-      relative names and no $ORIGIN).
-
-      Note: Unlike the original LDNS, the origin is NOT set to the owner of
-      the first SOA found.
+      Use this owner name as the apex of the zone.
+      
+      If not specified the owner name of the first SOA record will be used as
+      the apex of the zone.
 
 .. option:: -u
 
       Set the SOA serial in the resulting zonefile to the given number of
-      seconds since Jan 1st 1970.
+      seconds since January 1st 1970.
 
 .. option:: -u
 

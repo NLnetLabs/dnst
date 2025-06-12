@@ -67,7 +67,7 @@ impl LdnsCommand for Nsec3Hash {
 
     fn parse_ldns<I: IntoIterator<Item = OsString>>(args: I) -> Result<Args, Error> {
         let mut algorithm = Nsec3HashAlgorithm::SHA1;
-        let mut iterations = 1;
+        let mut iterations = 0;
         let mut salt = Nsec3Salt::empty();
         let mut name = None;
 
@@ -158,7 +158,6 @@ impl Nsec3Hash {
                 .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
                 .to_string()
                 .to_lowercase();
-
         writeln!(env.stdout(), "{}.", hash);
         Ok(())
     }
@@ -176,7 +175,7 @@ mod tests {
         use domain::rdata::nsec3::Nsec3Salt;
 
         use crate::commands::nsec3hash::Nsec3Hash;
-        use crate::env::fake::{FakeCmd, FakeEnv, FakeStream};
+        use crate::env::fake::{FakeCmd, FakeEnv};
 
         // Note: For the types we use that are provided by the domain crate,
         // construction of them from bad inputs should be tested in that
@@ -188,8 +187,9 @@ mod tests {
         fn execute() {
             let env = FakeEnv {
                 cmd: FakeCmd::new(["unused"]),
-                stdout: FakeStream::default(),
-                stderr: FakeStream::default(),
+                stdout: Default::default(),
+                stderr: Default::default(),
+                seconds_since_epoch: Default::default(),
                 stelline: None,
             };
 
@@ -333,10 +333,10 @@ mod tests {
 
         #[test]
         fn accept_good_cli_args() {
-            assert_cmd_eq(&["nlnetlabs.nl"], "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n");
+            assert_cmd_eq(&["nlnetlabs.nl"], "asqe4ap6479d7085ljcs10a2fpb2do94.\n");
             assert_cmd_eq(
                 &["-a", "1", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-t", "0", "nlnetlabs.nl"],
@@ -348,11 +348,11 @@ mod tests {
             );
             assert_cmd_eq(
                 &["-s", "", "nlnetlabs.nl"],
-                "e3dbcbo05tvq0u7po4emvbu79c8vpcgk.\n",
+                "asqe4ap6479d7085ljcs10a2fpb2do94.\n",
             );
             assert_cmd_eq(
                 &["-s", "DEADBEEF", "nlnetlabs.nl"],
-                "2h8rboqdrq0ard25vrmc4hjg7m56hnhd.\n",
+                "dfucs7bmmtsil9gij77k1kmocclg5d8a.\n",
             );
         }
 
@@ -391,6 +391,7 @@ mod tests {
             FakeCmd::new(["ldns-nsec3-hash"]).args(args).parse()
         }
 
+        #[track_caller]
         fn assert_cmd_eq(args: &[&str], expected_output: &str) {
             let result = FakeCmd::new(["ldns-nsec3-hash"]).args(args).run();
             assert_eq!(result.exit_code, 0);

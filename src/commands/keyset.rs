@@ -3,46 +3,31 @@ use crate::error::Error;
 use crate::util;
 use bytes::Bytes;
 use domain::base::iana::Class;
-use domain::base::iana::DigestAlgorithm;
-use domain::base::zonefile_fmt::DisplayKind;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::Name;
-use domain::base::Record;
-use domain::base::ToName;
-use domain::base::Ttl;
+use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
+use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
+use domain::base::{Name, Record, ToName, Ttl};
 use domain::crypto::sign;
-use domain::crypto::sign::GenerateParams;
-use domain::crypto::sign::KeyPair;
-use domain::crypto::sign::SecretKeyBytes;
-use domain::dnssec::common::display_as_bind;
-use domain::dnssec::common::parse_from_bind;
-use domain::dnssec::sign::keys::keyset::Action;
-use domain::dnssec::sign::keys::keyset::Key;
-use domain::dnssec::sign::keys::keyset::KeySet;
-use domain::dnssec::sign::keys::keyset::KeyType;
-use domain::dnssec::sign::keys::keyset::RollType;
-use domain::dnssec::sign::keys::keyset::UnixTime;
+use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
+use domain::dnssec::common::{display_as_bind, parse_from_bind};
+use domain::dnssec::sign::keys::keyset::{Action, Key, KeySet, KeyType, RollType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
 use domain::dnssec::sign::records::Rrset;
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::dnssec::Timestamp;
-use domain::rdata::Cdnskey;
-use domain::rdata::Cds;
-use domain::rdata::Ds;
-use domain::rdata::ZoneRecordData;
+use domain::rdata::{Cdnskey, Cds, Ds, ZoneRecordData};
 use domain::zonefile::inplace::Zonefile;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
-use jiff::Span;
-use jiff::SpanRelativeTo;
+use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
-use std::fmt::Formatter;
-use std::fs::remove_file;
-use std::fs::File;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::fs::{remove_file, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
+
+const MAX_KEY_TAG_TRIES: u8 = 10;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Keyset {
@@ -145,42 +130,63 @@ impl Keyset {
             // Check for CSK.
             let actions = if ksc.use_csk {
                 // Generate CSK.
-                let (csk_pub_name, csk_priv_name) = new_keys(
+                let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.csk_generate_params.to_generate_params(),
                     true,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 kss.keyset
-                    .add_key_csk(csk_pub_name.clone(), Some(csk_priv_name), UnixTime::now())
+                    .add_key_csk(
+                        csk_pub_name.clone(),
+                        Some(csk_priv_name),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
                     .expect("should not happen");
 
                 kss.keyset
-                    .start_roll(RollType::CskRoll, &[], &[&csk_pub_name])
+                    .start_roll(RollType::AlgorithmRoll, &[], &[&csk_pub_name])
                     .expect("should not happen")
             } else {
-                let (ksk_pub_name, ksk_priv_name) = new_keys(
+                let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.ksk_generate_params.to_generate_params(),
                     true,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 kss.keyset
-                    .add_key_ksk(ksk_pub_name.clone(), Some(ksk_priv_name), UnixTime::now())
+                    .add_key_ksk(
+                        ksk_pub_name.clone(),
+                        Some(ksk_priv_name),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
                     .expect("should not happen");
-                let (zsk_pub_name, zsk_priv_name) = new_keys(
+                let (zsk_pub_name, zsk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.zsk_generate_params.to_generate_params(),
                     false,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 kss.keyset
-                    .add_key_zsk(zsk_pub_name.clone(), Some(zsk_priv_name), UnixTime::now())
+                    .add_key_zsk(
+                        zsk_pub_name.clone(),
+                        Some(zsk_priv_name),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
                     .expect("should not happen");
 
                 let new = [ksk_pub_name.as_ref(), zsk_pub_name.as_ref()];
                 kss.keyset
-                    .start_roll(RollType::CskRoll, &[], &new)
+                    .start_roll(RollType::AlgorithmRoll, &[], &new)
                     .expect("should not happen")
             };
 
@@ -214,7 +220,16 @@ impl Keyset {
                 .keyset
                 .keys()
                 .iter()
-                .filter(|(_, key)| matches!(key.keytype(), KeyType::Ksk(_)))
+                .filter(|(_, key)| {
+                    if let KeyType::Ksk(keystate) = key.keytype() {
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    } else {
+                        false
+                    }
+                })
                 .map(|(name, _)| name.clone())
                 .collect();
             let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
@@ -222,16 +237,19 @@ impl Keyset {
             // Collect algorithms. Maybe this needs to be in the library.
 
             // Create a new KSK
-            let (ksk_pub_name, ksk_priv_name) = new_keys(
+            let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
                 kss.keyset.name(),
                 ksc.ksk_generate_params.to_generate_params(),
                 true,
+                kss.keyset.keys(),
                 env,
             )?;
             kss.keyset
                 .add_key_ksk(
                     ksk_pub_name.clone(),
                     Some(ksk_priv_name.clone()),
+                    algorithm,
+                    key_tag,
                     UnixTime::now(),
                 )
                 .map_err::<Error, _>(|e| {
@@ -262,6 +280,89 @@ impl Keyset {
 
             print_actions(&actions);
             state_changed = true;
+        } else if self.cmd == "start-zsk-roll" {
+            if kss.keyset.keys().is_empty() {
+                // Avoid ZSK roll without init.
+                return Err("not yet initialized\n".into());
+            }
+
+            // Check for CSK.
+            if ksc.use_csk {
+                return Err("wrong key roll, use start-csk-roll\n".into());
+            }
+
+            // Refuse if we can find a CSK key.
+            if kss
+                .keyset
+                .keys()
+                .iter()
+                .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
+            {
+                return Err("cannot start key roll, found CSK\n".into());
+            }
+
+            // Find existing ZSKs. Do we complain if there is none?
+            let old_stored: Vec<_> = kss
+                .keyset
+                .keys()
+                .iter()
+                .filter(|(_, key)| {
+                    if let KeyType::Zsk(keystate) = key.keytype() {
+                        !keystate.old() || keystate.signer() || keystate.present()
+                    } else {
+                        false
+                    }
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
+            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+            // Collect algorithms. Maybe this needs to be in the library.
+
+            // Create a new ZSK
+            let (zsk_pub_name, zsk_priv_name, algorithm, key_tag) = new_keys(
+                kss.keyset.name(),
+                ksc.zsk_generate_params.to_generate_params(),
+                false,
+                kss.keyset.keys(),
+                env,
+            )?;
+            kss.keyset
+                .add_key_zsk(
+                    zsk_pub_name.clone(),
+                    Some(zsk_priv_name.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add ZSK {zsk_pub_name}: {e}\n").into()
+                })?;
+
+            let new = [zsk_pub_name.as_ref()];
+
+            // Start the key roll
+            let actions = match kss
+                .keyset
+                .start_roll(RollType::ZskRoll, &old, &new)
+                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+            {
+                Ok(actions) => actions,
+                Err(e) => {
+                    // Remove the key files we just created.
+                    remove_file(zsk_priv_name.clone()).map_err::<Error, _>(|e| {
+                        format!("unable to remove private key file {zsk_priv_name}: {e}\n").into()
+                    })?;
+                    remove_file(zsk_pub_name.clone()).map_err::<Error, _>(|e| {
+                        format!("unable to remove public key file {zsk_pub_name}: {e}\n").into()
+                    })?;
+                    return Err(e);
+                }
+            };
+            handle_actions(&actions, &ksc, &mut kss, env)?;
+
+            print_actions(&actions);
+            state_changed = true;
         } else if self.cmd == "start-csk-roll" {
             // Find existing KSKs, ZSKs and CSKs. Do we complain if there
             // are none?
@@ -270,9 +371,15 @@ impl Keyset {
                 .keys()
                 .iter()
                 .filter(|(_, key)| match key.keytype() {
-                    KeyType::Ksk(_) => true,
-                    KeyType::Zsk(_) => true,
-                    KeyType::Csk(_, _) => true,
+                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
+                        // Assume that for a CSK it is sufficient to check
+                        // one of the key states. Also assume that we
+                        // can check at_parent for a ZSK.
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    }
                     KeyType::Include(_) => false,
                 })
                 .map(|(name, _)| name.clone())
@@ -285,10 +392,11 @@ impl Keyset {
                 let mut new_files = Vec::new();
 
                 // Create a new CSK
-                let (csk_pub_name, csk_priv_name) = new_keys(
+                let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.csk_generate_params.to_generate_params(),
                     true,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 new_files.push(csk_priv_name.clone());
@@ -297,6 +405,8 @@ impl Keyset {
                     .add_key_csk(
                         csk_pub_name.clone(),
                         Some(csk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
                         UnixTime::now(),
                     )
                     .map_err::<Error, _>(|e| {
@@ -309,10 +419,11 @@ impl Keyset {
                 let mut new_files = Vec::new();
 
                 // Create a new KSK
-                let (ksk_pub_name, ksk_priv_name) = new_keys(
+                let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.ksk_generate_params.to_generate_params(),
                     true,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 new_files.push(ksk_priv_name.clone());
@@ -321,6 +432,8 @@ impl Keyset {
                     .add_key_ksk(
                         ksk_pub_name.clone(),
                         Some(ksk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
                         UnixTime::now(),
                     )
                     .map_err::<Error, _>(|e| {
@@ -328,10 +441,11 @@ impl Keyset {
                     })?;
 
                 // Create a new ZSK
-                let (zsk_pub_name, zsk_priv_name) = new_keys(
+                let (zsk_pub_name, zsk_priv_name, algorithm, key_tag) = new_keys(
                     kss.keyset.name(),
                     ksc.zsk_generate_params.to_generate_params(),
                     false,
+                    kss.keyset.keys(),
                     env,
                 )?;
                 new_files.push(zsk_priv_name.clone());
@@ -340,6 +454,8 @@ impl Keyset {
                     .add_key_zsk(
                         zsk_pub_name.clone(),
                         Some(zsk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
                         UnixTime::now(),
                     )
                     .map_err::<Error, _>(|e| {
@@ -374,12 +490,139 @@ impl Keyset {
 
             print_actions(&actions);
             state_changed = true;
+        } else if self.cmd == "start-algorithm-roll" {
+            // Find existing KSKs, ZSKs and CSKs. Do we complain if there
+            // are none?
+            let old_stored: Vec<_> = kss
+                .keyset
+                .keys()
+                .iter()
+                .filter(|(_, key)| match key.keytype() {
+                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
+                        // Assume that for a CSK it is sufficient to check
+                        // one of the key states. Also assume that we
+                        // can check at_parent for a ZSK.
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    }
+                    KeyType::Include(_) => false,
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
+            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+            let (new_stored, new_files) = if ksc.use_csk {
+                let mut new_files = Vec::new();
+
+                // Create a new CSK
+                let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.csk_generate_params.to_generate_params(),
+                    true,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(csk_priv_name.clone());
+                new_files.push(csk_pub_name.clone());
+                kss.keyset
+                    .add_key_csk(
+                        csk_pub_name.clone(),
+                        Some(csk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add CSK {csk_pub_name}: {e}\n").into()
+                    })?;
+
+                let new = vec![csk_pub_name];
+                (new, new_files)
+            } else {
+                let mut new_files = Vec::new();
+
+                // Create a new KSK
+                let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.ksk_generate_params.to_generate_params(),
+                    true,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(ksk_priv_name.clone());
+                new_files.push(ksk_pub_name.clone());
+                kss.keyset
+                    .add_key_ksk(
+                        ksk_pub_name.clone(),
+                        Some(ksk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add KSK {ksk_pub_name}: {e}\n").into()
+                    })?;
+
+                // Create a new ZSK
+                let (zsk_pub_name, zsk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.zsk_generate_params.to_generate_params(),
+                    false,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(zsk_priv_name.clone());
+                new_files.push(zsk_pub_name.clone());
+                kss.keyset
+                    .add_key_zsk(
+                        zsk_pub_name.clone(),
+                        Some(zsk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add ZSK {zsk_pub_name}: {e}\n").into()
+                    })?;
+
+                let new = vec![ksk_pub_name, zsk_pub_name];
+                (new, new_files)
+            };
+
+            let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+
+            // Start the key roll
+            let actions = match kss
+                .keyset
+                .start_roll(RollType::AlgorithmRoll, &old, &new)
+                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+            {
+                Ok(actions) => actions,
+                Err(e) => {
+                    // Remove the key files we just created.
+                    for f in new_files {
+                        remove_file(&f).map_err::<Error, _>(|e| {
+                            format!("unable to private key file {f}: {e}\n").into()
+                        })?;
+                    }
+                    return Err(e);
+                }
+            };
+
+            handle_actions(&actions, &ksc, &mut kss, env)?;
+
+            print_actions(&actions);
+            state_changed = true;
         } else if self.cmd == "ksk-propagation1-complete"
             || self.cmd == "ksk-propagation2-complete"
             || self.cmd == "zsk-propagation1-complete"
             || self.cmd == "zsk-propagation2-complete"
             || self.cmd == "csk-propagation1-complete"
             || self.cmd == "csk-propagation2-complete"
+            || self.cmd == "algorithm-propagation1-complete"
+            || self.cmd == "algorithm-propagation2-complete"
         {
             let Some(ttl) = self.ttl else {
                 return Err("ttl option is required\n".into());
@@ -396,6 +639,12 @@ impl Keyset {
                 kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
             } else if self.cmd == "csk-propagation2-complete" {
                 kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
+            } else if self.cmd == "algorithm-propagation1-complete" {
+                kss.keyset
+                    .propagation1_complete(RollType::AlgorithmRoll, ttl)
+            } else if self.cmd == "algorithm-propagation2-complete" {
+                kss.keyset
+                    .propagation2_complete(RollType::AlgorithmRoll, ttl)
             } else {
                 unreachable!();
             };
@@ -420,6 +669,8 @@ impl Keyset {
             || self.cmd == "zsk-cache-expired2"
             || self.cmd == "csk-cache-expired1"
             || self.cmd == "csk-cache-expired2"
+            || self.cmd == "algorithm-cache-expired1"
+            || self.cmd == "algorithm-cache-expired2"
         {
             let actions = if self.cmd == "ksk-cache-expired1" {
                 kss.keyset.cache_expired1(RollType::KskRoll)
@@ -433,6 +684,10 @@ impl Keyset {
                 kss.keyset.cache_expired1(RollType::CskRoll)
             } else if self.cmd == "csk-cache-expired2" {
                 kss.keyset.cache_expired2(RollType::CskRoll)
+            } else if self.cmd == "algorithm-cache-expired1" {
+                kss.keyset.cache_expired1(RollType::AlgorithmRoll)
+            } else if self.cmd == "algorithm-cache-expired2" {
+                kss.keyset.cache_expired2(RollType::AlgorithmRoll)
             } else {
                 unreachable!();
             };
@@ -454,6 +709,7 @@ impl Keyset {
         } else if self.cmd == "ksk-roll-done"
             || self.cmd == "zsk-roll-done"
             || self.cmd == "csk-roll-done"
+            || self.cmd == "algorithm-roll-done"
         {
             let actions = if self.cmd == "ksk-roll-done" {
                 kss.keyset.roll_done(RollType::KskRoll)
@@ -461,6 +717,8 @@ impl Keyset {
                 kss.keyset.roll_done(RollType::ZskRoll)
             } else if self.cmd == "csk-roll-done" {
                 kss.keyset.roll_done(RollType::CskRoll)
+            } else if self.cmd == "algorithm-roll-done" {
+                kss.keyset.roll_done(RollType::AlgorithmRoll)
             } else {
                 unreachable!();
             };
@@ -558,7 +816,11 @@ impl Keyset {
                         ("CSK", keystate_ksk, Some(keystate_zsk))
                     }
                 };
-                println!("\t\tType: {keytype}");
+                println!(
+                    "\t\tType: {keytype}, algorithm: {}, key tag: {}",
+                    key.algorithm(),
+                    key.key_tag()
+                );
                 if let Some(zskstate) = opt_state {
                     println!("\t\tKSK role state: {state}");
                     println!("\t\tZSK role state: {zskstate}");
@@ -890,21 +1152,38 @@ fn new_keys(
     name: &Name<Vec<u8>>,
     algorithm: GenerateParams,
     make_ksk: bool,
+    keys: &HashMap<String, Key>,
     env: &impl Env,
-) -> Result<(String, String), Error> {
+) -> Result<(String, String, SecurityAlgorithm, u16), Error> {
     // Generate the key.
     // TODO: Attempt repeated generation to avoid key tag collisions.
     // TODO: Add a high-level operation in 'domain' to select flags?
     let flags = if make_ksk { 257 } else { 256 };
-    let (secret_key, public_key) = sign::generate(algorithm, flags)
-        .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
+
+    let mut retries = MAX_KEY_TAG_TRIES;
+    let (secret_key, public_key, key_tag) = loop {
+        let (secret_key, public_key) = sign::generate(algorithm.clone(), flags)
+            .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
+
+        let key_tag = public_key.key_tag();
+        if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
+            break (secret_key, public_key, key_tag);
+        }
+        if retries <= 1 {
+            return Err("unable to generate key with unique key tag".into());
+        }
+        retries -= 1;
+    };
+
+    let algorithm = public_key.algorithm();
+
     let public_key = Record::new(name.clone(), Class::IN, Ttl::ZERO, public_key);
 
     let base = format!(
         "K{}+{:03}+{:05}",
         name.fmt_with_dot(),
-        public_key.data().algorithm().to_int(),
-        public_key.data().key_tag()
+        algorithm.to_int(),
+        key_tag
     );
 
     let secret_key_path = format!("{base}.private");
@@ -924,7 +1203,7 @@ fn new_keys(
         .write_all(public_key.as_bytes())
         .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
 
-    Ok((public_key_path, secret_key_path))
+    Ok((public_key_path, secret_key_path, algorithm, key_tag))
 }
 
 fn update_dnskey_rrset(
@@ -1274,6 +1553,8 @@ fn handle_actions(
             Action::ReportDnskeyPropagated => (),
             Action::ReportDsPropagated => (),
             Action::ReportRrsigPropagated => (),
+            Action::WaitDnskeyPropagated => (),
+            Action::WaitRrsigPropagated => (),
         }
     }
     Ok(())
