@@ -1170,7 +1170,7 @@ fn new_keys(
             break (secret_key, public_key, key_tag);
         }
         if retries <= 1 {
-            return Err(format!("unable to generate key with unique key tag").into());
+            return Err("unable to generate key with unique key tag".into());
         }
         retries -= 1;
     };
