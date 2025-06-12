@@ -148,7 +148,7 @@ impl Keyset {
                     .expect("should not happen");
 
                 kss.keyset
-                    .start_roll(RollType::CskRoll, &[], &[&csk_pub_name])
+                    .start_roll(RollType::AlgorithmRoll, &[], &[&csk_pub_name])
                     .expect("should not happen")
             } else {
                 let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
@@ -186,7 +186,7 @@ impl Keyset {
 
                 let new = [ksk_pub_name.as_ref(), zsk_pub_name.as_ref()];
                 kss.keyset
-                    .start_roll(RollType::CskRoll, &[], &new)
+                    .start_roll(RollType::AlgorithmRoll, &[], &new)
                     .expect("should not happen")
             };
 
@@ -220,7 +220,16 @@ impl Keyset {
                 .keyset
                 .keys()
                 .iter()
-                .filter(|(_, key)| matches!(key.keytype(), KeyType::Ksk(_)))
+                .filter(|(_, key)| {
+                    if let KeyType::Ksk(keystate) = key.keytype() {
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    } else {
+                        false
+                    }
+                })
                 .map(|(name, _)| name.clone())
                 .collect();
             let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
@@ -297,7 +306,13 @@ impl Keyset {
                 .keyset
                 .keys()
                 .iter()
-                .filter(|(_, key)| matches!(key.keytype(), KeyType::Zsk(_)))
+                .filter(|(_, key)| {
+                    if let KeyType::Zsk(keystate) = key.keytype() {
+                        !keystate.old() || keystate.signer() || keystate.present()
+                    } else {
+                        false
+                    }
+                })
                 .map(|(name, _)| name.clone())
                 .collect();
             let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
@@ -356,9 +371,15 @@ impl Keyset {
                 .keys()
                 .iter()
                 .filter(|(_, key)| match key.keytype() {
-                    KeyType::Ksk(_) => true,
-                    KeyType::Zsk(_) => true,
-                    KeyType::Csk(_, _) => true,
+                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
+                        // Assume that for a CSK it is sufficient to check
+                        // one of the key states. Also assume that we
+                        // can check at_parent for a ZSK.
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    }
                     KeyType::Include(_) => false,
                 })
                 .map(|(name, _)| name.clone())
@@ -469,12 +490,139 @@ impl Keyset {
 
             print_actions(&actions);
             state_changed = true;
+        } else if self.cmd == "start-algorithm-roll" {
+            // Find existing KSKs, ZSKs and CSKs. Do we complain if there
+            // are none?
+            let old_stored: Vec<_> = kss
+                .keyset
+                .keys()
+                .iter()
+                .filter(|(_, key)| match key.keytype() {
+                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
+                        // Assume that for a CSK it is sufficient to check
+                        // one of the key states. Also assume that we
+                        // can check at_parent for a ZSK.
+                        !keystate.old()
+                            || keystate.signer()
+                            || keystate.present()
+                            || keystate.at_parent()
+                    }
+                    KeyType::Include(_) => false,
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
+            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+            let (new_stored, new_files) = if ksc.use_csk {
+                let mut new_files = Vec::new();
+
+                // Create a new CSK
+                let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.csk_generate_params.to_generate_params(),
+                    true,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(csk_priv_name.clone());
+                new_files.push(csk_pub_name.clone());
+                kss.keyset
+                    .add_key_csk(
+                        csk_pub_name.clone(),
+                        Some(csk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add CSK {csk_pub_name}: {e}\n").into()
+                    })?;
+
+                let new = vec![csk_pub_name];
+                (new, new_files)
+            } else {
+                let mut new_files = Vec::new();
+
+                // Create a new KSK
+                let (ksk_pub_name, ksk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.ksk_generate_params.to_generate_params(),
+                    true,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(ksk_priv_name.clone());
+                new_files.push(ksk_pub_name.clone());
+                kss.keyset
+                    .add_key_ksk(
+                        ksk_pub_name.clone(),
+                        Some(ksk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add KSK {ksk_pub_name}: {e}\n").into()
+                    })?;
+
+                // Create a new ZSK
+                let (zsk_pub_name, zsk_priv_name, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.zsk_generate_params.to_generate_params(),
+                    false,
+                    kss.keyset.keys(),
+                    env,
+                )?;
+                new_files.push(zsk_priv_name.clone());
+                new_files.push(zsk_pub_name.clone());
+                kss.keyset
+                    .add_key_zsk(
+                        zsk_pub_name.clone(),
+                        Some(zsk_priv_name.clone()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add ZSK {zsk_pub_name}: {e}\n").into()
+                    })?;
+
+                let new = vec![ksk_pub_name, zsk_pub_name];
+                (new, new_files)
+            };
+
+            let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+
+            // Start the key roll
+            let actions = match kss
+                .keyset
+                .start_roll(RollType::AlgorithmRoll, &old, &new)
+                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+            {
+                Ok(actions) => actions,
+                Err(e) => {
+                    // Remove the key files we just created.
+                    for f in new_files {
+                        remove_file(&f).map_err::<Error, _>(|e| {
+                            format!("unable to private key file {f}: {e}\n").into()
+                        })?;
+                    }
+                    return Err(e);
+                }
+            };
+
+            handle_actions(&actions, &ksc, &mut kss, env)?;
+
+            print_actions(&actions);
+            state_changed = true;
         } else if self.cmd == "ksk-propagation1-complete"
             || self.cmd == "ksk-propagation2-complete"
             || self.cmd == "zsk-propagation1-complete"
             || self.cmd == "zsk-propagation2-complete"
             || self.cmd == "csk-propagation1-complete"
             || self.cmd == "csk-propagation2-complete"
+            || self.cmd == "algorithm-propagation1-complete"
+            || self.cmd == "algorithm-propagation2-complete"
         {
             let Some(ttl) = self.ttl else {
                 return Err("ttl option is required\n".into());
@@ -491,6 +639,12 @@ impl Keyset {
                 kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
             } else if self.cmd == "csk-propagation2-complete" {
                 kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
+            } else if self.cmd == "algorithm-propagation1-complete" {
+                kss.keyset
+                    .propagation1_complete(RollType::AlgorithmRoll, ttl)
+            } else if self.cmd == "algorithm-propagation2-complete" {
+                kss.keyset
+                    .propagation2_complete(RollType::AlgorithmRoll, ttl)
             } else {
                 unreachable!();
             };
@@ -515,6 +669,8 @@ impl Keyset {
             || self.cmd == "zsk-cache-expired2"
             || self.cmd == "csk-cache-expired1"
             || self.cmd == "csk-cache-expired2"
+            || self.cmd == "algorithm-cache-expired1"
+            || self.cmd == "algorithm-cache-expired2"
         {
             let actions = if self.cmd == "ksk-cache-expired1" {
                 kss.keyset.cache_expired1(RollType::KskRoll)
@@ -528,6 +684,10 @@ impl Keyset {
                 kss.keyset.cache_expired1(RollType::CskRoll)
             } else if self.cmd == "csk-cache-expired2" {
                 kss.keyset.cache_expired2(RollType::CskRoll)
+            } else if self.cmd == "algorithm-cache-expired1" {
+                kss.keyset.cache_expired1(RollType::AlgorithmRoll)
+            } else if self.cmd == "algorithm-cache-expired2" {
+                kss.keyset.cache_expired2(RollType::AlgorithmRoll)
             } else {
                 unreachable!();
             };
@@ -549,6 +709,7 @@ impl Keyset {
         } else if self.cmd == "ksk-roll-done"
             || self.cmd == "zsk-roll-done"
             || self.cmd == "csk-roll-done"
+            || self.cmd == "algorithm-roll-done"
         {
             let actions = if self.cmd == "ksk-roll-done" {
                 kss.keyset.roll_done(RollType::KskRoll)
@@ -556,6 +717,8 @@ impl Keyset {
                 kss.keyset.roll_done(RollType::ZskRoll)
             } else if self.cmd == "csk-roll-done" {
                 kss.keyset.roll_done(RollType::CskRoll)
+            } else if self.cmd == "algorithm-roll-done" {
+                kss.keyset.roll_done(RollType::AlgorithmRoll)
             } else {
                 unreachable!();
             };
@@ -742,7 +905,7 @@ impl Keyset {
         } else if self.cmd == "get-dnskey-lifetime" {
             let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
             let signeddur = span
-                .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+                .to_duration(SpanRelativeTo::days_are_24_hours())
                 .expect("should not fail");
             println!("{signeddur:#}");
         } else if self.cmd == "set-dnskey-lifetime" {
@@ -757,7 +920,7 @@ impl Keyset {
         } else if self.cmd == "get-cds-lifetime" {
             let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
             let signeddur = span
-                .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+                .to_duration(SpanRelativeTo::days_are_24_hours())
                 .expect("should not fail");
             println!("{signeddur:#}");
         } else if self.cmd == "set-cds-lifetime" {
@@ -1390,6 +1553,8 @@ fn handle_actions(
             Action::ReportDnskeyPropagated => (),
             Action::ReportDsPropagated => (),
             Action::ReportRrsigPropagated => (),
+            Action::WaitDnskeyPropagated => (),
+            Action::WaitRrsigPropagated => (),
         }
     }
     Ok(())
@@ -1415,7 +1580,7 @@ fn parse_duration_from_opt(value: &Option<String>) -> Result<Duration, Error> {
         .parse()
         .map_err::<Error, _>(|e| format!("unable to parse {arg} as lifetime: {e}\n").into())?;
     let signeddur = span
-        .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+        .to_duration(SpanRelativeTo::days_are_24_hours())
         .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
     Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
 }
