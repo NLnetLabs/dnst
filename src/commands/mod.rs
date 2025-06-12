@@ -1,7 +1,7 @@
 //! The command of _dnst_.
 pub mod help;
-//pub mod key2ds;
-//pub mod keygen;
+pub mod key2ds;
+pub mod keygen;
 pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
@@ -43,9 +43,9 @@ pub enum Command {
     /// <tag> is the 16-bit tag of the key, zero-padded to 5 digits.
     ///
     /// Upon completion, 'K<name>+<alg>+<tag>' will be printed.
-    //#[allow(rustdoc::invalid_html_tags)]
-    //#[command(name = "keygen", verbatim_doc_comment)]
-    //Keygen(self::keygen::Keygen),
+    #[allow(rustdoc::invalid_html_tags)]
+    #[command(name = "keygen", verbatim_doc_comment)]
+    Keygen(self::keygen::Keygen),
 
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
@@ -56,8 +56,8 @@ pub enum Command {
     Key2ds(key2ds::Key2ds),
 
     /// Print the NSEC3 hash of a given domain name
-    //#[command(name = "nsec3-hash")]
-    //Nsec3Hash(self::nsec3hash::Nsec3Hash),
+    #[command(name = "nsec3-hash")]
+    Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
     /// Sign the zone with the given key(s)
     #[command(name = "signzone")]
@@ -70,14 +70,6 @@ pub enum Command {
     /// that serial number it will disregard the message.
     #[command(name = "notify")]
     Notify(self::notify::Notify),
-
-    /// Generate a DS RR from the DNSKEYS in keyfile
-    ///
-    /// The following file will be created for each key:
-    /// `K<name>+<alg>+<id>.ds`. The base name `K<name>+<alg>+<id>`
-    /// will be printed to stdout.
-    #[command(name = "key2ds")]
-    Key2ds(key2ds::Key2ds),
 
     /// Send an UPDATE packet
     #[command(name = "update")]

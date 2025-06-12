@@ -23,10 +23,6 @@ default = ["openssl", "ring"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
-# For building in a cargo cross container that lacks openssl-dev so cannot
-# successfully compile the Rust OpenSSL crate.
-static-openssl = ["domain/static-openssl"]
-
 [dependencies]
 bytes = "1.8.0"
 chrono = "0.4.38"
@@ -50,7 +46,7 @@ tokio = "1.40.0"
 
 # LDNS-xxx mode specific dependencies.
 # TODO: put these behind a feature gate?
-jiff = { version = "0.1.15", default-features = false, features = ["alloc", "std"] }
+jiff = { version = "0.2", default-features = false, features = ["alloc", "std"] }
 
 # This is a workaround. lazy_static 1.0.0 fails to compile, but sharded-slab
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
@@ -58,7 +54,6 @@ jiff = { version = "0.1.15", default-features = false, features = ["alloc", "std
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 serde_json = "1.0.137"
 serde = "1.0.217"
-jiff = "0.2.6"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 
