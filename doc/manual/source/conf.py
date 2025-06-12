@@ -55,7 +55,7 @@ if versionbanner:
 # -- Sphinx Tabs configuration -----------------------------------------------
 
 sphinx_tabs_disable_tab_closing = True
-sphinx_tabs_disable_css_loading = True
+sphinx_tabs_disable_css_loading = False
 
 
 # -- General configuration ---------------------------------------------------
@@ -74,7 +74,8 @@ extensions = [
     'sphinx_copybutton',
     'sphinx.ext.intersphinx',
     'sphinx.ext.autosectionlabel',
-    'notfound.extension'
+    'notfound.extension',
+    'sphinxcontrib.jquery'
 ]
 if versionbanner:
     extensions.append('versionwarning.extension')

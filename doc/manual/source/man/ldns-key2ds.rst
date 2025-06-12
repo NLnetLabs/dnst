@@ -18,7 +18,6 @@ It prints out the basename for this file (``K<name>+<alg>+<id>``).
 By default, it takes a pick of algorithm similar to the key algorithm,
 SHA1 for RSASHA1, and so on.
 
-
 Options
 -------
 

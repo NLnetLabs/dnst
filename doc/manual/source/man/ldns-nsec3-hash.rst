@@ -27,4 +27,6 @@ Options
 .. option:: -t <COUNT>
 
       Use the given number of additional iterations for the hash
-      calculation. Defaults to 1.
+      calculation. Defaults to 0. Note that this differs to the default value
+      used by the original `ldns-nsec3-hash` command to comply with latest
+      best practice per RFC 9276.
