@@ -905,7 +905,7 @@ impl Keyset {
         } else if self.cmd == "get-dnskey-lifetime" {
             let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
             let signeddur = span
-                .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+                .to_duration(SpanRelativeTo::days_are_24_hours())
                 .expect("should not fail");
             println!("{signeddur:#}");
         } else if self.cmd == "set-dnskey-lifetime" {
@@ -920,7 +920,7 @@ impl Keyset {
         } else if self.cmd == "get-cds-lifetime" {
             let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
             let signeddur = span
-                .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+                .to_duration(SpanRelativeTo::days_are_24_hours())
                 .expect("should not fail");
             println!("{signeddur:#}");
         } else if self.cmd == "set-cds-lifetime" {
@@ -1580,7 +1580,7 @@ fn parse_duration_from_opt(value: &Option<String>) -> Result<Duration, Error> {
         .parse()
         .map_err::<Error, _>(|e| format!("unable to parse {arg} as lifetime: {e}\n").into())?;
     let signeddur = span
-        .to_jiff_duration(SpanRelativeTo::days_are_24_hours())
+        .to_duration(SpanRelativeTo::days_are_24_hours())
         .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
     Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
 }

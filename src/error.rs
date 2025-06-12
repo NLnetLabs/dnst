@@ -1,12 +1,10 @@
-use core::fmt::{Display, Write};
-
 use std::fmt;
 use std::io;
 
 use domain::base::wire::ParseError;
 use tracing::error;
 
-use crate::env::{Env, Stream};
+use crate::env::Env;
 
 //------------ Error ---------------------------------------------------------
 
@@ -96,18 +94,6 @@ impl Error {
         } else {
             1
         }
-    }
-
-    pub fn write_error(writer: &mut Stream<impl Write>, text: impl Display) {
-        let prog = std::env::args().next().unwrap();
-        let marker = writer.colourize(Self::RED, "ERROR:");
-        writeln!(writer, "[{prog}] {marker} {text}");
-    }
-
-    pub fn write_warning(writer: &mut Stream<impl Write>, text: impl Display) {
-        let prog = std::env::args().next().unwrap();
-        let marker = writer.colourize(Self::YELLOW, "WARN:");
-        writeln!(writer, "[{prog}] {marker} {text}");
     }
 }
 

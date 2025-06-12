@@ -62,23 +62,6 @@ Options
       If this would NOT result in the SOA serial increasing it will be
       incremented instead.
 
-.. option:: -z <[SCHEME:]HASH>
-
-      Add a ZONEMD resource record. Accepts both mnemonics and numbers.
-      This option can be provided more than once to add multiple ZONEMD RRs.
-      However, only one per scheme-hash tuple will be added.
-
-      | HASH supports ``SHA384`` (1) and ``SHA512`` (2).
-      | SCHEME supports ``SIMPLE`` (1), the default.
-
-.. option:: -Z
-
-      Allow adding ZONEMD RRs without signing the zone. With this option, the
-      <KEY>... argument becomes optional and determines whether to sign the
-      zone.
-
-.. TODO: document -A and -U when implemented
-
 .. option:: -n
 
       Use NSEC3 instead of NSEC. By default, RFC 9276 best practice settings

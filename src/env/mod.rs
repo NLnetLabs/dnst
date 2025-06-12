@@ -13,10 +13,6 @@ use tracing_subscriber::fmt::MakeWriter;
 #[cfg(test)]
 pub mod fake;
 
-use domain::net::client::protocol::{AsyncConnect, AsyncDgramRecv, AsyncDgramSend};
-use domain::resolv::{stub::conf::ResolvConf, StubResolver};
-pub use real::RealEnv;
-
 mod real;
 pub use real::RealEnv;
 
@@ -35,6 +31,9 @@ pub trait Env {
     ///
     /// Equivalent to [`std::io::stderr`]
     fn stderr(&self) -> Stream<impl io::Write + Send + Sync + 'static>;
+
+    // /// Get a reference to stdin
+    // fn stdin(&self) -> impl io::Read;
 
     /// Make relative paths absolute.
     fn in_cwd<'a>(&self, path: &'a impl AsRef<Path>) -> Cow<'a, Path>;

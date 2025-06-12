@@ -15,8 +15,6 @@ use log::LogFormatter;
 
 use domain::base::zonefile_fmt::DisplayKind;
 
-use domain::base::zonefile_fmt::DisplayKind;
-
 pub use self::args::Args;
 
 pub mod args;
