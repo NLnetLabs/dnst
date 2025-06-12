@@ -2,6 +2,7 @@
 pub mod help;
 pub mod key2ds;
 pub mod keygen;
+pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
 pub mod signzone;
@@ -74,6 +75,10 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
+    /// Maintain a set of DNSSEC keys
+    #[command(name = "keyset")]
+    Keyset(self::keyset::Keyset),
+
     /// Show the manual pages
     Help(self::help::Help),
 
@@ -94,6 +99,7 @@ impl Command {
             Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
+            Self::Keyset(keyset) => keyset.execute(env),
             Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
