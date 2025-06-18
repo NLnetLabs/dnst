@@ -175,7 +175,10 @@ impl Update {
 
         let response = resolver
             .query(Question::new(&zone, Rtype::SOA, Class::IN))
-            .await?;
+            .await
+            .map_err::<Error, _>(|e| {
+                format!("unable to look up the SOA record for {zone}: {e}").into()
+            })?;
 
         let mut answer = response.answer()?.limit_to::<Soa<_>>();
         if let Some(soa) = answer.next() {
@@ -202,7 +205,10 @@ impl Update {
         // Step 1 - first find a nameserver that should know *something*
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
-            .await?;
+            .await
+            .map_err::<Error, _>(|e| {
+                format!("unable to look up the SOA record for {name}: {e}").into()
+            })?;
 
         // We look in both the answer and authority sections.
         // The answer section is used if the domain name is the zone apex,
@@ -219,7 +225,12 @@ impl Update {
         let soa_mname: Name<Vec<u8>> = soa?.data().mname().to_name();
 
         // Step 2 - find SOA MNAME IP address, add to resolver
-        let response = resolver.lookup_host(&soa_mname).await?;
+        let response = resolver
+            .lookup_host(&soa_mname)
+            .await
+            .map_err::<Error, _>(|e| {
+                format!("unable to look up addresses for {soa_mname}: {e}").into()
+            })?;
 
         let Some(ipaddr) = response.iter().next() else {
             return Err("no A record found".into());
@@ -237,7 +248,10 @@ impl Update {
 
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
-            .await?;
+            .await
+            .map_err::<Error, _>(|e| {
+                format!("unable to look up the SOA record for {name}: {e}").into()
+            })?;
 
         // We look in both the answer and authority sections.
         // The answer section is used if the domain name is the zone apex,
@@ -271,7 +285,10 @@ impl Update {
             .stub_resolver()
             .await
             .query(Question::new(&zone, Rtype::NS, Class::IN))
-            .await?;
+            .await
+            .map_err::<Error, _>(|e| {
+                format!("unable to look up the NS RRset for {zone}: {e}").into()
+            })?;
 
         let mut nsnames = response
             .answer()?
@@ -361,7 +378,9 @@ impl Update {
             .transpose()?;
 
         for name in nsnames {
-            let found_ips = resolver.lookup_host(&name).await?;
+            let found_ips = resolver.lookup_host(&name).await.map_err::<Error, _>(|e| {
+                format!("unable to look up addresses for {name}: {e}").into()
+            })?;
             for socket in found_ips.port_iter(53) {
                 let local: SocketAddr = if socket.is_ipv4() {
                     ([0u8; 4], 0).into()
