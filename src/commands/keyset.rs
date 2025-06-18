@@ -108,20 +108,36 @@ impl Keyset {
                 autoremove: false,
             };
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
-            let mut file = File::create(state_file)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&state_file).map_err::<Error, _>(|e| {
+                format!("unable to create file {}: {e}", state_file.display()).into()
+            })?;
+            write!(file, "{json}").map_err::<Error, _>(|e| {
+                format!("unable to write to file {}: {e}", state_file.display()).into()
+            })?;
 
             let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
-            let mut file = File::create(self.keyset_conf)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&self.keyset_conf).map_err::<Error, _>(|e| {
+                format!("unable to create file {}: {e}", self.keyset_conf.display()).into()
+            })?;
+            write!(file, "{json}").map_err::<Error, _>(|e| {
+                format!(
+                    "unable to write to file {}: {e}",
+                    self.keyset_conf.display()
+                )
+                .into()
+            })?;
             return Ok(());
         }
 
-        let file = File::open(self.keyset_conf.clone())?;
+        let file = File::open(self.keyset_conf.clone()).map_err::<Error, _>(|e| {
+            format!("unable to open file {}: {e}", self.keyset_conf.display()).into()
+        })?;
         let mut ksc: KeySetConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.keyset_conf).into()
         })?;
-        let file = File::open(ksc.state_file.clone())?;
+        let file = File::open(ksc.state_file.clone()).map_err::<Error, _>(|e| {
+            format!("unable to open file {}: {e}", ksc.state_file.display()).into()
+        })?;
         let mut kss: KeySetState = serde_json::from_reader(file)
             .map_err::<Error, _>(|e| format!("error loading {:?}: {e}\n", ksc.state_file).into())?;
 
@@ -157,7 +173,7 @@ impl Keyset {
                     .expect("should not happen");
 
                 kss.keyset
-                    .start_roll(RollType::AlgorithmRoll, &[], &[&csk_pub_name.as_str()])
+                    .start_roll(RollType::AlgorithmRoll, &[], &[csk_pub_name.as_str()])
                     .expect("should not happen")
             } else {
                 let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
@@ -1033,13 +1049,25 @@ impl Keyset {
         }
         if config_changed {
             let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
-            let mut file = File::create(self.keyset_conf)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&self.keyset_conf).map_err::<Error, _>(|e| {
+                format!("unable to create file {}: {e}", self.keyset_conf.display()).into()
+            })?;
+            write!(file, "{json}").map_err::<Error, _>(|e| {
+                format!(
+                    "unable to write to file {}: {e}",
+                    self.keyset_conf.display()
+                )
+                .into()
+            })?;
         }
         if state_changed {
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
-            let mut file = File::create(ksc.state_file)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&ksc.state_file).map_err::<Error, _>(|e| {
+                format!("unable to create file {}: {e}", ksc.state_file.display()).into()
+            })?;
+            write!(file, "{json}").map_err::<Error, _>(|e| {
+                format!("unable to write to file {}: {e}", ksc.state_file.display()).into()
+            })?;
         }
         Ok(())
     }
@@ -1290,8 +1318,14 @@ fn update_dnskey_rrset(
         if present {
             dbg!("before open");
             let zonefile = if pub_url.scheme() == "file" {
-                let mut file = File::open(env.in_cwd(&pub_url.path().to_string()))?;
-                domain::zonefile::inplace::Zonefile::load(&mut file)?
+                let path = pub_url.path();
+                let filename = env.in_cwd(&path);
+                let mut file = File::open(&filename).map_err::<Error, _>(|e| {
+                    format!("unable to open file {}: {e}", filename.display()).into()
+                })?;
+                domain::zonefile::inplace::Zonefile::load(&mut file).map_err::<Error, _>(|e| {
+                    format!("unable load zone from file {}: {e}", filename.display()).into()
+                })?
             } else {
                 panic!("unsupported scheme in {pub_url}");
             };
@@ -1344,7 +1378,9 @@ fn update_dnskey_rrset(
             let privref = v.privref().ok_or("missing private key")?;
             let priv_url = Url::parse(privref).expect("valid URL expected");
             let private_data = if priv_url.scheme() == "file" {
-                std::fs::read_to_string(priv_url.path())?
+                std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
+                    format!("unable read from file {}: {e}", priv_url.path()).into()
+                })?
             } else {
                 panic!("unsupported URL scheme in {priv_url}");
             };
@@ -1354,7 +1390,9 @@ fn update_dnskey_rrset(
                 })?;
             let pub_url = Url::parse(k).expect("valid URL expected");
             let public_data = if pub_url.scheme() == "file" {
-                std::fs::read_to_string(pub_url.path())?
+                std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
+                    format!("unable read from file {}: {e}", pub_url.path()).into()
+                })?
             } else {
                 panic!("unsupported URL scheme in {pub_url}");
             };
@@ -1409,8 +1447,14 @@ fn create_cds_rrset(
         };
 
         if at_parent {
-            let mut file = File::open(env.in_cwd(&k))?;
-            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)?;
+            let filename = env.in_cwd(&k);
+            let mut file = File::open(&filename).map_err::<Error, _>(|e| {
+                format!("unable to open file {}: {e}", filename.display()).into()
+            })?;
+            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                .map_err::<Error, _>(|e| {
+                    format!("unable to read zone from file {}: {e}", filename.display()).into()
+                })?;
             for entry in zonefile {
                 let entry = entry
                     .map_err::<Error, _>(|e| format!("bad entry in key file {k}: {e}\n").into())?;
@@ -1495,12 +1539,15 @@ fn create_cds_rrset(
 
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
-            let private_data = std::fs::read_to_string(privref)?;
+            let private_data = std::fs::read_to_string(privref).map_err::<Error, _>(|e| {
+                format!("unable to read from file {privref}: {e}").into()
+            })?;
             let secret_key =
                 SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
                     format!("unable to parse private key file {privref}: {e}").into()
                 })?;
-            let public_data = std::fs::read_to_string(k)?;
+            let public_data = std::fs::read_to_string(k)
+                .map_err::<Error, _>(|e| format!("unable to read from file {k}: {e}").into())?;
             let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
                 format!("unable to parse public key file {k}: {e}").into()
             })?;
@@ -1569,8 +1616,14 @@ fn update_ds_rrset(
         };
 
         if at_parent {
-            let mut file = File::open(env.in_cwd(&k))?;
-            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)?;
+            let filename = env.in_cwd(&k);
+            let mut file = File::open(&filename).map_err::<Error, _>(|e| {
+                format!("unable to open file {}: {e}", filename.display()).into()
+            })?;
+            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                .map_err::<Error, _>(|e| {
+                    format!("unable to read zone from file {}: {e}", filename.display()).into()
+                })?;
             for entry in zonefile {
                 let entry = entry
                     .map_err::<Error, _>(|e| format!("bad entry in key file {k}: {e}\n").into())?;
