@@ -130,13 +130,21 @@ impl Keyset {
         }
 
         let file = File::open(self.keyset_conf.clone()).map_err::<Error, _>(|e| {
-            format!("unable to open file {}: {e}", self.keyset_conf.display()).into()
+            format!(
+                "unable to open config file {}: {e}",
+                self.keyset_conf.display()
+            )
+            .into()
         })?;
         let mut ksc: KeySetConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.keyset_conf).into()
         })?;
         let file = File::open(ksc.state_file.clone()).map_err::<Error, _>(|e| {
-            format!("unable to open file {}: {e}", ksc.state_file.display()).into()
+            format!(
+                "unable to open state file {}: {e}",
+                ksc.state_file.display()
+            )
+            .into()
         })?;
         let mut kss: KeySetState = serde_json::from_reader(file)
             .map_err::<Error, _>(|e| format!("error loading {:?}: {e}\n", ksc.state_file).into())?;
@@ -1321,7 +1329,7 @@ fn update_dnskey_rrset(
                 let path = pub_url.path();
                 let filename = env.in_cwd(&path);
                 let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                    format!("unable to open file {}: {e}", filename.display()).into()
+                    format!("unable to open public key file {}: {e}", filename.display()).into()
                 })?;
                 domain::zonefile::inplace::Zonefile::load(&mut file).map_err::<Error, _>(|e| {
                     format!("unable load zone from file {}: {e}", filename.display()).into()
@@ -1447,9 +1455,11 @@ fn create_cds_rrset(
         };
 
         if at_parent {
-            let filename = env.in_cwd(&k);
+            let pub_url = Url::parse(k).expect("valid URL expected");
+            let path = pub_url.path();
+            let filename = env.in_cwd(&path);
             let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                format!("unable to open file {}: {e}", filename.display()).into()
+                format!("unable to open public key file {}: {e}", filename.display()).into()
             })?;
             let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
                 .map_err::<Error, _>(|e| {
@@ -1539,15 +1549,34 @@ fn create_cds_rrset(
 
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
-            let private_data = std::fs::read_to_string(privref).map_err::<Error, _>(|e| {
-                format!("unable to read from file {privref}: {e}").into()
+            let priv_url = Url::parse(privref).expect("valid URL expected");
+            let path = priv_url.path();
+            let filename = env.in_cwd(&path);
+            let private_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                format!(
+                    "unable to read from private key file {}: {e}",
+                    filename.display()
+                )
+                .into()
             })?;
             let secret_key =
                 SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
-                    format!("unable to parse private key file {privref}: {e}").into()
+                    format!(
+                        "unable to parse private key file {}: {e}",
+                        filename.display()
+                    )
+                    .into()
                 })?;
-            let public_data = std::fs::read_to_string(k)
-                .map_err::<Error, _>(|e| format!("unable to read from file {k}: {e}").into())?;
+            let pub_url = Url::parse(k).expect("valid URL expected");
+            let path = pub_url.path();
+            let filename = env.in_cwd(&path);
+            let public_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                format!(
+                    "unable to read from public key file {}: {e}",
+                    filename.display()
+                )
+                .into()
+            })?;
             let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
                 format!("unable to parse public key file {k}: {e}").into()
             })?;
@@ -1616,9 +1645,11 @@ fn update_ds_rrset(
         };
 
         if at_parent {
-            let filename = env.in_cwd(&k);
+            let pub_url = Url::parse(k).expect("valid URL expected");
+            let path = pub_url.path();
+            let filename = env.in_cwd(&path);
             let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                format!("unable to open file {}: {e}", filename.display()).into()
+                format!("unable to open public key file {}: {e}", filename.display()).into()
             })?;
             let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
                 .map_err::<Error, _>(|e| {
