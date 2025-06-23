@@ -27,7 +27,7 @@ ring = ["domain/ring"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "bytes",
     "net",
     "resolv",
@@ -37,6 +37,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and
     "unstable-sign",
     "unstable-validator",
     "unstable-zonetree",
+    "kmip",
 ] }
 lexopt = "0.3.0"
 rayon = "1.10.0"
@@ -63,7 +64,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
