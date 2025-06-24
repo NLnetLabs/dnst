@@ -1349,27 +1349,34 @@ struct KeySetConfig {
     kmip_servers: Vec<KmipServerConnectionSettings>,
 
     /// Which KMIP server should new keys be created in, if any?
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     default_kmip_server: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipServerConnectionSettings {
     /// Path to the client certificate file in PEM format
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     client_cert_path: Option<PathBuf>,
 
     /// Path to the client certificate key file in PEM format
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     client_key_path: Option<PathBuf>,
 
     /// Path to the client certificate and key file in PKCS#12 format
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     client_pkcs12_path: Option<PathBuf>,
 
     /// Disable secure checks (e.g. verification of the server certificate)
+    #[serde(default)]
     server_insecure: bool,
 
     /// Path to the server certificate file in PEM format
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     server_cert_path: Option<PathBuf>,
 
     /// Path to the server CA certificate file in PEM format
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     ca_cert_path: Option<PathBuf>,
 
     /// IP address, hostname or FQDN of the KMIP server
@@ -1379,9 +1386,11 @@ pub struct KmipServerConnectionSettings {
     server_port: u16,
 
     /// The user name to authenticate with the KMIP server
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     server_username: Option<String>,
 
     /// The password to authenticate with the KMIP server
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     server_password: Option<String>,
 }
 
