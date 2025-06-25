@@ -1888,6 +1888,9 @@ fn kmip_get_dnskey(
                 Err(format!(
                     "Error while trying to determine KMIP dnskey: {err}"
                 ))?;
+                tokio::task::spawn_blocking(|| {
+                    std::thread::sleep(Duration::from_secs(3));
+                });
             }
             Err(_) => retries -= 1,
         }
