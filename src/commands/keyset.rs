@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::HashMap;
 use std::convert::From;
 use std::fmt::{Debug, Display, Formatter};
@@ -7,6 +8,7 @@ use std::path::{absolute, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use bytes::Bytes;
 use domain::base::iana::Class;
@@ -121,6 +123,7 @@ impl Keyset {
                 ds_rrset: Vec::new(),
                 cds_rrset: Vec::new(),
                 ns_rrset: Vec::new(),
+                cron_next: None,
             };
             const ONE_DAY: u64 = 86400;
             const FOUR_WEEKS: u64 = 2419200;
@@ -1139,6 +1142,22 @@ impl Keyset {
         } else {
             return Err(format!("unknown subcommand {}\n", self.cmd).into());
         }
+
+        let cron_next_dnskey = compute_cron_next(&kss.dnskey_rrset, &ksc.dnskey_remain_time);
+        let cron_next_cds = compute_cron_next(&kss.cds_rrset, &ksc.cds_remain_time);
+        let cron_next = if let Some(cron_next_dnskey) = cron_next_dnskey {
+            if let Some(cron_next_cds) = cron_next_cds {
+                Some(min(cron_next_dnskey, cron_next_cds))
+            } else {
+                Some(cron_next_dnskey)
+            }
+        } else {
+            cron_next_cds
+        };
+        if cron_next != kss.cron_next {
+            kss.cron_next = cron_next;
+            state_changed = true;
+        }
         if config_changed {
             let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
             let mut file = File::create(&self.keyset_conf).map_err::<Error, _>(|e| {
@@ -1436,10 +1455,12 @@ struct KeySetState {
     /// Domain KeySet state.
     keyset: KeySet,
 
-    dnskey_rrset: Vec<String>,
-    ds_rrset: Vec<String>,
-    cds_rrset: Vec<String>,
-    ns_rrset: Vec<String>,
+    pub dnskey_rrset: Vec<String>,
+    pub ds_rrset: Vec<String>,
+    pub cds_rrset: Vec<String>,
+    pub ns_rrset: Vec<String>,
+
+    cron_next: Option<UnixTime>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1693,8 +1714,8 @@ fn update_dnskey_rrset(
         let pub_url = Url::parse(k).expect("valid URL expected");
 
         if present {
-            dbg!("before open");
             if pub_url.scheme() == "file" {
+                dbg!("before open");
                 let path = pub_url.path();
                 let filename = env.in_cwd(&path);
                 let mut file = File::open(&filename).map_err::<Error, _>(|e| {
@@ -2349,4 +2370,31 @@ fn key_expired(key: &Key, ksc: &KeySetConfig) -> (bool, &'static str) {
 
 fn make_parent_dir(filename: PathBuf) -> PathBuf {
     filename.parent().unwrap_or(Path::new("/")).to_path_buf()
+}
+
+fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTime> {
+    let mut zonefile = Zonefile::new();
+    for r in rrset {
+        zonefile.extend_from_slice(r.as_ref());
+        zonefile.extend_from_slice(b"\n");
+    }
+
+    let now = SystemTime::now();
+    let min_expiration = zonefile
+        .map(|r| r.expect("should not fail"))
+        .filter_map(|r| match r {
+            Entry::Record(r) => Some(r),
+            Entry::Include { .. } => None,
+        })
+        .filter_map(|r| {
+            if let ZoneRecordData::Rrsig(rrsig) = r.data() {
+                Some(rrsig.expiration())
+            } else {
+                None
+            }
+        })
+        .map(|t| t.to_system_time(now))
+        .min();
+
+    min_expiration.map(|t| (t - *remain_time).try_into().unwrap())
 }
