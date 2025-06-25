@@ -1561,7 +1561,7 @@ fn new_keys(
                 flags,
                 kmip_conn_pool.clone(),
             )
-            .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
+            .map_err::<Error, _>(|e| format!("KMIP key generation failed: {e}\n").into())?;
 
             let dnskey = key_pair.dnskey();
 
