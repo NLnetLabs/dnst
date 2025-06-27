@@ -16,7 +16,7 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args};
+use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
@@ -367,7 +367,7 @@ impl Keygen {
                 self.name.fmt_with_dot(),
                 Ds::new(key_tag, algorithm, digest_alg, digest)
                     .expect("we generated the digest, so don't expect it to be too long")
-                    .display_zonefile(DisplayKind::Simple)
+                    .display_zonefile(DISPLAY_KIND)
             )
         });
 
@@ -658,7 +658,7 @@ mod test {
         assert!(public_key_regex.is_match(&public_key));
 
         let digest_key = std::fs::read_to_string(dir.path().join(format!("{name}.ds"))).unwrap();
-        assert!(digest_key_regex.is_match(&digest_key));
+        assert!(digest_key_regex.is_match(dbg!(&digest_key)));
 
         assert!(dir
             .path()
