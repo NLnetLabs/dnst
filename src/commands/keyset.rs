@@ -1655,6 +1655,13 @@ fn new_keys(
 
     if let (Some(kmip_conn_pool), Some(kmip_conn_settings)) = (kmip_conn_pool, kmip_conn_settings) {
         let (key_pair, dnskey) = loop {
+            // TODO: Fortanix DSM rejects attempts to create keys by names
+            // that are already taken. Should we be able to detect that case
+            // specifically and try again with a different name? Should we add
+            // a random element to each name? Should we keep track of used
+            // names and detect a collision ourselves when choosing a name?
+            // Is their some natural differentiator that can be used to name
+            // keys uniquely other than zone name?
             let key_pair = dkmip::sign::generate(
                 name.fmt_with_dot().to_string(),
                 algorithm.clone(),
