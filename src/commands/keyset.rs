@@ -16,7 +16,7 @@ use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
-use domain::crypto::kmip::{self, ConnectionSettings};
+use domain::crypto::kmip::{self as dkmip, ConnectionSettings};
 use domain::crypto::kmip_pool::{ConnectionManager, KmipConnPool};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
@@ -30,6 +30,7 @@ use domain::rdata::{Cdnskey, Cds, Dnskey, Ds, ZoneRecordData};
 use domain::zonefile::inplace::Zonefile;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use jiff::{Span, SpanRelativeTo};
+use kmip::client::ClientCertificate;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -1189,7 +1190,7 @@ impl Keyset {
         match self.cmd.as_str() {
             "kmip-add-server" => {
                 let arg = self.value_or().map_err(|err| {
-                    format!("{err}: Usage: add-server [user[:pass]@]ip_or_fqdn[:port]")
+                    format!("{err}: Usage: kmip-add-server [user[:pass]@]ip_or_fqdn[:port]")
                 })?;
                 let settings = parse_kmip_server(&arg)?;
                 ksc.kmip_servers.push(settings);
@@ -1214,17 +1215,35 @@ impl Keyset {
 
             "kmip-set-server-insecure" => {
                 if self.values.len() != 2 {
-                    return Err("Usage: set-server-insecure <server index> <true|false>".into());
+                    return Err(
+                        "Usage: kmip-set-server-insecure <server index> <true|false>".into(),
+                    );
                 };
                 let idx = parse_kmip_server_idx(&self.values[0], ksc)?;
                 let insecure = match self.values[1].as_str() {
                     "true" => true,
                     "false" => false,
                     _ => {
-                        return Err("Usage: set-server-insecure <server index> <true|false>".into())
+                        return Err(
+                            "Usage: kmip-set-server-insecure <server index> <true|false>".into(),
+                        )
                     }
                 };
                 ksc.kmip_servers[idx].server_insecure = insecure;
+                config_changed = true;
+            }
+
+            "kmip-set-client-cert" => {
+                if self.values.len() != 3 {
+                    return Err(
+                        "Usage: kmip-set-client-cert <server index> <cert path> <key path>".into(),
+                    );
+                };
+                let idx = parse_kmip_server_idx(&self.values[0], ksc)?;
+                ksc.kmip_servers[idx].client_cert_path =
+                    Some(PathBuf::from_str(self.values[1].as_str()).unwrap());
+                ksc.kmip_servers[idx].client_key_path =
+                    Some(PathBuf::from_str(self.values[2].as_str()).unwrap());
                 config_changed = true;
             }
 
@@ -1268,10 +1287,16 @@ fn parse_kmip_server_idx(arg: &str, ksc: &mut KeySetConfig) -> Result<usize, Err
         .parse::<usize>()
         .map_err(|_| format!("KMIP server index {arg} must be a non-negative integer number"))?;
     let num_configured_kmip_servers = ksc.kmip_servers.len();
+    if num_configured_kmip_servers == 0 {
+        return Err(format!(
+            "KMIP server index {idx} is out of range: no KMIP servers are configured."
+        )
+        .into());
+    }
     if !(0..num_configured_kmip_servers).contains(&idx) {
         return Err(format!(
             "KMIP server index {idx} is out of range: must be in the range 0..{}",
-            num_configured_kmip_servers - 1
+            num_configured_kmip_servers.saturating_sub(1)
         )
         .into());
     }
@@ -1432,21 +1457,75 @@ impl Default for KmipServerConnectionSettings {
 
 impl From<KmipServerConnectionSettings> for ConnectionSettings {
     fn from(cfg: KmipServerConnectionSettings) -> Self {
+        let client_cert = load_client_cert(&cfg).unwrap();
+        let server_cert = if let Some(p) = cfg.server_cert_path {
+            Some(load_binary_file(&p).unwrap())
+        } else {
+            None
+        };
+        let ca_cert = if let Some(p) = cfg.ca_cert_path {
+            Some(load_binary_file(&p).unwrap())
+        } else {
+            None
+        };
         ConnectionSettings {
             host: cfg.server_addr,
             port: cfg.server_port,
             username: cfg.server_username,
             password: cfg.server_password,
             insecure: cfg.server_insecure,
-            client_cert: None,        // TODO
-            server_cert: None,        // TODO
-            ca_cert: None,            // TODO
+            client_cert,
+            server_cert,
+            ca_cert,
             connect_timeout: None,    // TODO
             read_timeout: None,       // TODO
             write_timeout: None,      // TODO
             max_response_bytes: None, // TODO
         }
     }
+}
+
+fn load_client_cert(
+    opt: &KmipServerConnectionSettings,
+) -> Result<Option<ClientCertificate>, Error> {
+    let client_cert = {
+        match (
+            &opt.client_cert_path,
+            &opt.client_key_path,
+            &opt.client_pkcs12_path,
+        ) {
+            (None, None, None) => None,
+            (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
+                cert_bytes: load_binary_file(path)?,
+            }),
+            (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
+                cert_bytes: load_binary_file(path)?,
+                key_bytes: None,
+            }),
+            (None, Some(_), None) => {
+                return Err(
+                    "Client certificate key path requires a client certificate path".into(),
+                );
+            }
+            (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
+                return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
+            }
+            (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
+                cert_bytes: load_binary_file(cert_path)?,
+                key_bytes: Some(load_binary_file(key_path)?),
+            }),
+        }
+    };
+    Ok(client_cert)
+}
+
+pub fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
+    use std::{fs::File, io::Read};
+
+    let mut bytes = Vec::new();
+    File::open(path)?.read_to_end(&mut bytes)?;
+
+    Ok(bytes)
 }
 
 /// Persistent state for the keyset command.
@@ -1576,7 +1655,7 @@ fn new_keys(
 
     if let (Some(kmip_conn_pool), Some(kmip_conn_settings)) = (kmip_conn_pool, kmip_conn_settings) {
         let (key_pair, dnskey) = loop {
-            let key_pair = kmip::sign::generate(
+            let key_pair = dkmip::sign::generate(
                 name.fmt_with_dot().to_string(),
                 algorithm.clone(),
                 flags,
@@ -1761,7 +1840,7 @@ fn update_dnskey_rrset(
                 }
             } else if pub_url.scheme() == "kmip" {
                 let (public_key_id, algorithm, flags, conn_settings) =
-                    parse_kmip_key_url(&pub_url)?;
+                    parse_kmip_key_url(ksc, &pub_url)?;
                 let kmip_conn_pool = kmip_create_conn_pool(conn_settings)?;
                 let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                 let owner = kss.keyset.name().clone().flatten_into();
@@ -1827,7 +1906,7 @@ fn update_dnskey_rrset(
 
                 ("kmip", "kmip") => {
                     let owner = kss.keyset.name().clone().flatten_into();
-                    kmip_signing_key_from_urls(owner, priv_url, pub_url)?
+                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
                 }
 
                 (priv_scheme, pub_scheme) => {
@@ -1859,12 +1938,13 @@ fn update_dnskey_rrset(
 }
 
 fn kmip_signing_key_from_urls(
+    ksc: &KeySetConfig,
     owner: Name<Bytes>,
     priv_url: Url,
     pub_url: Url,
 ) -> Result<SigningKey<Bytes, KeyPair>, Error> {
-    let (private_key_id, algorithm1, flags1, conn_settings1) = parse_kmip_key_url(&priv_url)?;
-    let (public_key_id, algorithm2, flags2, conn_settings2) = parse_kmip_key_url(&pub_url)?;
+    let (private_key_id, algorithm1, flags1, conn_settings1) = parse_kmip_key_url(ksc, &priv_url)?;
+    let (public_key_id, algorithm2, flags2, conn_settings2) = parse_kmip_key_url(ksc, &pub_url)?;
 
     assert_eq!(algorithm1, algorithm2);
     assert_eq!(flags1, flags2);
@@ -1872,7 +1952,7 @@ fn kmip_signing_key_from_urls(
 
     let kmip_conn_pool = kmip_create_conn_pool(conn_settings1)?;
 
-    let key_pair = KeyPair::Kmip(kmip::sign::KeyPair::new(
+    let key_pair = KeyPair::Kmip(dkmip::sign::KeyPair::new(
         algorithm1,
         flags1,
         &private_key_id,
@@ -1900,7 +1980,7 @@ fn kmip_get_dnskey(
     flags: u16,
     kmip_conn_pool: KmipConnPool,
 ) -> Result<Dnskey<Vec<u8>>, Error> {
-    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
+    let public_key = dkmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
     let mut retries = 3;
     let dnskey = loop {
         match public_key.dnskey(flags) {
@@ -1974,7 +2054,7 @@ fn create_cds_rrset(
 
                 "kmip" => {
                     let (public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(&pub_url)?;
+                        parse_kmip_key_url(ksc, &pub_url)?;
                     let kmip_conn_pool = kmip_create_conn_pool(conn_settings)?;
                     let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                     let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
@@ -2061,7 +2141,7 @@ fn create_cds_rrset(
 
                 ("kmip", "kmip") => {
                     let owner = kss.keyset.name().clone().flatten_into();
-                    kmip_signing_key_from_urls(owner, priv_url, pub_url)?
+                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
                 }
 
                 (priv_scheme, pub_scheme) => {
@@ -2105,16 +2185,30 @@ fn create_cds_rrset(
 }
 
 fn parse_kmip_key_url(
+    ksc: &KeySetConfig,
     kmip_key_url: &Url,
 ) -> Result<(String, SecurityAlgorithm, u16, ConnectionSettings), Error> {
-    let mut conn_settings = ConnectionSettings::default();
-    conn_settings.insecure = true;
-    conn_settings.host = kmip_key_url.host_str().unwrap().to_string();
-    conn_settings.port = kmip_key_url.port().unwrap_or(5696);
+    let host = kmip_key_url.host_str().unwrap().to_string();
+    let port = kmip_key_url.port().unwrap_or(5696);
+
+    // Lookup KMIP server connection details
+    let Some(srv) = ksc
+        .kmip_servers
+        .iter()
+        .find(|srv| srv.server_addr == host && srv.server_port == port)
+    else {
+        return Err(format!("No KMIP server configured for {host}:{port}").into());
+    };
+
+    let conn_settings = ConnectionSettings::from(srv.clone());
+
+    // TODO: Move username and password to the key config, and out of the
+    // URLs.
     if !kmip_key_url.username().is_empty() {
         conn_settings.username = Some(kmip_key_url.username().to_owned());
     }
     conn_settings.password = kmip_key_url.password().map(ToString::to_string);
+
     let url_path = kmip_key_url.path().to_string();
     let (keys, key_id) = url_path.strip_prefix('/').unwrap().split_once('/').unwrap();
     assert_eq!(keys, "keys");
@@ -2170,6 +2264,7 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
 }
 
 fn update_ds_rrset(
+    ksc: &KeySetConfig,
     kss: &mut KeySetState,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
@@ -2239,7 +2334,7 @@ fn update_ds_rrset(
 
                 "kmip" => {
                     let (public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(&pub_url)?;
+                        parse_kmip_key_url(ksc, &pub_url)?;
                     let kmip_conn_pool = kmip_create_conn_pool(conn_settings)?;
                     let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                     let owner: Name<Bytes> = kss.keyset.name().clone().flatten_into();
@@ -2296,7 +2391,7 @@ fn handle_actions(
             }
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
-                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
+                update_ds_rrset(ksc, kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
