@@ -1662,8 +1662,12 @@ fn new_keys(
             // names and detect a collision ourselves when choosing a name?
             // Is their some natural differentiator that can be used to name
             // keys uniquely other than zone name?
+            let suffix = match make_ksk {
+                true => "_ksk",
+                false => "_zsk",
+            };
             let key_pair = dkmip::sign::generate(
-                name.fmt_with_dot().to_string(),
+                format!("{}{suffix}", name.fmt_with_dot()),
                 algorithm.clone(),
                 flags,
                 kmip_conn_pool.clone(),
