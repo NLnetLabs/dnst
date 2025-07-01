@@ -2200,7 +2200,7 @@ fn parse_kmip_key_url(
         return Err(format!("No KMIP server configured for {host}:{port}").into());
     };
 
-    let conn_settings = ConnectionSettings::from(srv.clone());
+    let mut conn_settings = ConnectionSettings::from(srv.clone());
 
     // TODO: Move username and password to the key config, and out of the
     // URLs.
