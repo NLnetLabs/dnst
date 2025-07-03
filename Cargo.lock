@@ -136,12 +136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
 name = "bcder"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,7 +188,6 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
- "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -371,7 +364,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#8638ac4d2b3e962a12ebc70376badc3781430929"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#53fd6ca803907023c9f15af6a34a6caa71ba773d"
 dependencies = [
  "arc-swap",
  "bcder",
@@ -391,7 +384,6 @@ dependencies = [
  "r2d2",
  "rand",
  "ring",
- "rpki",
  "rustversion",
  "secrecy",
  "serde",
@@ -407,7 +399,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#8638ac4d2b3e962a12ebc70376badc3781430929"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#53fd6ca803907023c9f15af6a34a6caa71ba773d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1316,22 +1308,6 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rpki"
-version = "0.18.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98a043d99463db58c05283f5ae5d9ced858cc3483011747264e21f50b9201cdd"
-dependencies = [
- "base64",
- "bcder",
- "bytes",
- "chrono",
- "log",
- "ring",
- "untrusted",
- "uuid",
 ]
 
 [[package]]
