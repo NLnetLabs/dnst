@@ -39,20 +39,6 @@ pub struct Keyset {
     #[arg(short = 'c')]
     keyset_conf: PathBuf,
 
-    /// Domain name (only for create)
-    #[arg(short = 'n')]
-    domain_name: Option<Name<Vec<u8>>>,
-
-    /// State file (only for create)
-    #[arg(short = 's')]
-    keyset_state: Option<PathBuf>,
-
-    #[arg(short = 't')]
-    ttl: Option<u32>,
-
-    #[arg(short = 'b')]
-    bits: Option<usize>,
-
     /// Subcommand
     #[command(subcommand)]
     cmd: Commands,
@@ -62,20 +48,45 @@ pub struct Keyset {
 
 #[derive(Clone, Debug, Subcommand)]
 enum Commands {
-    Create,
+    Create {
+        /// Domain name
+        #[arg(short = 'n')]
+        domain_name: Name<Vec<u8>>,
+
+        /// State file
+        #[arg(short = 's')]
+        keyset_state: PathBuf,
+    },
+
     Init,
     StartKskRoll,
     StartZskRoll,
     StartCskRoll,
     StartAlgorithmRoll,
-    KskPropagation1Complete,
-    KskPropagation2Complete,
-    ZskPropagation1Complete,
-    ZskPropagation2Complete,
-    CskPropagation1Complete,
-    CskPropagation2Complete,
-    AlgorithmPropagation1Complete,
-    AlgorithmPropagation2Complete,
+    KskPropagation1Complete {
+        ttl: u32,
+    },
+    KskPropagation2Complete {
+        ttl: u32,
+    },
+    ZskPropagation1Complete {
+        ttl: u32,
+    },
+    ZskPropagation2Complete {
+        ttl: u32,
+    },
+    CskPropagation1Complete {
+        ttl: u32,
+    },
+    CskPropagation2Complete {
+        ttl: u32,
+    },
+    AlgorithmPropagation1Complete {
+        ttl: u32,
+    },
+    AlgorithmPropagation2Complete {
+        ttl: u32,
+    },
     KskCacheExpired1,
     KskCacheExpired2,
     ZskCacheExpired1,
@@ -96,11 +107,29 @@ enum Commands {
     GetAutoremove,
     SetAutoremove,
     GetKskAlgorithm,
-    SetKskAlgorithm,
+    SetKskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        // XXX Enum
+        value: String,
+    },
     GetZskAlgorithm,
-    SetZskAlgorithm,
+    SetZskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        // XXX Enum
+        value: String,
+    },
     GetCskAlgorithm,
-    SetCskAlgorithm,
+    SetCskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        // XXX Enum
+        value: String,
+    },
     GetDsAlgorithm,
     SetDsAlgorithm,
     SetDnskeyInceptionOffset,
@@ -129,20 +158,17 @@ impl Keyset {
 
     /// Run the command as an async function
     pub async fn run(self, env: &impl Env) -> Result<(), Error> {
-        if let Commands::Create = self.cmd {
-            let domainname = self
-                .domain_name
-                .ok_or::<Error>("domain name option expected\n".into())?;
-
-            let state_file = self
-                .keyset_state
-                .ok_or::<Error>("state file option expected\n".into())?;
-            let state_file = absolute(&state_file).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", state_file.display(), e).into()
+        if let Commands::Create {
+            domain_name,
+            keyset_state,
+        } = self.cmd
+        {
+            let state_file = absolute(&keyset_state).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", keyset_state.display(), e).into()
             })?;
             let keys_dir = make_parent_dir(state_file.clone());
 
-            let ks = KeySet::new(domainname);
+            let ks = KeySet::new(domain_name);
             let kss = KeySetState {
                 keyset: ks,
                 dnskey_rrset: Vec::new(),
@@ -218,7 +244,10 @@ impl Keyset {
         let mut state_changed = false;
 
         match self.cmd {
-            Commands::Create => unreachable!(),
+            Commands::Create {
+                domain_name: _,
+                keyset_state: _,
+            } => unreachable!(),
             Commands::Init => {
                 // Check for re-init.
                 if !kss.keyset.keys().is_empty() {
@@ -775,40 +804,37 @@ impl Keyset {
                 print_actions(&actions);
                 state_changed = true;
             }
-            Commands::KskPropagation1Complete
-            | Commands::KskPropagation2Complete
-            | Commands::ZskPropagation1Complete
-            | Commands::ZskPropagation2Complete
-            | Commands::CskPropagation1Complete
-            | Commands::CskPropagation2Complete
-            | Commands::AlgorithmPropagation1Complete
-            | Commands::AlgorithmPropagation2Complete => {
-                let Some(ttl) = self.ttl else {
-                    return Err("ttl option is required\n".into());
-                };
+            Commands::KskPropagation1Complete { ttl }
+            | Commands::KskPropagation2Complete { ttl }
+            | Commands::ZskPropagation1Complete { ttl }
+            | Commands::ZskPropagation2Complete { ttl }
+            | Commands::CskPropagation1Complete { ttl }
+            | Commands::CskPropagation2Complete { ttl }
+            | Commands::AlgorithmPropagation1Complete { ttl }
+            | Commands::AlgorithmPropagation2Complete { ttl } => {
                 let actions = match self.cmd {
-                    Commands::KskPropagation1Complete => {
+                    Commands::KskPropagation1Complete { ttl: _ } => {
                         kss.keyset.propagation1_complete(RollType::KskRoll, ttl)
                     }
-                    Commands::KskPropagation2Complete => {
+                    Commands::KskPropagation2Complete { ttl: _ } => {
                         kss.keyset.propagation2_complete(RollType::KskRoll, ttl)
                     }
-                    Commands::ZskPropagation1Complete => {
+                    Commands::ZskPropagation1Complete { ttl: _ } => {
                         kss.keyset.propagation1_complete(RollType::ZskRoll, ttl)
                     }
-                    Commands::ZskPropagation2Complete => {
+                    Commands::ZskPropagation2Complete { ttl: _ } => {
                         kss.keyset.propagation2_complete(RollType::ZskRoll, ttl)
                     }
-                    Commands::CskPropagation1Complete => {
+                    Commands::CskPropagation1Complete { ttl: _ } => {
                         kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
                     }
-                    Commands::CskPropagation2Complete => {
+                    Commands::CskPropagation2Complete { ttl: _ } => {
                         kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
                     }
-                    Commands::AlgorithmPropagation1Complete => kss
+                    Commands::AlgorithmPropagation1Complete { ttl: _ } => kss
                         .keyset
                         .propagation1_complete(RollType::AlgorithmRoll, ttl),
-                    Commands::AlgorithmPropagation2Complete => kss
+                    Commands::AlgorithmPropagation2Complete { ttl: _ } => kss
                         .keyset
                         .propagation2_complete(RollType::AlgorithmRoll, ttl),
                     _ => unreachable!(),
@@ -1043,25 +1069,22 @@ impl Keyset {
             Commands::GetKskAlgorithm => {
                 println!("{}", ksc.ksk_generate_params);
             }
-            Commands::SetKskAlgorithm => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.ksk_generate_params = KeyParameters::new(&arg, self.bits)?;
+            Commands::SetKskAlgorithm { bits, value } => {
+                ksc.ksk_generate_params = KeyParameters::new(&value, bits)?;
                 config_changed = true;
             }
             Commands::GetZskAlgorithm => {
                 println!("{}", ksc.zsk_generate_params);
             }
-            Commands::SetZskAlgorithm => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.zsk_generate_params = KeyParameters::new(&arg, self.bits)?;
+            Commands::SetZskAlgorithm { bits, value } => {
+                ksc.zsk_generate_params = KeyParameters::new(&value, bits)?;
                 config_changed = true;
             }
             Commands::GetCskAlgorithm => {
                 println!("{}", ksc.csk_generate_params);
             }
-            Commands::SetCskAlgorithm => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.csk_generate_params = KeyParameters::new(&arg, self.bits)?;
+            Commands::SetCskAlgorithm { bits, value } => {
+                ksc.csk_generate_params = KeyParameters::new(&value, bits)?;
                 config_changed = true;
             }
             Commands::GetDsAlgorithm => {
