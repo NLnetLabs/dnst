@@ -16,7 +16,7 @@ use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
-use domain::crypto::kmip::{self as dkmip, ConnectionSettings};
+use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings};
 use domain::crypto::kmip_pool::{ConnectionManager, KmipConnPool};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
@@ -30,7 +30,6 @@ use domain::rdata::{Cdnskey, Cds, Dnskey, Ds, ZoneRecordData};
 use domain::zonefile::inplace::Zonefile;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use jiff::{Span, SpanRelativeTo};
-use kmip::client::ClientCertificate;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -1649,7 +1648,7 @@ fn new_keys(
                 true => "_ksk",
                 false => "_zsk",
             };
-            let key_pair = dkmip::sign::generate(
+            let key_pair = kmip::sign::generate(
                 format!("{}{suffix}", name.fmt_with_dot()),
                 algorithm.clone(),
                 flags,
@@ -1944,13 +1943,16 @@ fn kmip_signing_key_from_urls(
 
     let kmip_conn_pool = kmip_create_conn_pool(conn_settings1.into())?;
 
-    let key_pair = KeyPair::Kmip(dkmip::sign::KeyPair::new(
-        algorithm1,
-        flags1,
-        &private_key_id,
-        &public_key_id,
-        kmip_conn_pool,
-    ));
+    let key_pair = KeyPair::Kmip(
+        kmip::sign::KeyPair::new(
+            algorithm1,
+            flags1,
+            &private_key_id,
+            &public_key_id,
+            kmip_conn_pool,
+        )
+        .map_err(|err| format!("{err}"))?,
+    );
 
     Ok(SigningKey::new(owner, flags1, key_pair))
 }
@@ -1972,7 +1974,7 @@ fn kmip_get_dnskey(
     flags: u16,
     kmip_conn_pool: KmipConnPool,
 ) -> Result<Dnskey<Vec<u8>>, Error> {
-    let public_key = dkmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
+    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
     let mut retries = 3;
     let dnskey = loop {
         match public_key.dnskey(flags) {
