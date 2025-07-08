@@ -42,8 +42,6 @@ pub struct Keyset {
     /// Subcommand
     #[command(subcommand)]
     cmd: Commands,
-
-    value: Option<String>,
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -103,9 +101,13 @@ enum Commands {
     Actions,
     Keys,
     GetUseCsk,
-    SetUseCsk,
+    SetUseCsk {
+        boolean: bool,
+    },
     GetAutoremove,
-    SetAutoremove,
+    SetAutoremove {
+        boolean: bool,
+    },
     GetKskAlgorithm,
     SetKskAlgorithm {
         #[arg(short = 'b')]
@@ -131,18 +133,48 @@ enum Commands {
         value: String,
     },
     GetDsAlgorithm,
-    SetDsAlgorithm,
-    SetDnskeyInceptionOffset,
+    SetDsAlgorithm {
+        // XXX Enum
+        value: String,
+    },
+    SetDnskeyInceptionOffset {
+        // XXX Duration
+        value: String,
+    },
     GetDnskeyLifetime,
-    SetDnskeyLifetime,
-    SetDnskeyRemainTime,
-    SetCdsInceptionOffset,
+    SetDnskeyLifetime {
+        // XXX Duration
+        value: String,
+    },
+    SetDnskeyRemainTime {
+        // XXX Duration
+        value: String,
+    },
+    SetCdsInceptionOffset {
+        // XXX Duration
+        value: String,
+    },
     GetCdsLifetime,
-    SetCdsLifetime,
-    SetCdsRemainTime,
-    SetKskValidity,
-    SetZskValidity,
-    SetCskValidity,
+    SetCdsLifetime {
+        // XXX Duration
+        value: String,
+    },
+    SetCdsRemainTime {
+        // XXX Duration
+        value: String,
+    },
+    SetKskValidity {
+        // XXX Duration
+        value: String,
+    },
+    SetZskValidity {
+        // XXX Duration
+        value: String,
+    },
+    SetCskValidity {
+        // XXX Duration
+        value: String,
+    },
     Show,
     GetDnskey,
     GetCds,
@@ -1049,21 +1081,15 @@ impl Keyset {
             Commands::GetUseCsk => {
                 println!("{}", ksc.use_csk);
             }
-            Commands::SetUseCsk => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.use_csk = arg.parse().map_err::<Error, _>(|_| {
-                    format!("unable to parse as boolean: {arg}\n").into()
-                })?;
+            Commands::SetUseCsk { boolean } => {
+                ksc.use_csk = boolean;
                 config_changed = true;
             }
             Commands::GetAutoremove => {
                 println!("{}", ksc.autoremove);
             }
-            Commands::SetAutoremove => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.autoremove = arg.parse().map_err::<Error, _>(|_| {
-                    format!("unable to parse as boolean: {arg}\n").into()
-                })?;
+            Commands::SetAutoremove { boolean } => {
+                ksc.autoremove = boolean;
                 config_changed = true;
             }
             Commands::GetKskAlgorithm => {
@@ -1090,13 +1116,12 @@ impl Keyset {
             Commands::GetDsAlgorithm => {
                 println!("{}", ksc.ds_algorithm);
             }
-            Commands::SetDsAlgorithm => {
-                let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-                ksc.ds_algorithm = DsAlgorithm::new(&arg)?;
+            Commands::SetDsAlgorithm { value } => {
+                ksc.ds_algorithm = DsAlgorithm::new(&value)?;
                 config_changed = true;
             }
-            Commands::SetDnskeyInceptionOffset => {
-                ksc.dnskey_inception_offset = parse_duration_from_opt(&self.value)?;
+            Commands::SetDnskeyInceptionOffset { value } => {
+                ksc.dnskey_inception_offset = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
             Commands::GetDnskeyLifetime => {
@@ -1106,16 +1131,16 @@ impl Keyset {
                     .expect("should not fail");
                 println!("{signeddur:#}");
             }
-            Commands::SetDnskeyLifetime => {
-                ksc.dnskey_signature_lifetime = parse_duration_from_opt(&self.value)?;
+            Commands::SetDnskeyLifetime { value } => {
+                ksc.dnskey_signature_lifetime = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetDnskeyRemainTime => {
-                ksc.dnskey_remain_time = parse_duration_from_opt(&self.value)?;
+            Commands::SetDnskeyRemainTime { value } => {
+                ksc.dnskey_remain_time = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetCdsInceptionOffset => {
-                ksc.cds_inception_offset = parse_duration_from_opt(&self.value)?;
+            Commands::SetCdsInceptionOffset { value } => {
+                ksc.cds_inception_offset = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
             Commands::GetCdsLifetime => {
@@ -1125,24 +1150,24 @@ impl Keyset {
                     .expect("should not fail");
                 println!("{signeddur:#}");
             }
-            Commands::SetCdsLifetime => {
-                ksc.cds_signature_lifetime = parse_duration_from_opt(&self.value)?;
+            Commands::SetCdsLifetime { value } => {
+                ksc.cds_signature_lifetime = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetCdsRemainTime => {
-                ksc.cds_remain_time = parse_duration_from_opt(&self.value)?;
+            Commands::SetCdsRemainTime { value } => {
+                ksc.cds_remain_time = parse_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetKskValidity => {
-                ksc.ksk_validity = parse_opt_duration_from_opt(&self.value)?;
+            Commands::SetKskValidity { value } => {
+                ksc.ksk_validity = parse_opt_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetZskValidity => {
-                ksc.zsk_validity = parse_opt_duration_from_opt(&self.value)?;
+            Commands::SetZskValidity { value } => {
+                ksc.zsk_validity = parse_opt_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
-            Commands::SetCskValidity => {
-                ksc.csk_validity = parse_opt_duration_from_opt(&self.value)?;
+            Commands::SetCskValidity { value } => {
+                ksc.csk_validity = parse_opt_duration_from_opt(&Some(value))?;
                 config_changed = true;
             }
             Commands::Show => {
