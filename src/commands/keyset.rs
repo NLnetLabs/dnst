@@ -136,8 +136,8 @@ enum Commands {
     },
     GetDsAlgorithm,
     SetDsAlgorithm {
-        // XXX Enum
-        value: String,
+        #[arg(value_parser = DsAlgorithm::new)]
+        algorithm: DsAlgorithm,
     },
     SetDnskeyInceptionOffset {
         #[arg(value_parser = parse_duration)]
@@ -1118,8 +1118,8 @@ impl Keyset {
             Commands::GetDsAlgorithm => {
                 println!("{}", ksc.ds_algorithm);
             }
-            Commands::SetDsAlgorithm { value } => {
-                ksc.ds_algorithm = DsAlgorithm::new(&value)?;
+            Commands::SetDsAlgorithm { algorithm } => {
+                ksc.ds_algorithm = algorithm;
                 config_changed = true;
             }
             Commands::SetDnskeyInceptionOffset { duration } => {
@@ -1382,7 +1382,7 @@ impl Display for KeyParameters {
 }
 
 // Do we want Deserialize and Serialize for DigestAlgorithm?
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 enum DsAlgorithm {
     Sha256,
     Sha384,
