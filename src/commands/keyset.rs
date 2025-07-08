@@ -44,6 +44,8 @@ pub struct Keyset {
     cmd: Commands,
 }
 
+type OptDuration = Option<Duration>;
+
 #[derive(Clone, Debug, Subcommand)]
 enum Commands {
     Create {
@@ -138,42 +140,42 @@ enum Commands {
         value: String,
     },
     SetDnskeyInceptionOffset {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     GetDnskeyLifetime,
     SetDnskeyLifetime {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     SetDnskeyRemainTime {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     SetCdsInceptionOffset {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     GetCdsLifetime,
     SetCdsLifetime {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     SetCdsRemainTime {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
     },
     SetKskValidity {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
     },
     SetZskValidity {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
     },
     SetCskValidity {
-        // XXX Duration
-        value: String,
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
     },
     Show,
     GetDnskey,
@@ -1120,8 +1122,8 @@ impl Keyset {
                 ksc.ds_algorithm = DsAlgorithm::new(&value)?;
                 config_changed = true;
             }
-            Commands::SetDnskeyInceptionOffset { value } => {
-                ksc.dnskey_inception_offset = parse_duration_from_opt(&Some(value))?;
+            Commands::SetDnskeyInceptionOffset { duration } => {
+                ksc.dnskey_inception_offset = duration;
                 config_changed = true;
             }
             Commands::GetDnskeyLifetime => {
@@ -1131,16 +1133,16 @@ impl Keyset {
                     .expect("should not fail");
                 println!("{signeddur:#}");
             }
-            Commands::SetDnskeyLifetime { value } => {
-                ksc.dnskey_signature_lifetime = parse_duration_from_opt(&Some(value))?;
+            Commands::SetDnskeyLifetime { duration } => {
+                ksc.dnskey_signature_lifetime = duration;
                 config_changed = true;
             }
-            Commands::SetDnskeyRemainTime { value } => {
-                ksc.dnskey_remain_time = parse_duration_from_opt(&Some(value))?;
+            Commands::SetDnskeyRemainTime { duration } => {
+                ksc.dnskey_remain_time = duration;
                 config_changed = true;
             }
-            Commands::SetCdsInceptionOffset { value } => {
-                ksc.cds_inception_offset = parse_duration_from_opt(&Some(value))?;
+            Commands::SetCdsInceptionOffset { duration } => {
+                ksc.cds_inception_offset = duration;
                 config_changed = true;
             }
             Commands::GetCdsLifetime => {
@@ -1150,24 +1152,24 @@ impl Keyset {
                     .expect("should not fail");
                 println!("{signeddur:#}");
             }
-            Commands::SetCdsLifetime { value } => {
-                ksc.cds_signature_lifetime = parse_duration_from_opt(&Some(value))?;
+            Commands::SetCdsLifetime { duration } => {
+                ksc.cds_signature_lifetime = duration;
                 config_changed = true;
             }
-            Commands::SetCdsRemainTime { value } => {
-                ksc.cds_remain_time = parse_duration_from_opt(&Some(value))?;
+            Commands::SetCdsRemainTime { duration } => {
+                ksc.cds_remain_time = duration;
                 config_changed = true;
             }
-            Commands::SetKskValidity { value } => {
-                ksc.ksk_validity = parse_opt_duration_from_opt(&Some(value))?;
+            Commands::SetKskValidity { opt_duration } => {
+                ksc.ksk_validity = opt_duration;
                 config_changed = true;
             }
-            Commands::SetZskValidity { value } => {
-                ksc.zsk_validity = parse_opt_duration_from_opt(&Some(value))?;
+            Commands::SetZskValidity { opt_duration } => {
+                ksc.zsk_validity = opt_duration;
                 config_changed = true;
             }
-            Commands::SetCskValidity { value } => {
-                ksc.csk_validity = parse_opt_duration_from_opt(&Some(value))?;
+            Commands::SetCskValidity { opt_duration } => {
+                ksc.csk_validity = opt_duration;
                 config_changed = true;
             }
             Commands::Show => {
@@ -1920,26 +1922,21 @@ fn print_actions(actions: &[Action]) {
     }
 }
 
-fn parse_duration_from_opt(value: &Option<String>) -> Result<Duration, Error> {
-    let arg = value
-        .as_ref()
-        .ok_or::<Error>("argument expected\n".into())?;
-    let span: Span = arg
+fn parse_duration(value: &str) -> Result<Duration, Error> {
+    let span: Span = value
         .parse()
-        .map_err::<Error, _>(|e| format!("unable to parse {arg} as lifetime: {e}\n").into())?;
+        .map_err::<Error, _>(|e| format!("unable to parse {value} as lifetime: {e}\n").into())?;
     let signeddur = span
         .to_duration(SpanRelativeTo::days_are_24_hours())
         .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
     Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
 }
 
-fn parse_opt_duration_from_opt(value: &Option<String>) -> Result<Option<Duration>, Error> {
-    if let Some(value) = value {
-        if value == "off" {
-            return Ok(None);
-        }
+fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
+    if value == "off" {
+        return Ok(None);
     }
-    let duration = parse_duration_from_opt(value)?;
+    let duration = parse_duration(value)?;
     Ok(Some(duration))
 }
 
