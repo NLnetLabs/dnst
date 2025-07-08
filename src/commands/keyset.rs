@@ -115,24 +115,21 @@ enum Commands {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
-        // XXX Enum
-        value: String,
+        algorithm: String,
     },
     GetZskAlgorithm,
     SetZskAlgorithm {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
-        // XXX Enum
-        value: String,
+        algorithm: String,
     },
     GetCskAlgorithm,
     SetCskAlgorithm {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
-        // XXX Enum
-        value: String,
+        algorithm: String,
     },
     GetDsAlgorithm,
     SetDsAlgorithm {
@@ -1097,22 +1094,22 @@ impl Keyset {
             Commands::GetKskAlgorithm => {
                 println!("{}", ksc.ksk_generate_params);
             }
-            Commands::SetKskAlgorithm { bits, value } => {
-                ksc.ksk_generate_params = KeyParameters::new(&value, bits)?;
+            Commands::SetKskAlgorithm { algorithm, bits } => {
+                ksc.ksk_generate_params = KeyParameters::new(&algorithm, bits)?;
                 config_changed = true;
             }
             Commands::GetZskAlgorithm => {
                 println!("{}", ksc.zsk_generate_params);
             }
-            Commands::SetZskAlgorithm { bits, value } => {
-                ksc.zsk_generate_params = KeyParameters::new(&value, bits)?;
+            Commands::SetZskAlgorithm { algorithm, bits } => {
+                ksc.zsk_generate_params = KeyParameters::new(&algorithm, bits)?;
                 config_changed = true;
             }
             Commands::GetCskAlgorithm => {
                 println!("{}", ksc.csk_generate_params);
             }
-            Commands::SetCskAlgorithm { bits, value } => {
-                ksc.csk_generate_params = KeyParameters::new(&value, bits)?;
+            Commands::SetCskAlgorithm { algorithm, bits } => {
+                ksc.csk_generate_params = KeyParameters::new(&algorithm, bits)?;
                 config_changed = true;
             }
             Commands::GetDsAlgorithm => {
