@@ -276,8 +276,7 @@ impl Keyset {
 
         match self.cmd {
             Commands::Create {
-                domain_name: _,
-                keyset_state: _,
+                ..
             } => unreachable!(),
             Commands::Init => {
                 // Check for re-init.
