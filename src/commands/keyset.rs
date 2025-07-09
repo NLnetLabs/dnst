@@ -102,83 +102,104 @@ enum Commands {
     Status,
     Actions,
     Keys,
-    GetUseCsk,
-    SetUseCsk {
+
+    Get {
+        #[command(subcommand)]
+        subcommand: GetCommands,
+    },
+
+    Set {
+        #[command(subcommand)]
+        subcommand: SetCommands,
+    },
+
+    Show,
+    Cron,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum GetCommands {
+    UseCsk,
+    Autoremove,
+    KskAlgorithm,
+    ZskAlgorithm,
+    CskAlgorithm,
+    DsAlgorithm,
+    DnskeyLifetime,
+    CdsLifetime,
+    Dnskey,
+    Cds,
+    Ds,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum SetCommands {
+    UseCsk {
+        #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
     },
-    GetAutoremove,
-    SetAutoremove {
+    Autoremove {
+        #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
     },
-    GetKskAlgorithm,
-    SetKskAlgorithm {
+    KskAlgorithm {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
         algorithm: String,
     },
-    GetZskAlgorithm,
-    SetZskAlgorithm {
+    ZskAlgorithm {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
         algorithm: String,
     },
-    GetCskAlgorithm,
-    SetCskAlgorithm {
+    CskAlgorithm {
         #[arg(short = 'b')]
         bits: Option<usize>,
 
         algorithm: String,
     },
-    GetDsAlgorithm,
-    SetDsAlgorithm {
+    DsAlgorithm {
         #[arg(value_parser = DsAlgorithm::new)]
         algorithm: DsAlgorithm,
     },
-    SetDnskeyInceptionOffset {
+    DnskeyInceptionOffset {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    GetDnskeyLifetime,
-    SetDnskeyLifetime {
+    DnskeyLifetime {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    SetDnskeyRemainTime {
+    DnskeyRemainTime {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    SetCdsInceptionOffset {
+    CdsInceptionOffset {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    GetCdsLifetime,
-    SetCdsLifetime {
+    CdsLifetime {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    SetCdsRemainTime {
+    CdsRemainTime {
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
-    SetKskValidity {
+    KskValidity {
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
-    SetZskValidity {
+    ZskValidity {
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
-    SetCskValidity {
+    CskValidity {
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
-    Show,
-    GetDnskey,
-    GetCds,
-    GetDs,
-    Cron,
 }
 
 impl Keyset {
@@ -1076,98 +1097,8 @@ impl Keyset {
                     );
                 }
             }
-            Commands::GetUseCsk => {
-                println!("{}", ksc.use_csk);
-            }
-            Commands::SetUseCsk { boolean } => {
-                ksc.use_csk = boolean;
-                config_changed = true;
-            }
-            Commands::GetAutoremove => {
-                println!("{}", ksc.autoremove);
-            }
-            Commands::SetAutoremove { boolean } => {
-                ksc.autoremove = boolean;
-                config_changed = true;
-            }
-            Commands::GetKskAlgorithm => {
-                println!("{}", ksc.ksk_generate_params);
-            }
-            Commands::SetKskAlgorithm { algorithm, bits } => {
-                ksc.ksk_generate_params = KeyParameters::new(&algorithm, bits)?;
-                config_changed = true;
-            }
-            Commands::GetZskAlgorithm => {
-                println!("{}", ksc.zsk_generate_params);
-            }
-            Commands::SetZskAlgorithm { algorithm, bits } => {
-                ksc.zsk_generate_params = KeyParameters::new(&algorithm, bits)?;
-                config_changed = true;
-            }
-            Commands::GetCskAlgorithm => {
-                println!("{}", ksc.csk_generate_params);
-            }
-            Commands::SetCskAlgorithm { algorithm, bits } => {
-                ksc.csk_generate_params = KeyParameters::new(&algorithm, bits)?;
-                config_changed = true;
-            }
-            Commands::GetDsAlgorithm => {
-                println!("{}", ksc.ds_algorithm);
-            }
-            Commands::SetDsAlgorithm { algorithm } => {
-                ksc.ds_algorithm = algorithm;
-                config_changed = true;
-            }
-            Commands::SetDnskeyInceptionOffset { duration } => {
-                ksc.dnskey_inception_offset = duration;
-                config_changed = true;
-            }
-            Commands::GetDnskeyLifetime => {
-                let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
-                let signeddur = span
-                    .to_duration(SpanRelativeTo::days_are_24_hours())
-                    .expect("should not fail");
-                println!("{signeddur:#}");
-            }
-            Commands::SetDnskeyLifetime { duration } => {
-                ksc.dnskey_signature_lifetime = duration;
-                config_changed = true;
-            }
-            Commands::SetDnskeyRemainTime { duration } => {
-                ksc.dnskey_remain_time = duration;
-                config_changed = true;
-            }
-            Commands::SetCdsInceptionOffset { duration } => {
-                ksc.cds_inception_offset = duration;
-                config_changed = true;
-            }
-            Commands::GetCdsLifetime => {
-                let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
-                let signeddur = span
-                    .to_duration(SpanRelativeTo::days_are_24_hours())
-                    .expect("should not fail");
-                println!("{signeddur:#}");
-            }
-            Commands::SetCdsLifetime { duration } => {
-                ksc.cds_signature_lifetime = duration;
-                config_changed = true;
-            }
-            Commands::SetCdsRemainTime { duration } => {
-                ksc.cds_remain_time = duration;
-                config_changed = true;
-            }
-            Commands::SetKskValidity { opt_duration } => {
-                ksc.ksk_validity = opt_duration;
-                config_changed = true;
-            }
-            Commands::SetZskValidity { opt_duration } => {
-                ksc.zsk_validity = opt_duration;
-                config_changed = true;
-            }
-            Commands::SetCskValidity { opt_duration } => {
-                ksc.csk_validity = opt_duration;
-                config_changed = true;
-            }
+            Commands::Get { subcommand } => get_command(subcommand, &ksc, &kss),
+            Commands::Set { subcommand } => set_command(subcommand, &mut ksc, &mut config_changed)?,
             Commands::Show => {
                 println!("state-file: {:?}", ksc.state_file);
                 println!("use-csk: {}", ksc.use_csk);
@@ -1188,21 +1119,6 @@ impl Keyset {
                 println!("cds-remain-time: {:?}", ksc.cds_remain_time);
                 println!("ds-algorithm: {:?}", ksc.ds_algorithm);
                 println!("autoremove: {:?}", ksc.autoremove);
-            }
-            Commands::GetDnskey => {
-                for r in &kss.dnskey_rrset {
-                    println!("{r}");
-                }
-            }
-            Commands::GetCds => {
-                for r in &kss.cds_rrset {
-                    println!("{r}");
-                }
-            }
-            Commands::GetDs => {
-                for r in &kss.ds_rrset {
-                    println!("{r}");
-                }
             }
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
@@ -1257,6 +1173,128 @@ impl Keyset {
         }
         Ok(())
     }
+}
+
+fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
+    match cmd {
+        GetCommands::UseCsk => {
+            println!("{}", ksc.use_csk);
+        }
+        GetCommands::Autoremove => {
+            println!("{}", ksc.autoremove);
+        }
+        GetCommands::KskAlgorithm => {
+            println!("{}", ksc.ksk_generate_params);
+        }
+        GetCommands::ZskAlgorithm => {
+            println!("{}", ksc.zsk_generate_params);
+        }
+        GetCommands::CskAlgorithm => {
+            println!("{}", ksc.csk_generate_params);
+        }
+        GetCommands::DsAlgorithm => {
+            println!("{}", ksc.ds_algorithm);
+        }
+        GetCommands::DnskeyLifetime => {
+            let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
+            let signeddur = span
+                .to_duration(SpanRelativeTo::days_are_24_hours())
+                .expect("should not fail");
+            println!("{signeddur:#}");
+        }
+        GetCommands::CdsLifetime => {
+            let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
+            let signeddur = span
+                .to_duration(SpanRelativeTo::days_are_24_hours())
+                .expect("should not fail");
+            println!("{signeddur:#}");
+        }
+        GetCommands::Dnskey => {
+            for r in &kss.dnskey_rrset {
+                println!("{r}");
+            }
+        }
+        GetCommands::Cds => {
+            for r in &kss.cds_rrset {
+                println!("{r}");
+            }
+        }
+        GetCommands::Ds => {
+            for r in &kss.ds_rrset {
+                println!("{r}");
+            }
+        }
+    }
+}
+
+fn set_command(
+    cmd: SetCommands,
+    ksc: &mut KeySetConfig,
+    config_changed: &mut bool,
+) -> Result<(), Error> {
+    match cmd {
+        SetCommands::UseCsk { boolean } => {
+            ksc.use_csk = boolean;
+            *config_changed = true;
+        }
+        SetCommands::Autoremove { boolean } => {
+            ksc.autoremove = boolean;
+            *config_changed = true;
+        }
+        SetCommands::KskAlgorithm { algorithm, bits } => {
+            ksc.ksk_generate_params = KeyParameters::new(&algorithm, bits)?;
+            *config_changed = true;
+        }
+        SetCommands::ZskAlgorithm { algorithm, bits } => {
+            ksc.zsk_generate_params = KeyParameters::new(&algorithm, bits)?;
+            *config_changed = true;
+        }
+        SetCommands::CskAlgorithm { algorithm, bits } => {
+            ksc.csk_generate_params = KeyParameters::new(&algorithm, bits)?;
+            *config_changed = true;
+        }
+        SetCommands::DsAlgorithm { algorithm } => {
+            ksc.ds_algorithm = algorithm;
+            *config_changed = true;
+        }
+        SetCommands::DnskeyInceptionOffset { duration } => {
+            ksc.dnskey_inception_offset = duration;
+            *config_changed = true;
+        }
+        SetCommands::DnskeyLifetime { duration } => {
+            ksc.dnskey_signature_lifetime = duration;
+            *config_changed = true;
+        }
+        SetCommands::DnskeyRemainTime { duration } => {
+            ksc.dnskey_remain_time = duration;
+            *config_changed = true;
+        }
+        SetCommands::CdsInceptionOffset { duration } => {
+            ksc.cds_inception_offset = duration;
+            *config_changed = true;
+        }
+        SetCommands::CdsLifetime { duration } => {
+            ksc.cds_signature_lifetime = duration;
+            *config_changed = true;
+        }
+        SetCommands::CdsRemainTime { duration } => {
+            ksc.cds_remain_time = duration;
+            *config_changed = true;
+        }
+        SetCommands::KskValidity { opt_duration } => {
+            ksc.ksk_validity = opt_duration;
+            *config_changed = true;
+        }
+        SetCommands::ZskValidity { opt_duration } => {
+            ksc.zsk_validity = opt_duration;
+            *config_changed = true;
+        }
+        SetCommands::CskValidity { opt_duration } => {
+            ksc.csk_validity = opt_duration;
+            *config_changed = true;
+        }
+    }
+    Ok(())
 }
 
 /// Config for the keyset command.
