@@ -215,7 +215,7 @@ impl Notify {
         let resolver = env.stub_resolver().await;
 
         for server in &self.servers {
-            writeln!(env.stdout(), "# sending to {}", server);
+            writeln!(env.stdout(), "# sending to {server}");
 
             // The specified server might be an IP address. In ldns, this case is
             // handled by `getaddrinfo`, but we have to do it ourselves.
