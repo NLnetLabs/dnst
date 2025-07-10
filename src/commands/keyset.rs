@@ -296,9 +296,7 @@ impl Keyset {
         let mut state_changed = false;
 
         match self.cmd {
-            Commands::Create {
-                ..
-            } => unreachable!(),
+            Commands::Create { .. } => unreachable!(),
             Commands::Init => {
                 // Check for re-init.
                 if !kss.keyset.keys().is_empty() {
@@ -1235,65 +1233,51 @@ fn set_command(
     match cmd {
         SetCommands::UseCsk { boolean } => {
             ksc.use_csk = boolean;
-            *config_changed = true;
         }
         SetCommands::Autoremove { boolean } => {
             ksc.autoremove = boolean;
-            *config_changed = true;
         }
         SetCommands::KskAlgorithm { algorithm, bits } => {
             ksc.ksk_generate_params = KeyParameters::new(&algorithm, bits)?;
-            *config_changed = true;
         }
         SetCommands::ZskAlgorithm { algorithm, bits } => {
             ksc.zsk_generate_params = KeyParameters::new(&algorithm, bits)?;
-            *config_changed = true;
         }
         SetCommands::CskAlgorithm { algorithm, bits } => {
             ksc.csk_generate_params = KeyParameters::new(&algorithm, bits)?;
-            *config_changed = true;
         }
         SetCommands::DsAlgorithm { algorithm } => {
             ksc.ds_algorithm = algorithm;
-            *config_changed = true;
         }
         SetCommands::DnskeyInceptionOffset { duration } => {
             ksc.dnskey_inception_offset = duration;
-            *config_changed = true;
         }
         SetCommands::DnskeyLifetime { duration } => {
             ksc.dnskey_signature_lifetime = duration;
-            *config_changed = true;
         }
         SetCommands::DnskeyRemainTime { duration } => {
             ksc.dnskey_remain_time = duration;
-            *config_changed = true;
         }
         SetCommands::CdsInceptionOffset { duration } => {
             ksc.cds_inception_offset = duration;
-            *config_changed = true;
         }
         SetCommands::CdsLifetime { duration } => {
             ksc.cds_signature_lifetime = duration;
-            *config_changed = true;
         }
         SetCommands::CdsRemainTime { duration } => {
             ksc.cds_remain_time = duration;
-            *config_changed = true;
         }
         SetCommands::KskValidity { opt_duration } => {
             ksc.ksk_validity = opt_duration;
-            *config_changed = true;
         }
         SetCommands::ZskValidity { opt_duration } => {
             ksc.zsk_validity = opt_duration;
-            *config_changed = true;
         }
         SetCommands::CskValidity { opt_duration } => {
             ksc.csk_validity = opt_duration;
-            *config_changed = true;
         }
     }
+    *config_changed = true;
     Ok(())
 }
 
