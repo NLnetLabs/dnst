@@ -136,7 +136,7 @@ fn ldns_algs_help() -> String {
         }
     }
 
-    format!("{}", Printer)
+    format!("{Printer}")
 }
 
 impl LdnsCommand for Keygen {
@@ -387,7 +387,7 @@ impl Keygen {
         }
 
         // Let the user know what the base name of the files is.
-        writeln!(stdout, "{}", base);
+        writeln!(stdout, "{base}");
 
         Ok(())
     }
