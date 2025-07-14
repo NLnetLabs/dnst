@@ -739,7 +739,7 @@ impl Keyset {
                     for u in new_urls {
                         if u.scheme() == "file" {
                             remove_file(u.path()).map_err::<Error, _>(|e| {
-                                format!("unable to private key file {u}: {e}\n").into()
+                                format!("unable to remove private key file {u}: {e}\n").into()
                             })?;
                         } else {
                             panic!("unsupported scheme in {u}");
