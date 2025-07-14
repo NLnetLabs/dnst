@@ -16,6 +16,7 @@ use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
+use domain::crypto::kmip::sign::KeyUrl;
 use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings};
 use domain::crypto::kmip_pool::{ConnectionManager, KmipConnPool};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
@@ -199,7 +200,10 @@ impl Keyset {
             .and_then(|id| ksc.kmip_servers.get(id))
             .map(|conn_settings| Arc::new(ConnectionSettings::from(conn_settings.clone())));
         let kmip_conn_pool = if let Some(conn_settings) = kmip_conn_settings.as_ref() {
-            Some(kmip_create_conn_pool(conn_settings.clone())?)
+            Some(kmip_create_conn_pool(
+                kmip_server_id.unwrap(),
+                conn_settings.clone(),
+            )?)
         } else {
             None
         };
@@ -221,7 +225,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 kss.keyset
@@ -245,7 +248,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 kss.keyset
@@ -264,7 +266,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 kss.keyset
@@ -337,7 +338,6 @@ impl Keyset {
                 kss.keyset.keys(),
                 &ksc.keys_dir,
                 env,
-                &kmip_server_id,
                 &kmip_conn_pool,
             )?;
             kss.keyset
@@ -434,7 +434,6 @@ impl Keyset {
                 kss.keyset.keys(),
                 &ksc.keys_dir,
                 env,
-                &kmip_server_id,
                 &kmip_conn_pool,
             )?;
             kss.keyset
@@ -518,7 +517,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(csk_priv_url.clone());
@@ -548,7 +546,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(ksk_priv_url.clone());
@@ -573,7 +570,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(zsk_priv_url.clone());
@@ -656,7 +652,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(csk_priv_url.clone());
@@ -686,7 +681,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(ksk_priv_url.clone());
@@ -711,7 +705,6 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_server_id,
                     &kmip_conn_pool,
                 )?;
                 new_urls.push(zsk_priv_url.clone());
@@ -1626,7 +1619,6 @@ fn new_keys(
     keys: &HashMap<String, Key>,
     keys_dir: &Path,
     env: &impl Env,
-    kmip_server_id: &Option<String>,
     kmip_conn_pool: &Option<KmipConnPool>,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
@@ -1635,7 +1627,7 @@ fn new_keys(
     let flags = if make_ksk { 257 } else { 256 };
     let mut retries = MAX_KEY_TAG_TRIES;
 
-    if let (Some(kmip_server_id), Some(kmip_conn_pool)) = (kmip_server_id, kmip_conn_pool) {
+    if let Some(kmip_conn_pool) = kmip_conn_pool {
         let (key_pair, dnskey) = loop {
             // TODO: Fortanix DSM rejects attempts to create keys by names
             // that are already taken. Should we be able to detect that case
@@ -1671,33 +1663,16 @@ fn new_keys(
             retries -= 1;
         };
 
-        // Define the KMIP URI to have the form:
-        // TODO: Do we need to encode identity information about the HSM in the URI too?
-        // TODO: Move KMIP URL construction into domain?
-        // We have to store the algorithm because the DNSSEC algorithm (e.g. 5
-        // and 7) don't necessarily correspond to the cryptographic algorithm
-        // of the key known to the HSM.
-        //   kmip://<hsm_id>/keys/<key_id>?algorithm=<algorithm>&flags=<flags>
-        let algorithm = dnskey.algorithm();
-        let public_key_url = format!(
-            "kmip://{kmip_server_id}/keys/{}?algorithm={algorithm}&flags={flags}",
-            key_pair.public_key_id()
-        );
-        let secret_key_url = format!(
-            "kmip://{kmip_server_id}/keys/{}?algorithm={algorithm}&flags={flags}",
-            key_pair.private_key_id()
-        );
-
-        let public_key_url = Url::parse(&public_key_url).map_err::<Error, _>(|e| {
-            format!("unable to parse {public_key_url} as URL: {e}").into()
-        })?;
-        let secret_key_url = Url::parse(&secret_key_url).map_err::<Error, _>(|e| {
-            format!("unable to parse {secret_key_url} as URL: {e}").into()
-        })?;
+        let public_key_url = key_pair
+            .public_key_url()
+            .map_err(|err| format!("Failed to generate public key URL: {err}"))?;
+        let private_key_url = key_pair
+            .private_key_url()
+            .map_err(|err| format!("Failed to generate private key URL: {err}"))?;
 
         Ok((
             public_key_url,
-            secret_key_url,
+            private_key_url,
             key_pair.algorithm(),
             dnskey.key_tag(),
         ))
@@ -1830,9 +1805,9 @@ fn update_dnskey_rrset(
                     dnskeys.push(record);
                 }
             } else if pub_url.scheme() == "kmip" {
-                let (public_key_id, algorithm, flags, conn_settings) =
-                    parse_kmip_key_url(ksc, &pub_url)?;
-                let kmip_conn_pool = kmip_create_conn_pool(conn_settings.into())?;
+                let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                    parse_kmip_key_url(ksc, pub_url)?;
+                let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
                 let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                 let owner = kss.keyset.name().clone().flatten_into();
                 let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey.convert());
@@ -1934,14 +1909,17 @@ fn kmip_signing_key_from_urls(
     priv_url: Url,
     pub_url: Url,
 ) -> Result<SigningKey<Bytes, KeyPair>, Error> {
-    let (private_key_id, algorithm1, flags1, conn_settings1) = parse_kmip_key_url(ksc, &priv_url)?;
-    let (public_key_id, algorithm2, flags2, conn_settings2) = parse_kmip_key_url(ksc, &pub_url)?;
+    let (server_id1, private_key_id, algorithm1, flags1, conn_settings1) =
+        parse_kmip_key_url(ksc, priv_url)?;
+    let (server_id2, public_key_id, algorithm2, flags2, conn_settings2) =
+        parse_kmip_key_url(ksc, pub_url)?;
 
+    assert_eq!(server_id1, server_id2);
     assert_eq!(algorithm1, algorithm2);
     assert_eq!(flags1, flags2);
     assert_eq!(conn_settings1, conn_settings2);
 
-    let kmip_conn_pool = kmip_create_conn_pool(conn_settings1.into())?;
+    let kmip_conn_pool = kmip_create_conn_pool(server_id1, conn_settings1.into())?;
 
     let key_pair = KeyPair::Kmip(
         kmip::sign::KeyPair::new(
@@ -1957,8 +1935,12 @@ fn kmip_signing_key_from_urls(
     Ok(SigningKey::new(owner, flags1, key_pair))
 }
 
-fn kmip_create_conn_pool(conn_settings: Arc<ConnectionSettings>) -> Result<KmipConnPool, Error> {
+fn kmip_create_conn_pool(
+    server_id: String,
+    conn_settings: Arc<ConnectionSettings>,
+) -> Result<KmipConnPool, Error> {
     let kmip_conn_pool = ConnectionManager::create_connection_pool(
+        server_id,
         conn_settings,
         1,
         Some(Duration::from_secs(60)),
@@ -2047,9 +2029,9 @@ fn create_cds_rrset(
                 }
 
                 "kmip" => {
-                    let (public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(ksc, &pub_url)?;
-                    let kmip_conn_pool = kmip_create_conn_pool(conn_settings.into())?;
+                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                        parse_kmip_key_url(ksc, pub_url)?;
+                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
                     let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                     let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
                     let owner = kss.keyset.name().clone().flatten_into();
@@ -2180,42 +2162,35 @@ fn create_cds_rrset(
 
 fn parse_kmip_key_url(
     ksc: &KeySetConfig,
-    kmip_key_url: &Url,
-) -> Result<(String, SecurityAlgorithm, u16, ConnectionSettings), Error> {
-    let id = kmip_key_url.host_str().unwrap().to_string();
+    kmip_key_url: Url,
+) -> Result<(String, String, SecurityAlgorithm, u16, ConnectionSettings), Error> {
+    let key_url =
+        KeyUrl::try_from(kmip_key_url).map_err(|err| format!("Invalid KMIP key URL: {err}"))?;
+
+    let server_id = key_url.server_id();
 
     // Lookup KMIP server connection details
-    let Some(srv) = ksc.kmip_servers.get(&id) else {
-        return Err(format!("No KMIP server configured with id {id}").into());
-    };
+    let srv = ksc
+        .kmip_servers
+        .get(server_id)
+        .ok_or(format!("No KMIP server configured with id {server_id}"))?;
 
     let mut conn_settings = ConnectionSettings::from(srv.clone());
 
-    // TODO: Move username and password to the key config, and out of the
-    // URLs.
-    if let Some(username) = &srv.server_username {
-        conn_settings.username = Some(username.clone());
+    if srv.server_username.is_some() {
+        conn_settings.username = srv.server_username.clone();
     }
-    if let Some(password) = &srv.server_password {
-        conn_settings.password = Some(password.clone());
+    if srv.server_password.is_some() {
+        conn_settings.password = srv.server_password.clone();
     }
 
-    let url_path = kmip_key_url.path().to_string();
-    let (keys, key_id) = url_path.strip_prefix('/').unwrap().split_once('/').unwrap();
-    assert_eq!(keys, "keys");
-    let key_id = key_id.to_string();
-    let mut flags = None;
-    let mut algorithm = None;
-    for (k, v) in kmip_key_url.query_pairs() {
-        match &*k {
-            "flags" => flags = Some(v.parse::<u16>().unwrap()),
-            "algorithm" => algorithm = Some(SecurityAlgorithm::from_str(&*v).unwrap()),
-            _ => { /* ignore unknown URL query parameter */ }
-        }
-    }
-    let flags = flags.unwrap();
-    let algorithm = algorithm.unwrap();
-    Ok((key_id, algorithm, flags, conn_settings))
+    Ok((
+        server_id.to_string(),
+        key_url.key_id().to_string(),
+        key_url.algorithm(),
+        key_url.flags(),
+        conn_settings,
+    ))
 }
 
 fn create_cds_rrset_helper(
@@ -2324,9 +2299,9 @@ fn update_ds_rrset(
                 }
 
                 "kmip" => {
-                    let (public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(ksc, &pub_url)?;
-                    let kmip_conn_pool = kmip_create_conn_pool(conn_settings.into())?;
+                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                        parse_kmip_key_url(ksc, pub_url)?;
+                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
                     let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                     let owner: Name<Bytes> = kss.keyset.name().clone().flatten_into();
                     let record =
