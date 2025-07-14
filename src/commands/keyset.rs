@@ -363,23 +363,8 @@ impl Keyset {
                 Ok(actions) => actions,
                 Err(e) => {
                     // Remove the key files we just created.
-                    if ksk_priv_url.scheme() == "file" {
-                        remove_file(ksk_priv_url.path()).map_err::<Error, _>(|e| {
-                            format!("unable to remove private key file {ksk_priv_url}: {e}\n")
-                                .into()
-                        })?;
-                    } else {
-                        panic!("unsupported URL scheme in {ksk_priv_url}");
-                    }
-
-                    if ksk_pub_url.scheme() == "file" {
-                        remove_file(ksk_pub_url.path()).map_err::<Error, _>(|e| {
-                            format!("unable to remove public key file {ksk_pub_url}: {e}\n").into()
-                        })?;
-                    } else {
-                        panic!("unsupported URL scheme in {ksk_pub_url}");
-                    }
-
+                    remove_key(&ksc, ksk_priv_url)?;
+                    remove_key(&ksc, ksk_pub_url)?;
                     return Err(e);
                 }
             };
@@ -459,21 +444,8 @@ impl Keyset {
                 Ok(actions) => actions,
                 Err(e) => {
                     // Remove the key files we just created.
-                    if zsk_priv_url.scheme() == "file" {
-                        remove_file(zsk_priv_url.path()).map_err::<Error, _>(|e| {
-                            format!("unable to remove private key file {zsk_priv_url}: {e}\n")
-                                .into()
-                        })?;
-                    } else {
-                        panic!("unsupported URL scheme in {zsk_priv_url}");
-                    }
-                    if zsk_pub_url.scheme() == "file" {
-                        remove_file(zsk_pub_url.path()).map_err::<Error, _>(|e| {
-                            format!("unable to remove public key file {zsk_pub_url}: {e}\n").into()
-                        })?;
-                    } else {
-                        panic!("unsupported URL scheme in {zsk_pub_url}");
-                    }
+                    remove_key(&ksc, zsk_priv_url)?;
+                    remove_key(&ksc, zsk_pub_url)?;
                     return Err(e);
                 }
             };
@@ -602,13 +574,7 @@ impl Keyset {
                 Err(e) => {
                     // Remove the key files we just created.
                     for u in new_urls {
-                        if u.scheme() == "file" {
-                            remove_file(u.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove private key file {u}: {e}\n").into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {u}");
-                        }
+                        remove_key(&ksc, u)?;
                     }
                     return Err(e);
                 }
@@ -737,13 +703,7 @@ impl Keyset {
                 Err(e) => {
                     // Remove the key files we just created.
                     for u in new_urls {
-                        if u.scheme() == "file" {
-                            remove_file(u.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove private key file {u}: {e}\n").into()
-                            })?;
-                        } else {
-                            panic!("unsupported scheme in {u}");
-                        }
+                        remove_key(&ksc, u)?;
                     }
                     return Err(e);
                 }
@@ -874,7 +834,7 @@ impl Keyset {
 
             // Remove old keys.
             if ksc.autoremove {
-                let files: Vec<_> = kss
+                let key_urls: Vec<_> = kss
                     .keyset
                     .keys()
                     .iter()
@@ -889,23 +849,26 @@ impl Keyset {
                     })
                     .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
                     .collect();
-                if !files.is_empty() {
+                if !key_urls.is_empty() {
                     print!("Removing:");
-                    for f in files {
-                        let (pubkey, privkey) = &f;
-                        print!(" {pubkey}");
-                        kss.keyset.delete_key(pubkey).map_err::<Error, _>(|e| {
-                            format!("unable to remove key {pubkey}: {e}\n").into()
+                    for u in key_urls {
+                        let (pubref, privkey) = &u;
+                        print!(" {pubref}");
+                        kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
+                            format!("unable to remove key {pubref}: {e}\n").into()
                         })?;
-                        remove_file(pubkey).map_err::<Error, _>(|e| {
-                            format!("unable to remove file {pubkey}: {e}\n").into()
-                        })?;
+
                         if let Some(privkey) = privkey {
-                            print!(" {privkey}");
-                            remove_file(privkey).map_err::<Error, _>(|e| {
-                                format!("unable to remove file {privkey}: {e}\n").into()
+                            let priv_url = Url::parse(privkey).map_err::<Error, _>(|e| {
+                                format!("unable to parse {privkey} as URL: {e}").into()
                             })?;
+                            remove_key(&ksc, priv_url)?;
                         }
+
+                        let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
+                            format!("unable to parse {pubref} as URL: {e}").into()
+                        })?;
+                        remove_key(&ksc, pub_url)?;
                     }
                     println!();
                 }
@@ -1261,6 +1224,37 @@ impl Keyset {
 
         Ok(config_changed)
     }
+}
+
+fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
+    match url.scheme() {
+        "file" => {
+            remove_file(url.path()).map_err::<Error, _>(|e| {
+                format!("unable to remove key file {}: {e}\n", url.path()).into()
+            })?;
+        }
+
+        "kmip" => {
+            let (server_id, key_id, _algorithm, _flags, conn_settings) =
+                parse_kmip_key_url(ksc, url)?;
+            let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
+            let conn = kmip_conn_pool
+                .get()
+                .map_err(|err| format!("Failed to acquire connection from KMIP pool: {err}"))?;
+
+            // TODO: Batch these together?
+            conn.revoke_key(&key_id)
+                .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
+            conn.destroy_key(&key_id)
+                .map_err(|err| format!("Failed to destroy KMIP key {key_id}: {err}"))?;
+        }
+
+        _ => {
+            panic!("Unsupported URL scheme while removing key {url}");
+        }
+    }
+
+    Ok(())
 }
 
 // Returns true if the config has been changed.
