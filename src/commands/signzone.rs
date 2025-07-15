@@ -4507,7 +4507,7 @@ vrcj1rgalbb9eh2ii8a43fbeib1ufqf6.example.org.\t238\tIN\tNSEC3\t1 0 0 - 8UM1KJCJM
         // Simulate that the time now is later than the 1234567890 SOA SERIAL
         // in the zonefile.
         let time_now = 1234567891;
-        let expected_soa_line = format!("example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. {} 28800 7200 604800 239\n", time_now);
+        let expected_soa_line = format!("example.org.\t238\tIN\tSOA\texample.net. hostmaster.example.net. {time_now} 28800 7200 604800 239\n");
 
         let res = FakeCmd::new([
             "dnst",

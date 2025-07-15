@@ -5,12 +5,12 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fs::{remove_file, File};
 use std::io::Write;
 use std::path::{absolute, Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use clap::Subcommand;
 use domain::base::iana::Class;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
@@ -46,25 +46,208 @@ pub struct Keyset {
     #[arg(short = 'c')]
     keyset_conf: PathBuf,
 
-    /// Domain name (only for create)
-    #[arg(short = 'n')]
-    domain_name: Option<Name<Vec<u8>>>,
-
-    /// State file (only for create)
-    #[arg(short = 's')]
-    keyset_state: Option<PathBuf>,
-
-    #[arg(short = 't')]
-    ttl: Option<u32>,
-
-    #[arg(short = 'b')]
-    bits: Option<usize>,
-
     /// Subcommand
-    #[arg()]
-    cmd: String,
+    #[command(subcommand)]
+    cmd: Commands,
+}
 
-    values: Vec<String>,
+type OptDuration = Option<Duration>;
+
+#[derive(Clone, Debug, Subcommand)]
+enum Commands {
+    Create {
+        /// Domain name
+        #[arg(short = 'n')]
+        domain_name: Name<Vec<u8>>,
+
+        /// State file
+        #[arg(short = 's')]
+        keyset_state: PathBuf,
+    },
+
+    Init,
+    StartKskRoll,
+    StartZskRoll,
+    StartCskRoll,
+    StartAlgorithmRoll,
+    KskPropagation1Complete {
+        ttl: u32,
+    },
+    KskPropagation2Complete {
+        ttl: u32,
+    },
+    ZskPropagation1Complete {
+        ttl: u32,
+    },
+    ZskPropagation2Complete {
+        ttl: u32,
+    },
+    CskPropagation1Complete {
+        ttl: u32,
+    },
+    CskPropagation2Complete {
+        ttl: u32,
+    },
+    AlgorithmPropagation1Complete {
+        ttl: u32,
+    },
+    AlgorithmPropagation2Complete {
+        ttl: u32,
+    },
+    KskCacheExpired1,
+    KskCacheExpired2,
+    ZskCacheExpired1,
+    ZskCacheExpired2,
+    CskCacheExpired1,
+    CskCacheExpired2,
+    AlgorithmCacheExpired1,
+    AlgorithmCacheExpired2,
+    KskRollDone,
+    ZskRollDone,
+    CskRollDone,
+    AlgorithmRollDone,
+    Status,
+    Actions,
+    Keys,
+
+    Get {
+        #[command(subcommand)]
+        subcommand: GetCommands,
+    },
+
+    Set {
+        #[command(subcommand)]
+        subcommand: SetCommands,
+    },
+
+    Show,
+    Cron,
+    Kmip {
+        #[command(subcommand)]
+        subcommand: KmipCommands,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum GetCommands {
+    UseCsk,
+    Autoremove,
+    KskAlgorithm,
+    ZskAlgorithm,
+    CskAlgorithm,
+    DsAlgorithm,
+    DnskeyLifetime,
+    CdsLifetime,
+    Dnskey,
+    Cds,
+    Ds,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum SetCommands {
+    UseCsk {
+        #[arg(action = clap::ArgAction::Set)]
+        boolean: bool,
+    },
+    Autoremove {
+        #[arg(action = clap::ArgAction::Set)]
+        boolean: bool,
+    },
+    KskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        algorithm: String,
+    },
+    ZskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        algorithm: String,
+    },
+    CskAlgorithm {
+        #[arg(short = 'b')]
+        bits: Option<usize>,
+
+        algorithm: String,
+    },
+    DsAlgorithm {
+        #[arg(value_parser = DsAlgorithm::new)]
+        algorithm: DsAlgorithm,
+    },
+    DnskeyInceptionOffset {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    DnskeyLifetime {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    DnskeyRemainTime {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    CdsInceptionOffset {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    CdsLifetime {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    CdsRemainTime {
+        #[arg(value_parser = parse_duration)]
+        duration: Duration,
+    },
+    KskValidity {
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
+    },
+    ZskValidity {
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
+    },
+    CskValidity {
+        #[arg(value_parser = parse_opt_duration)]
+        opt_duration: OptDuration,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum KmipCommands {
+    AddServer {
+        server_id: String,
+
+        ip_host_or_fqdn: String,
+
+        #[arg(long = "port")]
+        port: Option<u16>,
+
+        #[arg(long = "username")]
+        username: Option<String>,
+
+        #[arg(long = "password")]
+        password: Option<String>,
+
+        #[arg(long = "insecure", action = clap::ArgAction::SetTrue)]
+        insecure: Option<bool>,
+
+        #[arg(long = "client-cert")]
+        client_cert_path: Option<PathBuf>,
+
+        #[arg(long = "client-key")]
+        client_key_path: Option<PathBuf>,
+    },
+    RemoveServer {
+        server_id: String,
+    },
+    SetDefaultServer {
+        server_id: String,
+    },
+    GetServer {
+        server_id: String,
+    },
+    ListServers,
 }
 
 impl Keyset {
@@ -73,51 +256,19 @@ impl Keyset {
         runtime.block_on(self.run(&env))
     }
 
-    fn value_or(&mut self) -> Result<String, Error> {
-        match self.values.len() {
-            1 => Ok(self.values.pop().unwrap()),
-            _ => Err("argument expected\n".into()),
-        }
-    }
-
-    fn parse_duration_from_opt(&mut self) -> Result<Duration, Error> {
-        let arg = self.value_or()?;
-        let span: Span = arg
-            .parse()
-            .map_err::<Error, _>(|e| format!("unable to parse {arg} as lifetime: {e}\n").into())?;
-        let signeddur = span
-            .to_duration(SpanRelativeTo::days_are_24_hours())
-            .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
-        Duration::try_from(signeddur)
-            .map_err(|e| format!("unable to convert duration: {e}\n").into())
-    }
-
-    fn parse_opt_duration_from_opt(&mut self) -> Result<Option<Duration>, Error> {
-        if let Some(value) = self.values.get(0) {
-            if value == "off" {
-                return Ok(None);
-            }
-        }
-        let duration = self.parse_duration_from_opt()?;
-        Ok(Some(duration))
-    }
-
     /// Run the command as an async function
-    pub async fn run(mut self, env: &impl Env) -> Result<(), Error> {
-        if self.cmd == "create" {
-            let domainname = self
-                .domain_name
-                .ok_or::<Error>("domain name option expected\n".into())?;
-
-            let state_file = self
-                .keyset_state
-                .ok_or::<Error>("state file option expected\n".into())?;
-            let state_file = absolute(&state_file).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", state_file.display(), e).into()
+    pub async fn run(self, env: &impl Env) -> Result<(), Error> {
+        if let Commands::Create {
+            domain_name,
+            keyset_state,
+        } = self.cmd
+        {
+            let state_file = absolute(&keyset_state).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", keyset_state.display(), e).into()
             })?;
             let keys_dir = make_parent_dir(state_file.clone());
 
-            let ks = KeySet::new(domainname);
+            let ks = KeySet::new(domain_name);
             let kss = KeySetState {
                 keyset: ks,
                 dnskey_rrset: Vec::new(),
@@ -208,884 +359,816 @@ impl Keyset {
             None
         };
 
-        if self.cmd == "init" {
-            // Check for re-init.
-            if !kss.keyset.keys().is_empty() {
-                // Avoid re-init.
-                return Err("already initialized\n".into());
-            }
-
-            // Check for CSK.
-            let actions = if ksc.use_csk {
-                // Generate CSK.
-                let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.csk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                kss.keyset
-                    .add_key_csk(
-                        csk_pub_name.to_string(),
-                        Some(csk_priv_name.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .expect("should not happen");
-
-                kss.keyset
-                    .start_roll(RollType::AlgorithmRoll, &[], &[csk_pub_name.as_str()])
-                    .expect("should not happen")
-            } else {
-                let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.ksk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                kss.keyset
-                    .add_key_ksk(
-                        ksk_pub_url.to_string(),
-                        Some(ksk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .expect("should not happen");
-                let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.zsk_generate_params.to_generate_params(),
-                    false,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                kss.keyset
-                    .add_key_zsk(
-                        zsk_pub_url.to_string(),
-                        Some(zsk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .expect("should not happen");
-
-                let new = [ksk_pub_url.as_ref(), zsk_pub_url.as_ref()];
-                kss.keyset
-                    .start_roll(RollType::AlgorithmRoll, &[], &new)
-                    .expect("should not happen")
-            };
-
-            handle_actions(&actions, &ksc, &mut kss, env)?;
-
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "start-ksk-roll" {
-            if kss.keyset.keys().is_empty() {
-                // Avoid KSK roll without init.
-                return Err("not yet initialized\n".into());
-            }
-
-            // Check for CSK.
-            if ksc.use_csk {
-                return Err("wrong key roll, use start-csk-roll\n".into());
-            }
-
-            // Refuse if we can find a CSK key.
-            if kss
-                .keyset
-                .keys()
-                .iter()
-                .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
-            {
-                return Err("cannot start key roll, found CSK\n".into());
-            }
-
-            // Find existing KSKs. Do we complain if there is none?
-            let old_stored: Vec<_> = kss
-                .keyset
-                .keys()
-                .iter()
-                .filter(|(_, key)| {
-                    if let KeyType::Ksk(keystate) = key.keytype() {
-                        !keystate.old()
-                            || keystate.signer()
-                            || keystate.present()
-                            || keystate.at_parent()
-                    } else {
-                        false
-                    }
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-            // Collect algorithms. Maybe this needs to be in the library.
-
-            // Create a new KSK
-            let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                kss.keyset.name(),
-                ksc.ksk_generate_params.to_generate_params(),
-                true,
-                kss.keyset.keys(),
-                &ksc.keys_dir,
-                env,
-                &kmip_conn_pool,
-            )?;
-            kss.keyset
-                .add_key_ksk(
-                    ksk_pub_url.to_string(),
-                    Some(ksk_priv_url.to_string()),
-                    algorithm,
-                    key_tag,
-                    UnixTime::now(),
-                )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
-                })?;
-
-            let new = [ksk_pub_url.as_ref()];
-
-            // Start the key roll
-            let actions = match kss
-                .keyset
-                .start_roll(RollType::KskRoll, &old, &new)
-                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-            {
-                Ok(actions) => actions,
-                Err(e) => {
-                    // Remove the key files we just created.
-                    remove_key(&ksc, ksk_priv_url)?;
-                    remove_key(&ksc, ksk_pub_url)?;
-                    return Err(e);
+        match self.cmd {
+            Commands::Create { .. } => unreachable!(),
+            Commands::Init => {
+                // Check for re-init.
+                if !kss.keyset.keys().is_empty() {
+                    // Avoid re-init.
+                    return Err("already initialized\n".into());
                 }
-            };
-            handle_actions(&actions, &ksc, &mut kss, env)?;
 
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "start-zsk-roll" {
-            if kss.keyset.keys().is_empty() {
-                // Avoid ZSK roll without init.
-                return Err("not yet initialized\n".into());
+                // Check for CSK.
+                let actions = if ksc.use_csk {
+                    // Generate CSK.
+                    let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.csk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    kss.keyset
+                        .add_key_csk(
+                            csk_pub_name.to_string(),
+                            Some(csk_priv_name.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .expect("should not happen");
+
+                    kss.keyset
+                        .start_roll(RollType::AlgorithmRoll, &[], &[csk_pub_name.as_str()])
+                        .expect("should not happen")
+                } else {
+                    let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.ksk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    kss.keyset
+                        .add_key_ksk(
+                            ksk_pub_url.to_string(),
+                            Some(ksk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .expect("should not happen");
+                    let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.zsk_generate_params.to_generate_params(),
+                        false,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    kss.keyset
+                        .add_key_zsk(
+                            zsk_pub_url.to_string(),
+                            Some(zsk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .expect("should not happen");
+
+                    let new = [ksk_pub_url.as_ref(), zsk_pub_url.as_ref()];
+                    kss.keyset
+                        .start_roll(RollType::AlgorithmRoll, &[], &new)
+                        .expect("should not happen")
+                };
+
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                print_actions(&actions);
+                state_changed = true;
             }
-
-            // Check for CSK.
-            if ksc.use_csk {
-                return Err("wrong key roll, use start-csk-roll\n".into());
-            }
-
-            // Refuse if we can find a CSK key.
-            if kss
-                .keyset
-                .keys()
-                .iter()
-                .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
-            {
-                return Err("cannot start key roll, found CSK\n".into());
-            }
-
-            // Find existing ZSKs. Do we complain if there is none?
-            let old_stored: Vec<_> = kss
-                .keyset
-                .keys()
-                .iter()
-                .filter(|(_, key)| {
-                    if let KeyType::Zsk(keystate) = key.keytype() {
-                        !keystate.old() || keystate.signer() || keystate.present()
-                    } else {
-                        false
-                    }
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-            // Collect algorithms. Maybe this needs to be in the library.
-
-            // Create a new ZSK
-            let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                kss.keyset.name(),
-                ksc.zsk_generate_params.to_generate_params(),
-                false,
-                kss.keyset.keys(),
-                &ksc.keys_dir,
-                env,
-                &kmip_conn_pool,
-            )?;
-            kss.keyset
-                .add_key_zsk(
-                    zsk_pub_url.to_string(),
-                    Some(zsk_priv_url.to_string()),
-                    algorithm,
-                    key_tag,
-                    UnixTime::now(),
-                )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
-                })?;
-
-            let new = [zsk_pub_url.as_ref()];
-
-            // Start the key roll
-            let actions = match kss
-                .keyset
-                .start_roll(RollType::ZskRoll, &old, &new)
-                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-            {
-                Ok(actions) => actions,
-                Err(e) => {
-                    // Remove the key files we just created.
-                    remove_key(&ksc, zsk_priv_url)?;
-                    remove_key(&ksc, zsk_pub_url)?;
-                    return Err(e);
+            Commands::StartKskRoll => {
+                if kss.keyset.keys().is_empty() {
+                    // Avoid KSK roll without init.
+                    return Err("not yet initialized\n".into());
                 }
-            };
-            handle_actions(&actions, &ksc, &mut kss, env)?;
 
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "start-csk-roll" {
-            // Find existing KSKs, ZSKs and CSKs. Do we complain if there
-            // are none?
-            let old_stored: Vec<_> = kss
-                .keyset
-                .keys()
-                .iter()
-                .filter(|(_, key)| match key.keytype() {
-                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
-                        // Assume that for a CSK it is sufficient to check
-                        // one of the key states. Also assume that we
-                        // can check at_parent for a ZSK.
-                        !keystate.old()
-                            || keystate.signer()
-                            || keystate.present()
-                            || keystate.at_parent()
-                    }
-                    KeyType::Include(_) => false,
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-            // Collect algorithms. Maybe this needs to be in the library.
-
-            let (new_stored, new_urls) = if ksc.use_csk {
-                let mut new_urls = Vec::new();
-
-                // Create a new CSK
-                let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.csk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(csk_priv_url.clone());
-                new_urls.push(csk_pub_url.clone());
-                kss.keyset
-                    .add_key_csk(
-                        csk_pub_url.to_string(),
-                        Some(csk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add CSK {csk_pub_url}: {e}\n").into()
-                    })?;
-
-                let new = vec![csk_pub_url];
-                (new, new_urls)
-            } else {
-                let mut new_urls = Vec::new();
-
-                // Create a new KSK
-                let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.ksk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(ksk_priv_url.clone());
-                new_urls.push(ksk_pub_url.clone());
-                kss.keyset
-                    .add_key_ksk(
-                        ksk_pub_url.to_string(),
-                        Some(ksk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
-                    })?;
-
-                // Create a new ZSK
-                let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.zsk_generate_params.to_generate_params(),
-                    false,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(zsk_priv_url.clone());
-                new_urls.push(zsk_pub_url.clone());
-                kss.keyset
-                    .add_key_zsk(
-                        zsk_pub_url.to_string(),
-                        Some(zsk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
-                    })?;
-
-                let new = vec![ksk_pub_url, zsk_pub_url];
-                (new, new_urls)
-            };
-
-            let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-
-            // Start the key roll
-            let actions = match kss
-                .keyset
-                .start_roll(RollType::CskRoll, &old, &new)
-                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-            {
-                Ok(actions) => actions,
-                Err(e) => {
-                    // Remove the key files we just created.
-                    for u in new_urls {
-                        remove_key(&ksc, u)?;
-                    }
-                    return Err(e);
+                // Check for CSK.
+                if ksc.use_csk {
+                    return Err("wrong key roll, use start-csk-roll\n".into());
                 }
-            };
 
-            handle_actions(&actions, &ksc, &mut kss, env)?;
-
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "start-algorithm-roll" {
-            // Find existing KSKs, ZSKs and CSKs. Do we complain if there
-            // are none?
-            let old_stored: Vec<_> = kss
-                .keyset
-                .keys()
-                .iter()
-                .filter(|(_, key)| match key.keytype() {
-                    KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
-                        // Assume that for a CSK it is sufficient to check
-                        // one of the key states. Also assume that we
-                        // can check at_parent for a ZSK.
-                        !keystate.old()
-                            || keystate.signer()
-                            || keystate.present()
-                            || keystate.at_parent()
-                    }
-                    KeyType::Include(_) => false,
-                })
-                .map(|(name, _)| name.clone())
-                .collect();
-            let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-            let (new_stored, new_urls) = if ksc.use_csk {
-                let mut new_urls = Vec::new();
-
-                // Create a new CSK
-                let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.csk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(csk_priv_url.clone());
-                new_urls.push(csk_pub_url.clone());
-                kss.keyset
-                    .add_key_csk(
-                        csk_pub_url.to_string(),
-                        Some(csk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add CSK {csk_pub_url}: {e}\n").into()
-                    })?;
-
-                let new = vec![csk_pub_url];
-                (new, new_urls)
-            } else {
-                let mut new_urls = Vec::new();
-
-                // Create a new KSK
-                let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.ksk_generate_params.to_generate_params(),
-                    true,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(ksk_priv_url.clone());
-                new_urls.push(ksk_pub_url.clone());
-                kss.keyset
-                    .add_key_ksk(
-                        ksk_pub_url.to_string(),
-                        Some(ksk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
-                    })?;
-
-                // Create a new ZSK
-                let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.zsk_generate_params.to_generate_params(),
-                    false,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                    &kmip_conn_pool,
-                )?;
-                new_urls.push(zsk_priv_url.clone());
-                new_urls.push(zsk_pub_url.clone());
-                kss.keyset
-                    .add_key_zsk(
-                        zsk_pub_url.to_string(),
-                        Some(zsk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
-                    })?;
-
-                let new = vec![ksk_pub_url, zsk_pub_url];
-                (new, new_urls)
-            };
-
-            let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-
-            // Start the key roll
-            let actions = match kss
-                .keyset
-                .start_roll(RollType::AlgorithmRoll, &old, &new)
-                .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-            {
-                Ok(actions) => actions,
-                Err(e) => {
-                    // Remove the key files we just created.
-                    for u in new_urls {
-                        remove_key(&ksc, u)?;
-                    }
-                    return Err(e);
+                // Refuse if we can find a CSK key.
+                if kss
+                    .keyset
+                    .keys()
+                    .iter()
+                    .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
+                {
+                    return Err("cannot start key roll, found CSK\n".into());
                 }
-            };
 
-            handle_actions(&actions, &ksc, &mut kss, env)?;
-
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "ksk-propagation1-complete"
-            || self.cmd == "ksk-propagation2-complete"
-            || self.cmd == "zsk-propagation1-complete"
-            || self.cmd == "zsk-propagation2-complete"
-            || self.cmd == "csk-propagation1-complete"
-            || self.cmd == "csk-propagation2-complete"
-            || self.cmd == "algorithm-propagation1-complete"
-            || self.cmd == "algorithm-propagation2-complete"
-        {
-            let Some(ttl) = self.ttl else {
-                return Err("ttl option is required\n".into());
-            };
-            let actions = if self.cmd == "ksk-propagation1-complete" {
-                kss.keyset.propagation1_complete(RollType::KskRoll, ttl)
-            } else if self.cmd == "ksk-propagation2-complete" {
-                kss.keyset.propagation2_complete(RollType::KskRoll, ttl)
-            } else if self.cmd == "zsk-propagation1-complete" {
-                kss.keyset.propagation1_complete(RollType::ZskRoll, ttl)
-            } else if self.cmd == "zsk-propagation2-complete" {
-                kss.keyset.propagation2_complete(RollType::ZskRoll, ttl)
-            } else if self.cmd == "csk-propagation1-complete" {
-                kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
-            } else if self.cmd == "csk-propagation2-complete" {
-                kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
-            } else if self.cmd == "algorithm-propagation1-complete" {
-                kss.keyset
-                    .propagation1_complete(RollType::AlgorithmRoll, ttl)
-            } else if self.cmd == "algorithm-propagation2-complete" {
-                kss.keyset
-                    .propagation2_complete(RollType::AlgorithmRoll, ttl)
-            } else {
-                unreachable!();
-            };
-
-            let actions = match actions {
-                Ok(actions) => actions,
-                Err(err) => {
-                    return Err(format!("Error reporting propagation complete: {err}\n").into());
-                }
-            };
-
-            // Handle error
-
-            handle_actions(&actions, &ksc, &mut kss, env)?;
-
-            // Report actions
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "ksk-cache-expired1"
-            || self.cmd == "ksk-cache-expired2"
-            || self.cmd == "zsk-cache-expired1"
-            || self.cmd == "zsk-cache-expired2"
-            || self.cmd == "csk-cache-expired1"
-            || self.cmd == "csk-cache-expired2"
-            || self.cmd == "algorithm-cache-expired1"
-            || self.cmd == "algorithm-cache-expired2"
-        {
-            let actions = if self.cmd == "ksk-cache-expired1" {
-                kss.keyset.cache_expired1(RollType::KskRoll)
-            } else if self.cmd == "ksk-cache-expired2" {
-                kss.keyset.cache_expired2(RollType::KskRoll)
-            } else if self.cmd == "zsk-cache-expired1" {
-                kss.keyset.cache_expired1(RollType::ZskRoll)
-            } else if self.cmd == "zsk-cache-expired2" {
-                kss.keyset.cache_expired2(RollType::ZskRoll)
-            } else if self.cmd == "csk-cache-expired1" {
-                kss.keyset.cache_expired1(RollType::CskRoll)
-            } else if self.cmd == "csk-cache-expired2" {
-                kss.keyset.cache_expired2(RollType::CskRoll)
-            } else if self.cmd == "algorithm-cache-expired1" {
-                kss.keyset.cache_expired1(RollType::AlgorithmRoll)
-            } else if self.cmd == "algorithm-cache-expired2" {
-                kss.keyset.cache_expired2(RollType::AlgorithmRoll)
-            } else {
-                unreachable!();
-            };
-
-            let actions = match actions {
-                Ok(actions) => actions,
-                Err(err) => {
-                    return Err(format!("Error reporting cache expired: {err}\n").into());
-                }
-            };
-
-            // Handle error
-
-            handle_actions(&actions, &ksc, &mut kss, env)?;
-
-            // Report actions
-            print_actions(&actions);
-            state_changed = true;
-        } else if self.cmd == "ksk-roll-done"
-            || self.cmd == "zsk-roll-done"
-            || self.cmd == "csk-roll-done"
-            || self.cmd == "algorithm-roll-done"
-        {
-            let actions = if self.cmd == "ksk-roll-done" {
-                kss.keyset.roll_done(RollType::KskRoll)
-            } else if self.cmd == "zsk-roll-done" {
-                kss.keyset.roll_done(RollType::ZskRoll)
-            } else if self.cmd == "csk-roll-done" {
-                kss.keyset.roll_done(RollType::CskRoll)
-            } else if self.cmd == "algorithm-roll-done" {
-                kss.keyset.roll_done(RollType::AlgorithmRoll)
-            } else {
-                unreachable!();
-            };
-
-            let actions = match actions {
-                Ok(actions) => actions,
-                Err(err) => {
-                    return Err(format!("Error reporting done: {err}\n").into());
-                }
-            };
-
-            if !actions.is_empty() {
-                return Err("List of actions after reporting done\n".into());
-            }
-
-            // Remove old keys.
-            if ksc.autoremove {
-                let key_urls: Vec<_> = kss
+                // Find existing KSKs. Do we complain if there is none?
+                let old_stored: Vec<_> = kss
                     .keyset
                     .keys()
                     .iter()
                     .filter(|(_, key)| {
-                        let state = match key.keytype() {
-                            KeyType::Ksk(state) => state,
-                            KeyType::Zsk(state) => state,
-                            KeyType::Csk(state, _) => state,
-                            KeyType::Include(state) => state,
-                        };
-                        state.old() && !state.signer() && !state.present() && !state.at_parent()
-                    })
-                    .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
-                    .collect();
-                if !key_urls.is_empty() {
-                    print!("Removing:");
-                    for u in key_urls {
-                        let (pubref, privkey) = &u;
-                        print!(" {pubref}");
-                        kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
-                            format!("unable to remove key {pubref}: {e}\n").into()
-                        })?;
-
-                        if let Some(privkey) = privkey {
-                            let priv_url = Url::parse(privkey).map_err::<Error, _>(|e| {
-                                format!("unable to parse {privkey} as URL: {e}").into()
-                            })?;
-                            remove_key(&ksc, priv_url)?;
+                        if let KeyType::Ksk(keystate) = key.keytype() {
+                            !keystate.old()
+                                || keystate.signer()
+                                || keystate.present()
+                                || keystate.at_parent()
+                        } else {
+                            false
                         }
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
 
-                        let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
-                            format!("unable to parse {pubref} as URL: {e}").into()
-                        })?;
-                        remove_key(&ksc, pub_url)?;
-                    }
-                    println!();
-                }
-            }
-            state_changed = true;
-        } else if self.cmd == "status" {
-            for (roll, state) in kss.keyset.rollstates().iter() {
-                println!("{roll:?}: {state:?}");
-            }
-            if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
-                println!("DNSKEY RRSIG(s) need to be renewed");
-            }
-            if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
-                println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
-            }
+                // Collect algorithms. Maybe this needs to be in the library.
 
-            // Check for expired keys.
-            for (pubref, k) in kss.keyset.keys() {
-                let (expired, label) = key_expired(k, &ksc);
-                if expired {
-                    println!("{label} {pubref} has expired");
-                }
-            }
-        } else if self.cmd == "actions" {
-            for roll in kss.keyset.rollstates().keys() {
-                let actions = kss.keyset.actions(roll.clone());
-                println!("{roll:?} actions:");
-                for a in actions {
-                    println!("\t{a:?}");
-                }
-            }
-        } else if self.cmd == "keys" {
-            println!("Keys:");
-            let mut keys: Vec<_> = kss.keyset.keys().iter().collect();
-            keys.sort_by(|(pubref1, key1), (pubref2, key2)| {
-                (key1.timestamps().creation(), pubref1)
-                    .cmp(&(key2.timestamps().creation(), pubref2))
-            });
-            for (pubref, key) in keys {
-                println!("\t{} {}", pubref, key.privref().unwrap_or_default(),);
-                let (keytype, state, opt_state) = match key.keytype() {
-                    KeyType::Ksk(keystate) => ("KSK", keystate, None),
-                    KeyType::Zsk(keystate) => ("ZSK", keystate, None),
-                    KeyType::Include(keystate) => ("Include", keystate, None),
-                    KeyType::Csk(keystate_ksk, keystate_zsk) => {
-                        ("CSK", keystate_ksk, Some(keystate_zsk))
+                // Create a new KSK
+                let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.ksk_generate_params.to_generate_params(),
+                    true,
+                    kss.keyset.keys(),
+                    &ksc.keys_dir,
+                    env,
+                    &kmip_conn_pool,
+                )?;
+                kss.keyset
+                    .add_key_ksk(
+                        ksk_pub_url.to_string(),
+                        Some(ksk_priv_url.to_string()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                        true,
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
+                    })?;
+
+                let new = [ksk_pub_url.as_ref()];
+
+                // Start the key roll
+                let actions = match kss
+                    .keyset
+                    .start_roll(RollType::KskRoll, &old, &new)
+                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        // Remove the key files we just created.
+                        remove_key(&ksc, ksk_priv_url)?;
+                        remove_key(&ksc, ksk_pub_url)?;
+                        return Err(e);
                     }
                 };
-                println!(
-                    "\t\tType: {keytype}, algorithm: {}, key tag: {}",
-                    key.algorithm(),
-                    key.key_tag()
-                );
-                if let Some(zskstate) = opt_state {
-                    println!("\t\tKSK role state: {state}");
-                    println!("\t\tZSK role state: {zskstate}");
-                } else {
-                    println!("\t\tState: {state}");
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                print_actions(&actions);
+                state_changed = true;
+            }
+            Commands::StartZskRoll => {
+                if kss.keyset.keys().is_empty() {
+                    // Avoid ZSK roll without init.
+                    return Err("not yet initialized\n".into());
                 }
-                let ts = key.timestamps();
-                println!(
-                    "\t\tCreated: {}",
-                    ts.creation()
-                        .map_or("<empty>".to_string(), |x| x.to_string()),
-                );
-                println!(
-                    "\t\tPublished: {}",
-                    ts.published()
-                        .map_or("<empty>".to_string(), |x| x.to_string())
-                );
-                println!(
-                    "\t\tVisible: {}",
-                    ts.visible()
-                        .map_or("<empty>".to_string(), |x| x.to_string()),
-                );
-                println!(
-                    "\t\tDS visible: {}",
-                    ts.ds_visible()
-                        .map_or("<empty>".to_string(), |x| x.to_string())
-                );
-                println!(
-                    "\t\tRRSIG visible: {}",
-                    ts.rrsig_visible()
-                        .map_or("<empty>".to_string(), |x| x.to_string()),
-                );
-                println!(
-                    "\t\tWithdrawn: {}",
-                    ts.withdrawn()
-                        .map_or("<empty>".to_string(), |x| x.to_string())
-                );
-            }
-        } else if self.cmd == "get-use-csk" {
-            println!("{}", ksc.use_csk);
-        } else if self.cmd == "set-use-csk" {
-            let arg = self.value_or()?;
-            ksc.use_csk = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
-            config_changed = true;
-        } else if self.cmd == "get-autoremove" {
-            println!("{}", ksc.autoremove);
-        } else if self.cmd == "set-autoremove" {
-            let arg = self.value_or()?;
-            ksc.autoremove = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
-            config_changed = true;
-        } else if self.cmd == "get-ksk-algorithm" {
-            println!("{}", ksc.ksk_generate_params);
-        } else if self.cmd == "set-ksk-algorithm" {
-            let arg = self.value_or()?;
-            ksc.ksk_generate_params = KeyParameters::new(&arg, self.bits)?;
-            config_changed = true;
-        } else if self.cmd == "get-zsk-algorithm" {
-            println!("{}", ksc.zsk_generate_params);
-        } else if self.cmd == "set-zsk-algorithm" {
-            let arg = self.value_or()?;
-            ksc.zsk_generate_params = KeyParameters::new(&arg, self.bits)?;
-            config_changed = true;
-        } else if self.cmd == "get-csk-algorithm" {
-            println!("{}", ksc.csk_generate_params);
-        } else if self.cmd == "set-csk-algorithm" {
-            let arg = self.value_or()?;
-            ksc.csk_generate_params = KeyParameters::new(&arg, self.bits)?;
-            config_changed = true;
-        } else if self.cmd == "get-ds-algorithm" {
-            println!("{}", ksc.ds_algorithm);
-        } else if self.cmd == "set-ds-algorithm" {
-            let arg = self.value_or()?;
-            ksc.ds_algorithm = DsAlgorithm::new(&arg)?;
-            config_changed = true;
-        } else if self.cmd == "set-dnskey-inception-offset" {
-            ksc.dnskey_inception_offset = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "get-dnskey-lifetime" {
-            let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
-            let signeddur = span
-                .to_duration(SpanRelativeTo::days_are_24_hours())
-                .expect("should not fail");
-            println!("{signeddur:#}");
-        } else if self.cmd == "set-dnskey-lifetime" {
-            ksc.dnskey_signature_lifetime = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-dnskey-remain-time" {
-            ksc.dnskey_remain_time = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-cds-inception-offset" {
-            ksc.cds_inception_offset = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "get-cds-lifetime" {
-            let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
-            let signeddur = span
-                .to_duration(SpanRelativeTo::days_are_24_hours())
-                .expect("should not fail");
-            println!("{signeddur:#}");
-        } else if self.cmd == "set-cds-lifetime" {
-            ksc.cds_signature_lifetime = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-cds-remain-time" {
-            ksc.cds_remain_time = self.parse_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-ksk-validity" {
-            ksc.ksk_validity = self.parse_opt_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-zsk-validity" {
-            ksc.zsk_validity = self.parse_opt_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "set-csk-validity" {
-            ksc.csk_validity = self.parse_opt_duration_from_opt()?;
-            config_changed = true;
-        } else if self.cmd == "show" {
-            println!("state-file: {:?}", ksc.state_file);
-            println!("use-csk: {}", ksc.use_csk);
-            println!("ksk-algorithm: {}", ksc.ksk_generate_params);
-            println!("zsk-algorithm: {}", ksc.zsk_generate_params);
-            println!("csk-algorithm: {}", ksc.csk_generate_params);
-            println!("ksk-validity: {:?}", ksc.ksk_validity);
-            println!("zsk-validity: {:?}", ksc.zsk_validity);
-            println!("csk-validity: {:?}", ksc.csk_validity);
-            println!("dnskey-inception-offset: {:?}", ksc.dnskey_inception_offset);
-            println!(
-                "dnskey-signature-lifetime: {:?}",
-                ksc.dnskey_signature_lifetime
-            );
-            println!("dnskey-remain-time: {:?}", ksc.dnskey_remain_time);
-            println!("cds-inception-offset: {:?}", ksc.cds_inception_offset);
-            println!("cds-signature-lifetime: {:?}", ksc.cds_signature_lifetime);
-            println!("cds-remain-time: {:?}", ksc.cds_remain_time);
-            println!("ds-algorithm: {:?}", ksc.ds_algorithm);
-            println!("autoremove: {:?}", ksc.autoremove);
-        } else if self.cmd == "get-dnskey" {
-            for r in &kss.dnskey_rrset {
-                println!("{r}");
-            }
-        } else if self.cmd == "get-cds" {
-            for r in &kss.cds_rrset {
-                println!("{r}");
-            }
-        } else if self.cmd == "get-ds" {
-            for r in &kss.ds_rrset {
-                println!("{r}");
-            }
-        } else if self.cmd.starts_with("kmip-") {
-            config_changed = self.handle_kmip_command(&mut ksc)?;
-        } else if self.cmd == "cron" {
-            if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
-                println!("DNSKEY RRSIG(s) need to be renewed");
-                update_dnskey_rrset(&mut kss, &ksc, env)?;
+
+                // Check for CSK.
+                if ksc.use_csk {
+                    return Err("wrong key roll, use start-csk-roll\n".into());
+                }
+
+                // Refuse if we can find a CSK key.
+                if kss
+                    .keyset
+                    .keys()
+                    .iter()
+                    .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
+                {
+                    return Err("cannot start key roll, found CSK\n".into());
+                }
+
+                // Find existing ZSKs. Do we complain if there is none?
+                let old_stored: Vec<_> = kss
+                    .keyset
+                    .keys()
+                    .iter()
+                    .filter(|(_, key)| {
+                        if let KeyType::Zsk(keystate) = key.keytype() {
+                            !keystate.old() || keystate.signer() || keystate.present()
+                        } else {
+                            false
+                        }
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+                // Collect algorithms. Maybe this needs to be in the library.
+
+                // Create a new ZSK
+                let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+                    kss.keyset.name(),
+                    ksc.zsk_generate_params.to_generate_params(),
+                    false,
+                    kss.keyset.keys(),
+                    &ksc.keys_dir,
+                    env,
+                    &kmip_conn_pool,
+                )?;
+                kss.keyset
+                    .add_key_zsk(
+                        zsk_pub_url.to_string(),
+                        Some(zsk_priv_url.to_string()),
+                        algorithm,
+                        key_tag,
+                        UnixTime::now(),
+                        true,
+                    )
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
+                    })?;
+
+                let new = [zsk_pub_url.as_ref()];
+
+                // Start the key roll
+                let actions = match kss
+                    .keyset
+                    .start_roll(RollType::ZskRoll, &old, &new)
+                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        // Remove the key files we just created.
+                        remove_key(&ksc, zsk_priv_url)?;
+                        remove_key(&ksc, zsk_pub_url)?;
+                        return Err(e);
+                    }
+                };
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                print_actions(&actions);
                 state_changed = true;
             }
-            if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
-                println!("CDS/CDNSKEY RRSIGs need to be renewed");
-                create_cds_rrset(&mut kss, &ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?;
+            Commands::StartCskRoll => {
+                // Find existing KSKs, ZSKs and CSKs. Do we complain if there
+                // are none?
+                let old_stored: Vec<_> = kss
+                    .keyset
+                    .keys()
+                    .iter()
+                    .filter(|(_, key)| match key.keytype() {
+                        KeyType::Ksk(keystate)
+                        | KeyType::Zsk(keystate)
+                        | KeyType::Csk(keystate, _) => {
+                            // Assume that for a CSK it is sufficient to check
+                            // one of the key states. Also assume that we
+                            // can check at_parent for a ZSK.
+                            !keystate.old()
+                                || keystate.signer()
+                                || keystate.present()
+                                || keystate.at_parent()
+                        }
+                        KeyType::Include(_) => false,
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+                // Collect algorithms. Maybe this needs to be in the library.
+
+                let (new_stored, new_urls) = if ksc.use_csk {
+                    let mut new_urls = Vec::new();
+
+                    // Create a new CSK
+                    let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.csk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(csk_priv_url.clone());
+                    new_urls.push(csk_pub_url.clone());
+                    kss.keyset
+                        .add_key_csk(
+                            csk_pub_url.to_string(),
+                            Some(csk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add CSK {csk_pub_url}: {e}\n").into()
+                        })?;
+
+                    let new = vec![csk_pub_url];
+                    (new, new_urls)
+                } else {
+                    let mut new_urls = Vec::new();
+
+                    // Create a new KSK
+                    let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.ksk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(ksk_priv_url.clone());
+                    new_urls.push(ksk_pub_url.clone());
+                    kss.keyset
+                        .add_key_ksk(
+                            ksk_pub_url.to_string(),
+                            Some(ksk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
+                        })?;
+
+                    // Create a new ZSK
+                    let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.zsk_generate_params.to_generate_params(),
+                        false,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(zsk_priv_url.clone());
+                    new_urls.push(zsk_pub_url.clone());
+                    kss.keyset
+                        .add_key_zsk(
+                            zsk_pub_url.to_string(),
+                            Some(zsk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
+                        })?;
+
+                    let new = vec![ksk_pub_url, zsk_pub_url];
+                    (new, new_urls)
+                };
+
+                let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+
+                // Start the key roll
+                let actions = match kss
+                    .keyset
+                    .start_roll(RollType::CskRoll, &old, &new)
+                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        // Remove the key files we just created.
+                        for u in new_urls {
+                            remove_key(&ksc, u)?;
+                        }
+                        return Err(e);
+                    }
+                };
+
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                print_actions(&actions);
                 state_changed = true;
             }
-        } else {
-            return Err(format!("unknown subcommand {}\n", self.cmd).into());
+            Commands::StartAlgorithmRoll => {
+                // Find existing KSKs, ZSKs and CSKs. Do we complain if there
+                // are none?
+                let old_stored: Vec<_> = kss
+                    .keyset
+                    .keys()
+                    .iter()
+                    .filter(|(_, key)| match key.keytype() {
+                        KeyType::Ksk(keystate)
+                        | KeyType::Zsk(keystate)
+                        | KeyType::Csk(keystate, _) => {
+                            // Assume that for a CSK it is sufficient to check
+                            // one of the key states. Also assume that we
+                            // can check at_parent for a ZSK.
+                            !keystate.old()
+                                || keystate.signer()
+                                || keystate.present()
+                                || keystate.at_parent()
+                        }
+                        KeyType::Include(_) => false,
+                    })
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+                let (new_stored, new_urls) = if ksc.use_csk {
+                    let mut new_urls = Vec::new();
+
+                    // Create a new CSK
+                    let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.csk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(csk_priv_url.clone());
+                    new_urls.push(csk_pub_url.clone());
+                    kss.keyset
+                        .add_key_csk(
+                            csk_pub_url.to_string(),
+                            Some(csk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add CSK {csk_pub_url}: {e}\n").into()
+                        })?;
+
+                    let new = vec![csk_pub_url];
+                    (new, new_urls)
+                } else {
+                    let mut new_urls = Vec::new();
+
+                    // Create a new KSK
+                    let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.ksk_generate_params.to_generate_params(),
+                        true,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(ksk_priv_url.clone());
+                    new_urls.push(ksk_pub_url.clone());
+                    kss.keyset
+                        .add_key_ksk(
+                            ksk_pub_url.to_string(),
+                            Some(ksk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
+                        })?;
+
+                    // Create a new ZSK
+                    let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+                        kss.keyset.name(),
+                        ksc.zsk_generate_params.to_generate_params(),
+                        false,
+                        kss.keyset.keys(),
+                        &ksc.keys_dir,
+                        env,
+                        &kmip_conn_pool,
+                    )?;
+                    new_urls.push(zsk_priv_url.clone());
+                    new_urls.push(zsk_pub_url.clone());
+                    kss.keyset
+                        .add_key_zsk(
+                            zsk_pub_url.to_string(),
+                            Some(zsk_priv_url.to_string()),
+                            algorithm,
+                            key_tag,
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
+                        })?;
+
+                    let new = vec![ksk_pub_url, zsk_pub_url];
+                    (new, new_urls)
+                };
+
+                let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+
+                // Start the key roll
+                let actions = match kss
+                    .keyset
+                    .start_roll(RollType::AlgorithmRoll, &old, &new)
+                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+                {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        // Remove the key files we just created.
+                        for u in new_urls {
+                            remove_key(&ksc, u)?;
+                        }
+                        return Err(e);
+                    }
+                };
+
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                print_actions(&actions);
+                state_changed = true;
+            }
+            Commands::KskPropagation1Complete { ttl }
+            | Commands::KskPropagation2Complete { ttl }
+            | Commands::ZskPropagation1Complete { ttl }
+            | Commands::ZskPropagation2Complete { ttl }
+            | Commands::CskPropagation1Complete { ttl }
+            | Commands::CskPropagation2Complete { ttl }
+            | Commands::AlgorithmPropagation1Complete { ttl }
+            | Commands::AlgorithmPropagation2Complete { ttl } => {
+                let actions = match self.cmd {
+                    Commands::KskPropagation1Complete { ttl: _ } => {
+                        kss.keyset.propagation1_complete(RollType::KskRoll, ttl)
+                    }
+                    Commands::KskPropagation2Complete { ttl: _ } => {
+                        kss.keyset.propagation2_complete(RollType::KskRoll, ttl)
+                    }
+                    Commands::ZskPropagation1Complete { ttl: _ } => {
+                        kss.keyset.propagation1_complete(RollType::ZskRoll, ttl)
+                    }
+                    Commands::ZskPropagation2Complete { ttl: _ } => {
+                        kss.keyset.propagation2_complete(RollType::ZskRoll, ttl)
+                    }
+                    Commands::CskPropagation1Complete { ttl: _ } => {
+                        kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
+                    }
+                    Commands::CskPropagation2Complete { ttl: _ } => {
+                        kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
+                    }
+                    Commands::AlgorithmPropagation1Complete { ttl: _ } => kss
+                        .keyset
+                        .propagation1_complete(RollType::AlgorithmRoll, ttl),
+                    Commands::AlgorithmPropagation2Complete { ttl: _ } => kss
+                        .keyset
+                        .propagation2_complete(RollType::AlgorithmRoll, ttl),
+                    _ => unreachable!(),
+                };
+
+                let actions = match actions {
+                    Ok(actions) => actions,
+                    Err(err) => {
+                        return Err(format!("Error reporting propagation complete: {err}\n").into());
+                    }
+                };
+
+                // Handle error
+
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                // Report actions
+                print_actions(&actions);
+                state_changed = true;
+            }
+            Commands::KskCacheExpired1
+            | Commands::KskCacheExpired2
+            | Commands::ZskCacheExpired1
+            | Commands::ZskCacheExpired2
+            | Commands::CskCacheExpired1
+            | Commands::CskCacheExpired2
+            | Commands::AlgorithmCacheExpired1
+            | Commands::AlgorithmCacheExpired2 => {
+                let actions = match self.cmd {
+                    Commands::KskCacheExpired1 => kss.keyset.cache_expired1(RollType::KskRoll),
+                    Commands::KskCacheExpired2 => kss.keyset.cache_expired2(RollType::KskRoll),
+                    Commands::ZskCacheExpired1 => kss.keyset.cache_expired1(RollType::ZskRoll),
+                    Commands::ZskCacheExpired2 => kss.keyset.cache_expired2(RollType::ZskRoll),
+                    Commands::CskCacheExpired1 => kss.keyset.cache_expired1(RollType::CskRoll),
+                    Commands::CskCacheExpired2 => kss.keyset.cache_expired2(RollType::CskRoll),
+                    Commands::AlgorithmCacheExpired1 => {
+                        kss.keyset.cache_expired1(RollType::AlgorithmRoll)
+                    }
+                    Commands::AlgorithmCacheExpired2 => {
+                        kss.keyset.cache_expired2(RollType::AlgorithmRoll)
+                    }
+                    _ => unreachable!(),
+                };
+
+                let actions = match actions {
+                    Ok(actions) => actions,
+                    Err(err) => {
+                        return Err(format!("Error reporting cache expired: {err}\n").into());
+                    }
+                };
+
+                // Handle error
+
+                handle_actions(&actions, &ksc, &mut kss, env)?;
+
+                // Report actions
+                print_actions(&actions);
+                state_changed = true;
+            }
+            Commands::KskRollDone
+            | Commands::ZskRollDone
+            | Commands::CskRollDone
+            | Commands::AlgorithmRollDone => {
+                let actions = match self.cmd {
+                    Commands::KskRollDone => kss.keyset.roll_done(RollType::KskRoll),
+                    Commands::ZskRollDone => kss.keyset.roll_done(RollType::ZskRoll),
+                    Commands::CskRollDone => kss.keyset.roll_done(RollType::CskRoll),
+                    Commands::AlgorithmRollDone => kss.keyset.roll_done(RollType::AlgorithmRoll),
+                    _ => unreachable!(),
+                };
+
+                let actions = match actions {
+                    Ok(actions) => actions,
+                    Err(err) => {
+                        return Err(format!("Error reporting done: {err}\n").into());
+                    }
+                };
+
+                if !actions.is_empty() {
+                    return Err("List of actions after reporting done\n".into());
+                }
+
+                // Remove old keys.
+                if ksc.autoremove {
+                    let key_urls: Vec<_> = kss
+                        .keyset
+                        .keys()
+                        .iter()
+                        .filter(|(_, key)| {
+                            let state = match key.keytype() {
+                                KeyType::Ksk(state) => state,
+                                KeyType::Zsk(state) => state,
+                                KeyType::Csk(state, _) => state,
+                                KeyType::Include(state) => state,
+                            };
+                            state.old() && !state.signer() && !state.present() && !state.at_parent()
+                        })
+                        .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
+                        .collect();
+                    if !key_urls.is_empty() {
+                        print!("Removing:");
+                        for u in key_urls {
+                            let (pubref, privkey) = &u;
+                            print!(" {pubref}");
+                            kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
+                                format!("unable to remove key {pubref}: {e}\n").into()
+                            })?;
+
+                            if let Some(privkey) = privkey {
+                                let priv_url = Url::parse(privkey).map_err::<Error, _>(|e| {
+                                    format!("unable to parse {privkey} as URL: {e}").into()
+                                })?;
+                                remove_key(&ksc, priv_url)?;
+                            }
+
+                            let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
+                                format!("unable to parse {pubref} as URL: {e}").into()
+                            })?;
+                            remove_key(&ksc, pub_url)?;
+                        }
+                        println!();
+                    }
+                }
+                state_changed = true;
+            }
+            Commands::Status => {
+                for (roll, state) in kss.keyset.rollstates().iter() {
+                    println!("{roll:?}: {state:?}");
+                }
+                if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
+                    println!("DNSKEY RRSIG(s) need to be renewed");
+                }
+                if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
+                    println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
+                }
+
+                // Check for expired keys.
+                for (pubref, k) in kss.keyset.keys() {
+                    let (expired, label) = key_expired(k, &ksc);
+                    if expired {
+                        println!("{label} {pubref} has expired");
+                    }
+                }
+            }
+            Commands::Actions => {
+                for roll in kss.keyset.rollstates().keys() {
+                    let actions = kss.keyset.actions(roll.clone());
+                    println!("{roll:?} actions:");
+                    for a in actions {
+                        println!("\t{a:?}");
+                    }
+                }
+            }
+            Commands::Keys => {
+                println!("Keys:");
+                let mut keys: Vec<_> = kss.keyset.keys().iter().collect();
+                keys.sort_by(|(pubref1, key1), (pubref2, key2)| {
+                    (key1.timestamps().creation(), pubref1)
+                        .cmp(&(key2.timestamps().creation(), pubref2))
+                });
+                for (pubref, key) in keys {
+                    println!("\t{} {}", pubref, key.privref().unwrap_or_default(),);
+                    let (keytype, state, opt_state) = match key.keytype() {
+                        KeyType::Ksk(keystate) => ("KSK", keystate, None),
+                        KeyType::Zsk(keystate) => ("ZSK", keystate, None),
+                        KeyType::Include(keystate) => ("Include", keystate, None),
+                        KeyType::Csk(keystate_ksk, keystate_zsk) => {
+                            ("CSK", keystate_ksk, Some(keystate_zsk))
+                        }
+                    };
+                    println!(
+                        "\t\tType: {keytype}, algorithm: {}, key tag: {}",
+                        key.algorithm(),
+                        key.key_tag()
+                    );
+                    if let Some(zskstate) = opt_state {
+                        println!("\t\tKSK role state: {state}");
+                        println!("\t\tZSK role state: {zskstate}");
+                    } else {
+                        println!("\t\tState: {state}");
+                    }
+                    let ts = key.timestamps();
+                    println!(
+                        "\t\tCreated: {}",
+                        ts.creation()
+                            .map_or("<empty>".to_string(), |x| x.to_string()),
+                    );
+                    println!(
+                        "\t\tPublished: {}",
+                        ts.published()
+                            .map_or("<empty>".to_string(), |x| x.to_string())
+                    );
+                    println!(
+                        "\t\tVisible: {}",
+                        ts.visible()
+                            .map_or("<empty>".to_string(), |x| x.to_string()),
+                    );
+                    println!(
+                        "\t\tDS visible: {}",
+                        ts.ds_visible()
+                            .map_or("<empty>".to_string(), |x| x.to_string())
+                    );
+                    println!(
+                        "\t\tRRSIG visible: {}",
+                        ts.rrsig_visible()
+                            .map_or("<empty>".to_string(), |x| x.to_string()),
+                    );
+                    println!(
+                        "\t\tWithdrawn: {}",
+                        ts.withdrawn()
+                            .map_or("<empty>".to_string(), |x| x.to_string())
+                    );
+                }
+            }
+            Commands::Get { subcommand } => get_command(subcommand, &ksc, &kss),
+            Commands::Set { subcommand } => set_command(subcommand, &mut ksc, &mut config_changed)?,
+            Commands::Show => {
+                println!("state-file: {:?}", ksc.state_file);
+                println!("use-csk: {}", ksc.use_csk);
+                println!("ksk-algorithm: {}", ksc.ksk_generate_params);
+                println!("zsk-algorithm: {}", ksc.zsk_generate_params);
+                println!("csk-algorithm: {}", ksc.csk_generate_params);
+                println!("ksk-validity: {:?}", ksc.ksk_validity);
+                println!("zsk-validity: {:?}", ksc.zsk_validity);
+                println!("csk-validity: {:?}", ksc.csk_validity);
+                println!("dnskey-inception-offset: {:?}", ksc.dnskey_inception_offset);
+                println!(
+                    "dnskey-signature-lifetime: {:?}",
+                    ksc.dnskey_signature_lifetime
+                );
+                println!("dnskey-remain-time: {:?}", ksc.dnskey_remain_time);
+                println!("cds-inception-offset: {:?}", ksc.cds_inception_offset);
+                println!("cds-signature-lifetime: {:?}", ksc.cds_signature_lifetime);
+                println!("cds-remain-time: {:?}", ksc.cds_remain_time);
+                println!("ds-algorithm: {:?}", ksc.ds_algorithm);
+                println!("autoremove: {:?}", ksc.autoremove);
+            }
+            Commands::Cron => {
+                if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
+                    println!("DNSKEY RRSIG(s) need to be renewed");
+                    update_dnskey_rrset(&mut kss, &ksc, env)?;
+                    state_changed = true;
+                }
+                if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
+                    println!("CDS/CDNSKEY RRSIGs need to be renewed");
+                    create_cds_rrset(&mut kss, &ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?;
+                    state_changed = true;
+                }
+            }
+            Commands::Kmip { subcommand } => {
+                config_changed = kmip_command(subcommand, &mut ksc)?;
+            }
         }
 
         let cron_next_dnskey = compute_cron_next(&kss.dnskey_rrset, &ksc.dnskey_remain_time);
@@ -1127,103 +1210,6 @@ impl Keyset {
         }
         Ok(())
     }
-
-    fn handle_kmip_command(&mut self, ksc: &mut KeySetConfig) -> Result<bool, Error> {
-        let mut config_changed = false;
-
-        match self.cmd.as_str() {
-            "kmip-add-server" => {
-                if self.values.len() != 2 {
-                    return Err(
-                        "Usage: kmip-add-server <id> [user[:pass]@]ip_or_fqdn[:port]".into(),
-                    );
-                };
-
-                let id = self.values[0].clone();
-                let settings = parse_kmip_server(&self.values[1])?;
-                ksc.kmip_servers.insert(id.clone(), settings);
-                if ksc.kmip_servers.len() == 1 {
-                    ksc.default_kmip_server = Some(id);
-                }
-                config_changed = true;
-            }
-
-            "kmip-remove-server" => {
-                let id = self.value_or()?;
-                let _ = get_kmip_server_conn_settings(&id, ksc)?;
-                if ksc.default_kmip_server.as_ref() == Some(&id) {
-                    return Err(format!(
-                        "KMIP server index {id} cannot be removed as it is the current default"
-                    )
-                    .into());
-                }
-                let _ = ksc.kmip_servers.remove(&id);
-                config_changed = true;
-            }
-
-            "kmip-set-server-insecure" => {
-                if self.values.len() != 2 {
-                    return Err("Usage: kmip-set-server-insecure <server id> <true|false>".into());
-                };
-                let conn_settings = get_kmip_server_conn_settings(&self.values[0], ksc)?;
-                let insecure = match self.values[1].as_str() {
-                    "true" => true,
-                    "false" => false,
-                    _ => {
-                        return Err(
-                            "Usage: kmip-set-server-insecure <server index> <true|false>".into(),
-                        )
-                    }
-                };
-                conn_settings.server_insecure = insecure;
-                config_changed = true;
-            }
-
-            "kmip-set-client-cert" => {
-                if self.values.len() != 3 {
-                    return Err(
-                        "Usage: kmip-set-client-cert <server index> <cert path> <key path>".into(),
-                    );
-                };
-                let conn_settings = get_kmip_server_conn_settings(&self.values[0], ksc)?;
-                conn_settings.client_cert_path =
-                    Some(PathBuf::from_str(self.values[1].as_str()).unwrap());
-                conn_settings.client_key_path =
-                    Some(PathBuf::from_str(self.values[2].as_str()).unwrap());
-                config_changed = true;
-            }
-
-            "kmip-set-default-server" => {
-                let id = self.value_or()?;
-                let _ = get_kmip_server_conn_settings(&id, ksc)?;
-                ksc.default_kmip_server = Some(id);
-                config_changed = true;
-            }
-
-            "kmip-unset-default-server" => {
-                ksc.default_kmip_server = None;
-                config_changed = true;
-            }
-
-            "kmip-get-default-server" => match &ksc.default_kmip_server {
-                Some(id) => println!("Default KMIP server name: {id}"),
-                None => println!("No default KMIP server set, keys will NOT be crated using KMIP"),
-            },
-
-            "kmip-get-server" => {
-                let id = self.value_or()?;
-                dbg!(get_kmip_server_conn_settings(&id, ksc)?);
-            }
-
-            "kmip-get-servers" => {
-                dbg!(&ksc.kmip_servers);
-            }
-
-            cmd => return Err(format!("unknown subcommand {cmd}").into()),
-        }
-
-        Ok(config_changed)
-    }
 }
 
 fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
@@ -1257,62 +1243,174 @@ fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
     Ok(())
 }
 
-// Returns true if the config has been changed.
-fn get_kmip_server_conn_settings<'a>(
-    id: &str,
-    ksc: &'a mut KeySetConfig,
-) -> Result<&'a mut KmipServerConnectionSettings, Error> {
-    if ksc.kmip_servers.is_empty() {
-        return Err(format!("No KMIP servers are configured.").into());
-    }
-
-    Ok(ksc
-        .kmip_servers
-        .get_mut(id)
-        .ok_or_else(|| format!("KMIP server id '{id}' is not known"))?)
-}
-
-fn parse_kmip_server(input: &str) -> Result<KmipServerConnectionSettings, Error> {
-    // input should be of the form: [user[:pass]@]ip_or_fqdn[:port]
-    let (addr, port, user, pass) = match input.split_once('@') {
-        Some((user_pass, rest)) => {
-            let (user, pass) = parse_user_pass(user_pass)?;
-            let (addr, port) = parse_addr_port(rest)?;
-            (addr, port, Some(user), pass)
+fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
+    match cmd {
+        GetCommands::UseCsk => {
+            println!("{}", ksc.use_csk);
         }
-        None => {
-            let (addr, port) = parse_addr_port(input)?;
-            (addr, port, None, None)
+        GetCommands::Autoremove => {
+            println!("{}", ksc.autoremove);
         }
-    };
-
-    let mut settings = KmipServerConnectionSettings::default();
-    settings.server_addr = addr;
-    settings.server_port = port;
-    settings.server_username = user;
-    settings.server_password = pass;
-
-    Ok(settings)
-}
-
-fn parse_user_pass(input: &str) -> Result<(String, Option<String>), Error> {
-    // input should be of the form: user[:pass]
-    match input.split_once(':') {
-        Some((user, pass)) => Ok((user.to_string(), Some(pass.to_string()))),
-        None => Ok((input.to_string(), None)),
+        GetCommands::KskAlgorithm => {
+            println!("{}", ksc.ksk_generate_params);
+        }
+        GetCommands::ZskAlgorithm => {
+            println!("{}", ksc.zsk_generate_params);
+        }
+        GetCommands::CskAlgorithm => {
+            println!("{}", ksc.csk_generate_params);
+        }
+        GetCommands::DsAlgorithm => {
+            println!("{}", ksc.ds_algorithm);
+        }
+        GetCommands::DnskeyLifetime => {
+            let span = Span::try_from(ksc.dnskey_signature_lifetime).expect("should not fail");
+            let signeddur = span
+                .to_duration(SpanRelativeTo::days_are_24_hours())
+                .expect("should not fail");
+            println!("{signeddur:#}");
+        }
+        GetCommands::CdsLifetime => {
+            let span = Span::try_from(ksc.cds_signature_lifetime).expect("should not fail");
+            let signeddur = span
+                .to_duration(SpanRelativeTo::days_are_24_hours())
+                .expect("should not fail");
+            println!("{signeddur:#}");
+        }
+        GetCommands::Dnskey => {
+            for r in &kss.dnskey_rrset {
+                println!("{r}");
+            }
+        }
+        GetCommands::Cds => {
+            for r in &kss.cds_rrset {
+                println!("{r}");
+            }
+        }
+        GetCommands::Ds => {
+            for r in &kss.ds_rrset {
+                println!("{r}");
+            }
+        }
     }
 }
 
-fn parse_addr_port(input: &str) -> Result<(String, u16), Error> {
-    // input should be of the form: ip_or_fqdn[:port]
-    match input.split_once(':') {
-        Some((ip_or_fqdn, port)) => Ok((
-            ip_or_fqdn.to_string(),
-            port.parse::<u16>()
-                .map_err(|err| format!("{port} is not a valid port number: {err}"))?,
-        )),
-        None => Ok((input.to_string(), 5696)),
+fn set_command(
+    cmd: SetCommands,
+    ksc: &mut KeySetConfig,
+    config_changed: &mut bool,
+) -> Result<(), Error> {
+    match cmd {
+        SetCommands::UseCsk { boolean } => {
+            ksc.use_csk = boolean;
+        }
+        SetCommands::Autoremove { boolean } => {
+            ksc.autoremove = boolean;
+        }
+        SetCommands::KskAlgorithm { algorithm, bits } => {
+            ksc.ksk_generate_params = KeyParameters::new(&algorithm, bits)?;
+        }
+        SetCommands::ZskAlgorithm { algorithm, bits } => {
+            ksc.zsk_generate_params = KeyParameters::new(&algorithm, bits)?;
+        }
+        SetCommands::CskAlgorithm { algorithm, bits } => {
+            ksc.csk_generate_params = KeyParameters::new(&algorithm, bits)?;
+        }
+        SetCommands::DsAlgorithm { algorithm } => {
+            ksc.ds_algorithm = algorithm;
+        }
+        SetCommands::DnskeyInceptionOffset { duration } => {
+            ksc.dnskey_inception_offset = duration;
+        }
+        SetCommands::DnskeyLifetime { duration } => {
+            ksc.dnskey_signature_lifetime = duration;
+        }
+        SetCommands::DnskeyRemainTime { duration } => {
+            ksc.dnskey_remain_time = duration;
+        }
+        SetCommands::CdsInceptionOffset { duration } => {
+            ksc.cds_inception_offset = duration;
+        }
+        SetCommands::CdsLifetime { duration } => {
+            ksc.cds_signature_lifetime = duration;
+        }
+        SetCommands::CdsRemainTime { duration } => {
+            ksc.cds_remain_time = duration;
+        }
+        SetCommands::KskValidity { opt_duration } => {
+            ksc.ksk_validity = opt_duration;
+        }
+        SetCommands::ZskValidity { opt_duration } => {
+            ksc.zsk_validity = opt_duration;
+        }
+        SetCommands::CskValidity { opt_duration } => {
+            ksc.csk_validity = opt_duration;
+        }
     }
+    *config_changed = true;
+    Ok(())
+}
+
+fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error> {
+    match cmd {
+        KmipCommands::AddServer {
+            server_id,
+            ip_host_or_fqdn,
+            port,
+            username,
+            password,
+            insecure,
+            client_cert_path,
+            client_key_path,
+        } => {
+            let mut settings = KmipServerConnectionSettings::default();
+            settings.server_addr = ip_host_or_fqdn;
+            settings.server_port = port.unwrap_or(5696);
+            settings.server_username = username;
+            settings.server_password = password;
+            settings.server_insecure = insecure.unwrap_or(false);
+            settings.client_cert_path = client_cert_path;
+            settings.client_key_path = client_key_path;
+
+            ksc.kmip_servers.insert(server_id.clone(), settings);
+
+            if ksc.kmip_servers.len() == 1 {
+                ksc.default_kmip_server = Some(server_id);
+            }
+        }
+
+        KmipCommands::RemoveServer { server_id } => {
+            if ksc.default_kmip_server.as_ref() == Some(&server_id) {
+                return Err(format!(
+                    "KMIP server index {server_id} cannot be removed as it is the current default"
+                )
+                .into());
+            }
+            let _ = ksc.kmip_servers.remove(&server_id);
+        }
+
+        KmipCommands::SetDefaultServer { server_id } => {
+            if !ksc.kmip_servers.contains_key(&server_id) {
+                return Err(format!("KMIP server id '{server_id}' is not known").into());
+            }
+            ksc.default_kmip_server = Some(server_id);
+        }
+
+        KmipCommands::GetServer { server_id } => {
+            let Some(server) = ksc.kmip_servers.get(&server_id) else {
+                return Err(format!("KMIP server id '{server_id}' is not known").into());
+            };
+            dbg!(server);
+            return Ok(false);
+        }
+
+        KmipCommands::ListServers => {
+            dbg!(&ksc.kmip_servers);
+            return Ok(false);
+        }
+    }
+
+    return Ok(true);
 }
 
 /// Config for the keyset command.
@@ -1572,7 +1670,7 @@ impl Display for KeyParameters {
 }
 
 // Do we want Deserialize and Serialize for DigestAlgorithm?
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 enum DsAlgorithm {
     Sha256,
     Sha384,
@@ -2358,6 +2456,7 @@ fn handle_actions(
             Action::ReportDsPropagated => (),
             Action::ReportRrsigPropagated => (),
             Action::WaitDnskeyPropagated => (),
+            Action::WaitDsPropagated => (),
             Action::WaitRrsigPropagated => (),
         }
     }
@@ -2374,6 +2473,24 @@ fn print_actions(actions: &[Action]) {
         }
         println!();
     }
+}
+
+fn parse_duration(value: &str) -> Result<Duration, Error> {
+    let span: Span = value
+        .parse()
+        .map_err::<Error, _>(|e| format!("unable to parse {value} as lifetime: {e}\n").into())?;
+    let signeddur = span
+        .to_duration(SpanRelativeTo::days_are_24_hours())
+        .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
+    Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
+}
+
+fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
+    if value == "off" {
+        return Ok(None);
+    }
+    let duration = parse_duration(value)?;
+    Ok(Some(duration))
 }
 
 fn sig_renew(dnskey_rrset: &[String], remain_time: &Duration) -> bool {
