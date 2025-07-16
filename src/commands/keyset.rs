@@ -215,6 +215,12 @@ enum SetCommands {
 
 #[derive(Clone, Debug, Subcommand)]
 enum KmipCommands {
+    /// Disable use of KMIP.
+    Disable,
+
+    /// Add a KMIP server to use for key generation & signing.
+    /// 
+    /// Will be set as the default server if it is the only KMIP server.
     AddServer {
         server_id: String,
 
@@ -238,15 +244,25 @@ enum KmipCommands {
         #[arg(long = "client-key")]
         client_key_path: Option<PathBuf>,
     },
+
+    /// Remove an existing non-default KMIP server.
+    /// 
+    /// To remove the default KMIP server use `kmip disable` first.
     RemoveServer {
         server_id: String,
     },
+
+    /// Set the default KMIP server to use for key generation & signing.
     SetDefaultServer {
         server_id: String,
     },
+
+    /// Get the details of an existing KMIP server.
     GetServer {
         server_id: String,
     },
+
+    /// List all configured KMIP servers.
     ListServers,
 }
 
@@ -1353,6 +1369,10 @@ fn set_command(
 
 fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error> {
     match cmd {
+        KmipCommands::Disable => {
+            ksc.default_kmip_server = None;
+        }
+
         KmipCommands::AddServer {
             server_id,
             ip_host_or_fqdn,
@@ -1382,7 +1402,7 @@ fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error
         KmipCommands::RemoveServer { server_id } => {
             if ksc.default_kmip_server.as_ref() == Some(&server_id) {
                 return Err(format!(
-                    "KMIP server index {server_id} cannot be removed as it is the current default"
+                    "KMIP server index {server_id} cannot be removed as it is the current default. Use kmip disable first."
                 )
                 .into());
             }
