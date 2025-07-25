@@ -356,19 +356,7 @@ impl Keyset {
         let mut state_changed = false;
 
         // Determine the KMIP connection pool to use, if configured.
-        let kmip_server_id = ksc.default_kmip_server.clone();
-        let kmip_conn_settings = kmip_server_id
-            .as_ref()
-            .and_then(|id| ksc.kmip_servers.get(id))
-            .map(|conn_settings| Arc::new(ConnectionSettings::from(conn_settings.clone())));
-        let kmip_conn_pool = if let Some(conn_settings) = kmip_conn_settings.as_ref() {
-            Some(kmip_create_conn_pool(
-                kmip_server_id.unwrap(),
-                conn_settings.clone(),
-            )?)
-        } else {
-            None
-        };
+        let kmip_conn_pool = get_kmip_pool(&ksc)?;
 
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
@@ -1223,6 +1211,20 @@ impl Keyset {
     }
 }
 
+fn get_kmip_pool(ksc: &KeySetConfig) -> Result<Option<SyncConnPool>, Error> {
+    let Some(id) = &ksc.default_kmip_server else {
+        return Ok(None);
+    };
+
+    let Some(kmip_conn_settings) = ksc.kmip_servers.get(id) else {
+        return Err(format!("No KMIP server config exists for id '{id}").into());
+    };
+
+    let conn_settings = Arc::new(ConnectionSettings::try_from(kmip_conn_settings.clone())?);
+    let kmip_conn_pool = Some(kmip_create_conn_pool(id.clone(), conn_settings)?);
+    Ok(kmip_conn_pool)
+}
+
 fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
     match url.scheme() {
         "file" => {
@@ -1539,12 +1541,20 @@ impl Default for KmipServerConnectionSettings {
     }
 }
 
-impl From<KmipServerConnectionSettings> for ConnectionSettings {
-    fn from(cfg: KmipServerConnectionSettings) -> Self {
-        let client_cert = load_client_cert(&cfg).unwrap();
-        let server_cert = cfg.server_cert_path.map(|p| load_binary_file(&p).unwrap());
-        let ca_cert = cfg.ca_cert_path.map(|p| load_binary_file(&p).unwrap());
-        ConnectionSettings {
+impl TryFrom<KmipServerConnectionSettings> for ConnectionSettings {
+    type Error = Error;
+
+    fn try_from(cfg: KmipServerConnectionSettings) -> Result<Self, Self::Error> {
+        let client_cert = load_client_cert(&cfg)?;
+        let server_cert = match cfg.server_cert_path {
+            Some(p) => Some(load_binary_file(&p)?),
+            None => None,
+        };
+        let ca_cert = match cfg.ca_cert_path {
+            Some(p) => Some(load_binary_file(&p)?),
+            None => None,
+        };
+        Ok(ConnectionSettings {
             host: cfg.server_addr,
             port: cfg.server_port,
             username: cfg.server_username,
@@ -1557,7 +1567,7 @@ impl From<KmipServerConnectionSettings> for ConnectionSettings {
             read_timeout: None,       // TODO
             write_timeout: None,      // TODO
             max_response_bytes: None, // TODO
-        }
+        })
     }
 }
 
@@ -2036,6 +2046,8 @@ fn kmip_create_conn_pool(
     server_id: String,
     conn_settings: Arc<ConnectionSettings>,
 ) -> Result<SyncConnPool, Error> {
+    // TODO: Should the timeouts used here be configurable and/or set to some
+    // other value?
     let kmip_conn_pool = ConnectionManager::create_connection_pool(
         server_id,
         conn_settings,
@@ -2273,7 +2285,7 @@ fn parse_kmip_key_url(
         .get(server_id)
         .ok_or(format!("No KMIP server configured with id {server_id}"))?;
 
-    let mut conn_settings = ConnectionSettings::from(srv.clone());
+    let mut conn_settings = ConnectionSettings::try_from(srv.clone())?;
 
     if srv.server_username.is_some() {
         conn_settings.username = srv.server_username.clone();
