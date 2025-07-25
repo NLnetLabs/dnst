@@ -18,7 +18,7 @@ use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
 use domain::crypto::kmip::sign::KeyUrl;
 use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings};
-use domain::crypto::kmip_pool::{ConnectionManager, KmipConnPool};
+use domain::crypto::kmip_pool::{ConnectionManager, SyncConnPool};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{Action, Key, KeySet, KeyType, RollType, UnixTime};
@@ -219,7 +219,7 @@ enum KmipCommands {
     Disable,
 
     /// Add a KMIP server to use for key generation & signing.
-    /// 
+    ///
     /// Will be set as the default server if it is the only KMIP server.
     AddServer {
         server_id: String,
@@ -246,21 +246,15 @@ enum KmipCommands {
     },
 
     /// Remove an existing non-default KMIP server.
-    /// 
+    ///
     /// To remove the default KMIP server use `kmip disable` first.
-    RemoveServer {
-        server_id: String,
-    },
+    RemoveServer { server_id: String },
 
     /// Set the default KMIP server to use for key generation & signing.
-    SetDefaultServer {
-        server_id: String,
-    },
+    SetDefaultServer { server_id: String },
 
     /// Get the details of an existing KMIP server.
-    GetServer {
-        server_id: String,
-    },
+    GetServer { server_id: String },
 
     /// List all configured KMIP servers.
     ListServers,
@@ -361,6 +355,7 @@ impl Keyset {
         let mut config_changed = false;
         let mut state_changed = false;
 
+        // Determine the KMIP connection pool to use, if configured.
         let kmip_server_id = ksc.default_kmip_server.clone();
         let kmip_conn_settings = kmip_server_id
             .as_ref()
@@ -1383,14 +1378,16 @@ fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error
             client_cert_path,
             client_key_path,
         } => {
-            let mut settings = KmipServerConnectionSettings::default();
-            settings.server_addr = ip_host_or_fqdn;
-            settings.server_port = port.unwrap_or(5696);
-            settings.server_username = username;
-            settings.server_password = password;
-            settings.server_insecure = insecure.unwrap_or(false);
-            settings.client_cert_path = client_cert_path;
-            settings.client_key_path = client_key_path;
+            let settings = KmipServerConnectionSettings {
+                client_cert_path,
+                client_key_path,
+                server_insecure: insecure.unwrap_or(false),
+                server_addr: ip_host_or_fqdn,
+                server_port: port.unwrap_or(5696),
+                server_username: username,
+                server_password: password,
+                ..Default::default()
+            };
 
             ksc.kmip_servers.insert(server_id.clone(), settings);
 
@@ -1430,7 +1427,7 @@ fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error
         }
     }
 
-    return Ok(true);
+    Ok(true)
 }
 
 /// Config for the keyset command.
@@ -1486,41 +1483,41 @@ struct KeySetConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipServerConnectionSettings {
-    /// Path to the client certificate file in PEM format
+    /// Path to the client certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     client_cert_path: Option<PathBuf>,
 
-    /// Path to the client certificate key file in PEM format
+    /// Path to the client certificate key file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     client_key_path: Option<PathBuf>,
 
-    /// Path to the client certificate and key file in PKCS#12 format
+    /// Path to the client certificate and key file in PKCS#12 format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     client_pkcs12_path: Option<PathBuf>,
 
-    /// Disable secure checks (e.g. verification of the server certificate)
+    /// Disable secure checks (e.g. verification of the server certificate).
     #[serde(default)]
     server_insecure: bool,
 
-    /// Path to the server certificate file in PEM format
+    /// Path to the server certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     server_cert_path: Option<PathBuf>,
 
-    /// Path to the server CA certificate file in PEM format
+    /// Path to the server CA certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     ca_cert_path: Option<PathBuf>,
 
-    /// IP address, hostname or FQDN of the KMIP server
+    /// IP address, hostname or FQDN of the KMIP server.
     server_addr: String,
 
-    /// The TCP port number on which the KMIP server listens
+    /// The TCP port number on which the KMIP server listens.
     server_port: u16,
 
-    /// The user name to authenticate with the KMIP server
+    /// The user name to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     server_username: Option<String>,
 
-    /// The password to authenticate with the KMIP server
+    /// The password to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     server_password: Option<String>,
 }
@@ -1545,16 +1542,8 @@ impl Default for KmipServerConnectionSettings {
 impl From<KmipServerConnectionSettings> for ConnectionSettings {
     fn from(cfg: KmipServerConnectionSettings) -> Self {
         let client_cert = load_client_cert(&cfg).unwrap();
-        let server_cert = if let Some(p) = cfg.server_cert_path {
-            Some(load_binary_file(&p).unwrap())
-        } else {
-            None
-        };
-        let ca_cert = if let Some(p) = cfg.ca_cert_path {
-            Some(load_binary_file(&p).unwrap())
-        } else {
-            None
-        };
+        let server_cert = cfg.server_cert_path.map(|p| load_binary_file(&p).unwrap());
+        let ca_cert = cfg.ca_cert_path.map(|p| load_binary_file(&p).unwrap());
         ConnectionSettings {
             host: cfg.server_addr,
             port: cfg.server_port,
@@ -1731,7 +1720,7 @@ fn new_keys(
     keys: &HashMap<String, Key>,
     keys_dir: &Path,
     env: &impl Env,
-    kmip_conn_pool: &Option<KmipConnPool>,
+    kmip_conn_pool: &Option<SyncConnPool>,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
     // TODO: Attempt repeated generation to avoid key tag collisions.
@@ -1872,7 +1861,6 @@ fn update_dnskey_rrset(
 
         if present {
             if pub_url.scheme() == "file" {
-                dbg!("before open");
                 let path = pub_url.path();
                 let filename = env.in_cwd(&path);
                 let mut file = File::open(&filename).map_err::<Error, _>(|e| {
@@ -1886,7 +1874,6 @@ fn update_dnskey_rrset(
                     .map_err::<Error, _>(|e| {
                         format!("unable load zone from file {}: {e}", filename.display()).into()
                     })?;
-                dbg!("after open");
                 for entry in zonefile {
                     let entry = entry.map_err::<Error, _>(|e| {
                         format!("bad entry in key file {k}: {e}\n").into()
@@ -1902,8 +1889,6 @@ fn update_dnskey_rrset(
                         continue;
                     };
 
-                    // TODO: Limit class to IN?
-                    // TODO: TTL should be determined elsewhere, not taken from the file.
                     let record = Record::new(
                         record
                             .owner()
@@ -1922,6 +1907,7 @@ fn update_dnskey_rrset(
                 let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
                 let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
                 let owner = kss.keyset.name().clone().flatten_into();
+                // TODO: Where does this TTL come from?
                 let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey.convert());
                 dnskeys.push(record);
             } else {
@@ -1994,10 +1980,9 @@ fn update_dnskey_rrset(
 
             // TODO: Should there be a key not found error we can detect here so that we can retry if
             // we believe that the key is simply not registered fully yet in the HSM?
-            let sig = sign_rrset::<_, _, Bytes, _>(&signing_key, &rrset, inception, expiration)
-                .map_err::<Error, _>(|e| {
-                format!("error signing DNSKEY RRset with private key {privref}: {e}").into()
-            })?;
+            let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err::<Error, _>(
+                |e| format!("error signing DNSKEY RRset with private key {privref}: {e}").into(),
+            )?;
             sigs.push(sig);
         }
     }
@@ -2050,7 +2035,7 @@ fn kmip_signing_key_from_urls(
 fn kmip_create_conn_pool(
     server_id: String,
     conn_settings: Arc<ConnectionSettings>,
-) -> Result<KmipConnPool, Error> {
+) -> Result<SyncConnPool, Error> {
     let kmip_conn_pool = ConnectionManager::create_connection_pool(
         server_id,
         conn_settings,
@@ -2062,11 +2047,16 @@ fn kmip_create_conn_pool(
     Ok(kmip_conn_pool)
 }
 
+/// Obtain the DNSKEY RR for a given KMIP key.
+///
+/// Retries up to 3 times on error, with a hard-coded sleep between tries, to
+/// handle the case where the key has been very recently created and for some
+/// reason cannot be queried yet (seen with Fortanix DSM).
 fn kmip_get_dnskey(
     public_key_id: String,
     algorithm: SecurityAlgorithm,
     flags: u16,
-    kmip_conn_pool: KmipConnPool,
+    kmip_conn_pool: SyncConnPool,
 ) -> Result<Dnskey<Vec<u8>>, Error> {
     let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
     let mut retries = 3;
@@ -2110,11 +2100,7 @@ fn create_cds_rrset(
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
                     let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!(
-                            "create_cds_rrset: unable to open public key file {}: {e}",
-                            filename.display()
-                        )
-                        .into()
+                        format!("unable to open public key file {}: {e}", filename.display()).into()
                     })?;
                     let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
                         .map_err::<Error, _>(|e| {
@@ -2236,7 +2222,7 @@ fn create_cds_rrset(
                     panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
                 }
             };
-            let sig = sign_rrset::<_, _, Bytes, _>(&signing_key, &cds_rrset, inception, expiration)
+            let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
                 .map_err::<Error, _>(|e| {
                     format!("error signing CDS RRset with private key {privref}: {e}").into()
                 })?;
@@ -2513,9 +2499,9 @@ fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
     Ok(Some(duration))
 }
 
-fn sig_renew(dnskey_rrset: &[String], remain_time: &Duration) -> bool {
+fn sig_renew(rrset: &[String], remain_time: &Duration) -> bool {
     let mut zonefile = Zonefile::new();
-    for r in dnskey_rrset {
+    for r in rrset {
         zonefile.extend_from_slice(r.as_ref());
         zonefile.extend_from_slice(b"\n");
     }
