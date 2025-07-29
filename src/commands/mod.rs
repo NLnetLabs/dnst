@@ -5,6 +5,7 @@ pub mod keygen;
 pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
+pub mod signer;
 pub mod signzone;
 pub mod update;
 
@@ -59,6 +60,10 @@ pub enum Command {
     #[command(name = "nsec3-hash")]
     Nsec3Hash(self::nsec3hash::Nsec3Hash),
 
+    /// Sign the zone using a key manager (keyset)
+    #[command(name = "signer")]
+    Signer(self::signer::Signer),
+
     /// Sign the zone with the given key(s)
     #[command(name = "signzone")]
     SignZone(self::signzone::SignZone),
@@ -97,6 +102,7 @@ impl Command {
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Notify(notify) => notify.execute(env),
+            Self::Signer(signer) => signer.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Keyset(keyset) => keyset.execute(env),

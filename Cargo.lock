@@ -354,7 +354,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#0fa094bb9812b0ebcf8a2651e4f46d5923505d8e"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#b500eebaba7f8a119f13de0bcc37044fe2f3b9a3"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#0fa094bb9812b0ebcf8a2651e4f46d5923505d8e"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=crypto-and-keyset-fixes#b500eebaba7f8a119f13de0bcc37044fe2f3b9a3"
 dependencies = [
  "proc-macro2",
  "quote",

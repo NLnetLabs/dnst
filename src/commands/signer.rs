@@ -49,6 +49,7 @@ use domain::zonetree::{StoredName, StoredRecord};
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
+use tracing::warn;
 
 use super::keyset::KeySetState;
 use crate::env::{Env, Stream};
@@ -184,7 +185,7 @@ pub struct Signer {
 impl Signer {
     fn parse_zonemd_set(arg: &str) -> Result<HashSet<ZonemdTuple>, Error> {
         let mut set = HashSet::new();
-        if arg != "" {
+        if !arg.is_empty() {
             for a in arg.split(',') {
                 let zonemd_tuple = Self::parse_zonemd_tuple(a)?;
                 set.insert(zonemd_tuple);
@@ -537,7 +538,7 @@ impl Signer {
             }
         }
 
-        let signing_keys: Vec<_> = keys.iter().map(|k| k).collect();
+        let signing_keys: Vec<_> = keys.iter().collect();
         let out_file = sc.zonefile_out.clone();
 
         let mut writer = if out_file.as_os_str() == "-" {
@@ -691,7 +692,7 @@ impl Signer {
         let inception = (now.into_int() - sc.inception_offset.as_secs() as u32).into();
         let expiration = (now.into_int() + sc.signature_lifetime.as_secs() as u32).into();
 
-        let mut signing_config: SigningConfig<_, _> = match signing_mode {
+        let signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
                 // LDNS doesn't add NSECs to a zone that already has NSECs or
                 // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
@@ -723,13 +724,12 @@ impl Signer {
         };
 
         records
-            .sign_zone(&mut signing_config, &signing_keys)
+            .sign_zone(&apex, &signing_config, &signing_keys)
             .map_err(|err| format!("Signing failed: {err}"))?;
 
         if !zonemd.is_empty() {
             // Remove the placeholder ZONEMD RR at apex
-            let _ =
-                records.remove_first_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+            let _ = records.remove_first_by_name_class_rtype(&apex, None, Some(Rtype::ZONEMD));
 
             let zonemd_rrs = Self::create_zonemd_digest_and_records(
                 &records, &apex, zone_class, &zonemd, soa_serial, ttl,
@@ -1135,7 +1135,7 @@ impl Signer {
     }
 
     fn write_iterations_warning(env: &impl Env, text: &str) {
-        Error::write_warning(&mut env.stderr(), text);
+        warn!("{text}");
         writeln!(
             env.stderr(),
             "See: https://www.rfc-editor.org/rfc/rfc9276.html"
@@ -1271,7 +1271,7 @@ impl Signer {
         ttl: Ttl,
     ) {
         // Remove existing ZONEMD RRs at apex for any class (it's class independent).
-        let _ = records.remove_all_by_name_class_rtype(apex.clone(), None, Some(Rtype::ZONEMD));
+        let _ = records.remove_all_by_name_class_rtype(apex, None, Some(Rtype::ZONEMD));
 
         // Insert a single placeholder ZONEMD at apex for creating the
         // correct NSEC(3) bitmap (the ZONEMD RR will be replaced later).
@@ -1394,17 +1394,17 @@ struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
 
 //------------ FileOrStdout --------------------------------------------------
 
-enum FileOrStdout<T: io::Write, U: fmt::Write> {
+enum FileOrStdout<T: io::Write, U: io::Write> {
     File(T),
     Stdout(Stream<U>),
 }
 
-impl<T: io::Write, U: fmt::Write> fmt::Write for FileOrStdout<T, U> {
+impl<T: io::Write, U: io::Write> fmt::Write for FileOrStdout<T, U> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         match self {
             FileOrStdout::File(f) => f.write_all(s.as_bytes()).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(o) => {
-                o.write_str(s);
+            FileOrStdout::Stdout(f) => {
+                write!(f, "{s}");
                 Ok(())
             }
         }
