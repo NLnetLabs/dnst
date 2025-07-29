@@ -158,7 +158,7 @@ impl Nsec3Hash {
                 .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
                 .to_string()
                 .to_lowercase();
-        writeln!(env.stdout(), "{}.", hash);
+        writeln!(env.stdout(), "{hash}.");
         Ok(())
     }
 }
