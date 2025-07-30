@@ -2870,7 +2870,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> AutoReportRrsigResult {
     };
 
     if check_soa(serial, kss).await {
-        todo!();
+        AutoReportRrsigResult::Report(report_ttl)
     } else {
         AutoReportRrsigResult::WaitSoa {
             next: UnixTime::now() + ttl.into(),
