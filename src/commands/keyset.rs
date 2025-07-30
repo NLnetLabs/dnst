@@ -855,7 +855,13 @@ impl Keyset {
                         env,
                         &mut state_changed,
                         |_| true,
-                        |keytype| matches!(keytype, KeyType::Ksk(_)),
+                        |keytype| {
+                            if let KeyType::Ksk(keystate) = keytype {
+                                Some(keystate)
+                            } else {
+                                None
+                            }
+                        },
                         start_csk_roll,
                     )?;
                 } else {
@@ -867,7 +873,13 @@ impl Keyset {
                         env,
                         &mut state_changed,
                         |r| r != RollType::ZskRoll && r != RollType::ZskDoubleSignatureRoll,
-                        |keytype| matches!(keytype, KeyType::Ksk(_)),
+                        |keytype| {
+                            if let KeyType::Ksk(keystate) = keytype {
+                                Some(keystate)
+                            } else {
+                                None
+                            }
+                        },
                         start_ksk_roll,
                     )?;
                 }
@@ -883,7 +895,13 @@ impl Keyset {
                         env,
                         &mut state_changed,
                         |_| true,
-                        |keytype| matches!(keytype, KeyType::Zsk(_)),
+                        |keytype| {
+                            if let KeyType::Zsk(keystate) = keytype {
+                                Some(keystate)
+                            } else {
+                                None
+                            }
+                        },
                         start_csk_roll,
                     )?;
                 } else {
@@ -895,7 +913,13 @@ impl Keyset {
                         env,
                         &mut state_changed,
                         |r| r != RollType::KskRoll && r != RollType::KskDoubleDsRoll,
-                        |keytype| matches!(keytype, KeyType::Zsk(_)),
+                        |keytype| {
+                            if let KeyType::Zsk(keystate) = keytype {
+                                Some(keystate)
+                            } else {
+                                None
+                            }
+                        },
                         start_zsk_roll,
                     )?;
                 }
@@ -908,7 +932,13 @@ impl Keyset {
                     env,
                     &mut state_changed,
                     |_| true,
-                    |keytype| matches!(keytype, KeyType::Csk(_, _)),
+                    |keytype| {
+                        if let KeyType::Csk(keystate, _) = keytype {
+                            Some(keystate)
+                        } else {
+                            None
+                        }
+                    },
                     start_csk_roll,
                 )?;
 
@@ -2503,7 +2533,7 @@ fn start_ksk_roll(
         .iter()
         .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
     {
-        return Err("cannot start key roll, found CSK\n".into());
+        return Err(format!("cannot start {roll_type:?} roll, found CSK\n").into());
     }
 
     // Find existing KSKs. Do we complain if there is none?
@@ -2598,7 +2628,7 @@ fn start_zsk_roll(
         .iter()
         .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
     {
-        return Err("cannot start key roll, found CSK\n".into());
+        return Err(format!("cannot start {roll_type:?} roll, found CSK\n").into());
     }
 
     // Find existing ZSKs. Do we complain if there is none?
@@ -3307,7 +3337,7 @@ fn auto_start<Env>(
     env: Env,
     state_changed: &mut bool,
     conficting_roll: impl Fn(RollType) -> bool,
-    match_keytype: impl Fn(KeyType) -> bool,
+    match_keytype: impl Fn(KeyType) -> Option<KeyState>,
     start_roll: impl Fn(&KeySetConfig, &mut KeySetState, Env) -> Result<Vec<Action>, Error>,
 ) -> Result<(), Error> {
     if let Some(validity) = validity {
@@ -3326,10 +3356,18 @@ fn auto_start<Env>(
                     .keys()
                     .iter()
                     .filter_map(|(_, k)| {
-                        if match_keytype(k.keytype()) {
-                            k.timestamps()
-                                .published()
-                                .map(|published| published + *validity)
+                        if let Some(keystate) = match_keytype(k.keytype()) {
+                            if !keystate.old()
+                                || keystate.signer()
+                                || keystate.present()
+                                || keystate.at_parent()
+                            {
+                                k.timestamps()
+                                    .published()
+                                    .map(|published| published + *validity)
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
