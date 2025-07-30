@@ -1989,7 +1989,8 @@ async fn auto_actions(
             Action::CreateCdsRrset
             | Action::RemoveCdsRrset
             | Action::UpdateDnskeyRrset
-            | Action::UpdateDsRrset => (),
+            | Action::UpdateDsRrset
+            | Action::UpdateRrsig => (),
             Action::WaitDnskeyPropagated => {
                 // Note, an extra scope here to make clippy happy. Otherwise
                 // clippy thinks that the lock is used across an await point.
@@ -2043,13 +2044,136 @@ async fn auto_actions(
                 let result = report_ds_propagated(kss).await;
 
                 let mut report_state_locked = report_state.lock().unwrap();
-                report_state_locked.dnskey = Some(result.clone());
+                report_state_locked.ds = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
 
                 match result {
                     AutoReportActionsResult::Wait(next) => return AutoActionsResult::Wait(next),
                     AutoReportActionsResult::Report(_) => (),
+                }
+            }
+            Action::WaitRrsigPropagated => {
+                // Clippy problem
+                let opt_rrsig_status = {
+                    let report_state_locked = report_state.lock().unwrap();
+                    // Make a copy of the state. We need to release the lock
+                    // before calling await.
+                    let opt_rrsig_status = report_state_locked.rrsig.clone();
+                    drop(report_state_locked);
+                    opt_rrsig_status
+                };
+
+                if let Some(rrsig_status) = opt_rrsig_status {
+                    match rrsig_status {
+                        AutoReportRrsigResult::Wait(next) => {
+                            if next > UnixTime::now() {
+                                return AutoActionsResult::Wait(next.clone());
+                            }
+                        }
+                        AutoReportRrsigResult::Report(_) => todo!(),
+                        AutoReportRrsigResult::WaitSoa {
+                            next,
+                            serial,
+                            ttl,
+                            report_ttl,
+                        } => {
+                            if next > UnixTime::now() {
+                                return AutoActionsResult::Wait(next.clone());
+                            }
+                            let res = check_soa(serial, kss).await;
+                            dbg!(format!("got {res} for {serial}"));
+                            if res {
+                                dbg!("Setting rrsig to Report");
+                                let mut report_state_locked = report_state.lock().unwrap();
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::Report(report_ttl));
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                continue;
+                            } else {
+                                let next = UnixTime::now() + ttl.into();
+                                dbg!("Setting rrsig to WaitSoa");
+                                let mut report_state_locked = report_state.lock().unwrap();
+                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
+                                    next: next.clone(),
+                                    serial,
+                                    ttl,
+                                    report_ttl,
+                                });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoActionsResult::Wait(next);
+                            }
+                        }
+                        AutoReportRrsigResult::WaitRecord {
+                            next,
+                            name,
+                            rtype,
+                            ttl,
+                        } => {
+                            if next > UnixTime::now() {
+                                return AutoActionsResult::Wait(next.clone());
+                            }
+                            let res = check_record(&name, &rtype, kss).await;
+                            if !res {
+                                let next = UnixTime::now() + ttl.into();
+                                let mut report_state_locked = report_state.lock().unwrap();
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::WaitRecord {
+                                        next: next.clone(),
+                                        name: name.clone(),
+                                        rtype,
+                                        ttl,
+                                    });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoActionsResult::Wait(next);
+                            }
+
+                            // This record has the right signatures. Check
+                            // the zone.
+                        }
+                        AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
+                            if next > UnixTime::now() {
+                                return AutoActionsResult::Wait(next.clone());
+                            }
+                            let res = check_next_serial(serial, kss).await;
+                            if !res {
+                                let next = UnixTime::now() + ttl.into();
+                                let mut report_state_locked = report_state.lock().unwrap();
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::WaitNextSerial {
+                                        next: next.clone(),
+                                        serial,
+                                        ttl,
+                                    });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoActionsResult::Wait(next);
+                            }
+
+                            // A new serial. Check the zone.
+                        }
+                    }
+                }
+
+                let result = report_rrsig_propagated(kss).await;
+
+                let mut report_state_locked = report_state.lock().unwrap();
+                dbg!("Setting rrsig to WaitSoa");
+                report_state_locked.rrsig = Some(result.clone());
+                drop(report_state_locked);
+                *state_changed = true;
+
+                match result {
+                    AutoReportRrsigResult::Wait(next)
+                    | AutoReportRrsigResult::WaitRecord { next, .. }
+                    | AutoReportRrsigResult::WaitNextSerial { next, .. }
+                    | AutoReportRrsigResult::WaitSoa { next, .. } => {
+                        return AutoActionsResult::Wait(next)
+                    }
+                    AutoReportRrsigResult::Report(_) => (),
                 }
             }
             _ => {
