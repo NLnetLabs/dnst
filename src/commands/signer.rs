@@ -1,22 +1,13 @@
+use super::keyset::KeySetState;
+use super::nsec3hash::Nsec3Hash;
+use crate::env::{Env, Stream};
+use crate::error::{Context, Error};
+use crate::DISPLAY_KIND;
+use bytes::{BufMut, Bytes};
 use core::clone::Clone;
 use core::cmp::Ordering;
 use core::fmt::Write;
 use core::str::FromStr;
-
-use std::cmp::min;
-use std::collections::{HashMap, HashSet};
-use std::time::UNIX_EPOCH;
-//use std::ffi::OsString;
-use std::fmt::{self, Display};
-use std::fs::{metadata, File};
-use std::io::Write as IoWrite;
-use std::io::{self, BufWriter};
-use std::path::{Path, PathBuf};
-use tokio::time::Duration;
-
-use bytes::{BufMut, Bytes};
-use serde::{Deserialize, Serialize};
-
 use domain::base::iana::nsec3::Nsec3HashAlgorithm;
 use domain::base::iana::zonemd::{ZonemdAlgorithm, ZonemdScheme};
 use domain::base::iana::Class;
@@ -29,8 +20,7 @@ use domain::crypto::sign::{KeyPair, SecretKeyBytes};
 use domain::dnssec::common::parse_from_bind;
 use domain::dnssec::sign::denial::config::DenialConfig;
 use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
-use domain::dnssec::sign::denial::nsec3::mk_hashed_nsec3_owner_name;
-use domain::dnssec::sign::denial::nsec3::GenerateNsec3Config;
+use domain::dnssec::sign::denial::nsec3::{mk_hashed_nsec3_owner_name, GenerateNsec3Config};
 use domain::dnssec::sign::error::SigningError;
 use domain::dnssec::sign::keys::keyset::{KeyType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
@@ -45,19 +35,21 @@ use domain::utils::base64;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
-//use lexopt::Arg;
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
+use serde::{Deserialize, Serialize};
+use std::cmp::min;
+use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display};
+use std::fs::{metadata, File};
+use std::io::Write as IoWrite;
+use std::io::{self, BufWriter};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+use tokio::time::Duration;
 use tracing::warn;
-
-use super::keyset::KeySetState;
-use crate::env::{Env, Stream};
-use crate::error::{Context, Error};
-use crate::{/*Args,*/ DISPLAY_KIND};
-
-use super::nsec3hash::Nsec3Hash;
-//use super::{parse_os, parse_os_with, Command, LdnsCommand};
+use url::Url;
 
 //------------ Constants -----------------------------------------------------
 
@@ -514,12 +506,26 @@ impl Signer {
 
             if signer {
                 let privref = v.privref().ok_or("missing private key")?;
-                let private_data = std::fs::read_to_string(privref)?;
+                let priv_url = Url::parse(privref).expect("valid URL expected");
+                let private_data = if priv_url.scheme() == "file" {
+                    std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", priv_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {priv_url}");
+                };
                 let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
                     .map_err::<Error, _>(|e| {
                         format!("unable to parse private key file {privref}: {e}").into()
                     })?;
-                let public_data = std::fs::read_to_string(k)?;
+                let pub_url = Url::parse(k).expect("valid URL expected");
+                let public_data = if pub_url.scheme() == "file" {
+                    std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", pub_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {pub_url}");
+                };
                 let public_key =
                     parse_from_bind::<Bytes>(&public_data).map_err::<Error, _>(|e| {
                         format!("unable to parse public key file {k}: {e}").into()
