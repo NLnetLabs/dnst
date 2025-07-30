@@ -1027,7 +1027,7 @@ impl Keyset {
             }
             Commands::Actions => {
                 for roll in kss.keyset.rollstates().keys() {
-                    let actions = kss.keyset.actions(roll.clone());
+                    let actions = kss.keyset.actions(*roll);
                     println!("{roll:?} actions:");
                     for a in actions {
                         println!("\t{a:?}");
