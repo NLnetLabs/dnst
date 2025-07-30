@@ -693,12 +693,16 @@ impl Keyset {
 
                 let need_algorithm_roll = algorithm_roll_needed(&ksc, &kss);
 
-                if ksc.use_csk {
-                    // Start a CSK roll if the KSK has expired. All other
-                    // rolls are a conflict.
+                if ksc.use_csk || need_algorithm_roll {
+                    // Start a CSK or algorithm roll if the KSK has expired.
+                    // All other rolls are a conflict.
                     auto_start(
                         &ksc.ksk_validity,
-                        &ksc.auto_csk,
+                        if need_algorithm_roll {
+                            &ksc.auto_algorithm
+                        } else {
+                            &ksc.auto_csk
+                        },
                         &ksc,
                         &mut kss,
                         env,
@@ -711,7 +715,38 @@ impl Keyset {
                                 None
                             }
                         },
-                        start_csk_roll,
+                        if need_algorithm_roll {
+                            start_algorithm_roll
+                        } else {
+                            start_csk_roll
+                        },
+                    )?;
+
+                    // The same for the ZSK.
+                    auto_start(
+                        &ksc.zsk_validity,
+                        if need_algorithm_roll {
+                            &ksc.auto_algorithm
+                        } else {
+                            &ksc.auto_csk
+                        },
+                        &ksc,
+                        &mut kss,
+                        env,
+                        &mut state_changed,
+                        |_| true,
+                        |keytype| {
+                            if let KeyType::Zsk(keystate) = keytype {
+                                Some(keystate)
+                            } else {
+                                None
+                            }
+                        },
+                        if need_algorithm_roll {
+                            start_algorithm_roll
+                        } else {
+                            start_csk_roll
+                        },
                     )?;
                 } else {
                     auto_start(
@@ -731,29 +766,7 @@ impl Keyset {
                         },
                         start_ksk_roll,
                     )?;
-                }
 
-                if ksc.use_csk {
-                    // Start a CSK roll if the ZSK has expired. All other
-                    // rolls are a conflict.
-                    auto_start(
-                        &ksc.zsk_validity,
-                        &ksc.auto_csk,
-                        &ksc,
-                        &mut kss,
-                        env,
-                        &mut state_changed,
-                        |_| true,
-                        |keytype| {
-                            if let KeyType::Zsk(keystate) = keytype {
-                                Some(keystate)
-                            } else {
-                                None
-                            }
-                        },
-                        start_csk_roll,
-                    )?;
-                } else {
                     auto_start(
                         &ksc.zsk_validity,
                         &ksc.auto_zsk,
