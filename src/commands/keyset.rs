@@ -192,6 +192,16 @@ enum SetCommands {
         #[arg(action = clap::ArgAction::Set)]
         done: bool,
     },
+    AutoCsk {
+        #[arg(action = clap::ArgAction::Set)]
+        start: bool,
+        #[arg(action = clap::ArgAction::Set)]
+        report: bool,
+        #[arg(action = clap::ArgAction::Set)]
+        expire: bool,
+        #[arg(action = clap::ArgAction::Set)]
+        done: bool,
+    },
     DsAlgorithm {
         #[arg(value_parser = DsAlgorithm::new)]
         algorithm: DsAlgorithm,
@@ -283,6 +293,14 @@ impl Keyset {
                     }
                 },
                 auto_zsk: {
+                    AutoConfig {
+                        start: false,
+                        report: false,
+                        expire: false,
+                        done: false,
+                    }
+                },
+                auto_csk: {
                     AutoConfig {
                         start: false,
                         report: false,
@@ -434,237 +452,13 @@ impl Keyset {
                 state_changed = true;
             }
             Commands::StartZskRoll => {
-                if kss.keyset.keys().is_empty() {
-                    // Avoid ZSK roll without init.
-                    return Err("not yet initialized\n".into());
-                }
-
-                // Check for CSK.
-                if ksc.use_csk {
-                    return Err("wrong key roll, use start-csk-roll\n".into());
-                }
-
-                // Refuse if we can find a CSK key.
-                if kss
-                    .keyset
-                    .keys()
-                    .iter()
-                    .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
-                {
-                    return Err("cannot start key roll, found CSK\n".into());
-                }
-
-                // Find existing ZSKs. Do we complain if there is none?
-                let old_stored: Vec<_> = kss
-                    .keyset
-                    .keys()
-                    .iter()
-                    .filter(|(_, key)| {
-                        if let KeyType::Zsk(keystate) = key.keytype() {
-                            !keystate.old() || keystate.signer() || keystate.present()
-                        } else {
-                            false
-                        }
-                    })
-                    .map(|(name, _)| name.clone())
-                    .collect();
-                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-                // Collect algorithms. Maybe this needs to be in the library.
-
-                // Create a new ZSK
-                let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                    kss.keyset.name(),
-                    ksc.zsk_generate_params.to_generate_params(),
-                    false,
-                    kss.keyset.keys(),
-                    &ksc.keys_dir,
-                    env,
-                )?;
-                kss.keyset
-                    .add_key_zsk(
-                        zsk_pub_url.to_string(),
-                        Some(zsk_priv_url.to_string()),
-                        algorithm,
-                        key_tag,
-                        UnixTime::now(),
-                        true,
-                    )
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
-                    })?;
-
-                let new = [zsk_pub_url.as_ref()];
-
-                // Start the key roll
-                let actions = match kss
-                    .keyset
-                    .start_roll(RollType::ZskRoll, &old, &new)
-                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-                {
-                    Ok(actions) => actions,
-                    Err(e) => {
-                        // Remove the key files we just created.
-                        if zsk_priv_url.scheme() == "file" {
-                            remove_file(zsk_priv_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove private key file {zsk_priv_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {zsk_priv_url}");
-                        }
-                        if zsk_pub_url.scheme() == "file" {
-                            remove_file(zsk_pub_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove public key file {zsk_pub_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {zsk_pub_url}");
-                        }
-                        return Err(e);
-                    }
-                };
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                let actions = start_zsk_roll(&ksc, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartCskRoll => {
-                // Find existing KSKs, ZSKs and CSKs. Do we complain if there
-                // are none?
-                let old_stored: Vec<_> = kss
-                    .keyset
-                    .keys()
-                    .iter()
-                    .filter(|(_, key)| match key.keytype() {
-                        KeyType::Ksk(keystate)
-                        | KeyType::Zsk(keystate)
-                        | KeyType::Csk(keystate, _) => {
-                            // Assume that for a CSK it is sufficient to check
-                            // one of the key states. Also assume that we
-                            // can check at_parent for a ZSK.
-                            !keystate.old()
-                                || keystate.signer()
-                                || keystate.present()
-                                || keystate.at_parent()
-                        }
-                        KeyType::Include(_) => false,
-                    })
-                    .map(|(name, _)| name.clone())
-                    .collect();
-                let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-                // Collect algorithms. Maybe this needs to be in the library.
-
-                let (new_stored, new_urls) = if ksc.use_csk {
-                    let mut new_urls = Vec::new();
-
-                    // Create a new CSK
-                    let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.csk_generate_params.to_generate_params(),
-                        true,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                    )?;
-                    new_urls.push(csk_priv_url.clone());
-                    new_urls.push(csk_pub_url.clone());
-                    kss.keyset
-                        .add_key_csk(
-                            csk_pub_url.to_string(),
-                            Some(csk_priv_url.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add CSK {csk_pub_url}: {e}\n").into()
-                        })?;
-
-                    let new = vec![csk_pub_url];
-                    (new, new_urls)
-                } else {
-                    let mut new_urls = Vec::new();
-
-                    // Create a new KSK
-                    let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.ksk_generate_params.to_generate_params(),
-                        true,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                    )?;
-                    new_urls.push(ksk_priv_url.clone());
-                    new_urls.push(ksk_pub_url.clone());
-                    kss.keyset
-                        .add_key_ksk(
-                            ksk_pub_url.to_string(),
-                            Some(ksk_priv_url.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add KSK {ksk_pub_url}: {e}\n").into()
-                        })?;
-
-                    // Create a new ZSK
-                    let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.zsk_generate_params.to_generate_params(),
-                        false,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                    )?;
-                    new_urls.push(zsk_priv_url.clone());
-                    new_urls.push(zsk_pub_url.clone());
-                    kss.keyset
-                        .add_key_zsk(
-                            zsk_pub_url.to_string(),
-                            Some(zsk_priv_url.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add ZSK {zsk_pub_url}: {e}\n").into()
-                        })?;
-
-                    let new = vec![ksk_pub_url, zsk_pub_url];
-                    (new, new_urls)
-                };
-
-                let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-
-                // Start the key roll
-                let actions = match kss
-                    .keyset
-                    .start_roll(RollType::CskRoll, &old, &new)
-                    .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
-                {
-                    Ok(actions) => actions,
-                    Err(e) => {
-                        // Remove the key files we just created.
-                        for u in new_urls {
-                            if u.scheme() == "file" {
-                                remove_file(u.path()).map_err::<Error, _>(|e| {
-                                    format!("unable to remove private key file {u}: {e}\n").into()
-                                })?;
-                            } else {
-                                panic!("unsupported URL scheme in {u}");
-                            }
-                        }
-                        return Err(e);
-                    }
-                };
-
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                let actions = start_zsk_roll(&ksc, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -1022,6 +816,10 @@ impl Keyset {
                     "auto-zsk: start {}, report {}, expire {}, done {}",
                     ksc.auto_zsk.start, ksc.auto_zsk.report, ksc.auto_zsk.expire, ksc.auto_zsk.done,
                 );
+                println!(
+                    "auto-csk: start {}, report {}, expire {}, done {}",
+                    ksc.auto_csk.start, ksc.auto_csk.report, ksc.auto_csk.expire, ksc.auto_csk.done,
+                );
                 println!("dnskey-inception-offset: {:?}", ksc.dnskey_inception_offset);
                 println!(
                     "dnskey-signature-lifetime: {:?}",
@@ -1046,28 +844,72 @@ impl Keyset {
                     state_changed = true;
                 }
 
-                auto_start(
-                    &ksc.ksk_validity,
-                    &ksc.auto_ksk,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    &mut state_changed,
-                    |r| r != RollType::ZskRoll && r != RollType::ZskDoubleSignatureRoll,
-                    |keytype| matches!(keytype, KeyType::Ksk(_)),
-                    start_ksk_roll,
-                )?;
+                if ksc.use_csk {
+                    // Start a CSK roll if the KSK has expired. All other
+                    // rolls are a conflict.
+                    auto_start(
+                        &ksc.ksk_validity,
+                        &ksc.auto_csk,
+                        &ksc,
+                        &mut kss,
+                        env,
+                        &mut state_changed,
+                        |_| true,
+                        |keytype| matches!(keytype, KeyType::Ksk(_)),
+                        start_csk_roll,
+                    )?;
+                } else {
+                    auto_start(
+                        &ksc.ksk_validity,
+                        &ksc.auto_ksk,
+                        &ksc,
+                        &mut kss,
+                        env,
+                        &mut state_changed,
+                        |r| r != RollType::ZskRoll && r != RollType::ZskDoubleSignatureRoll,
+                        |keytype| matches!(keytype, KeyType::Ksk(_)),
+                        start_ksk_roll,
+                    )?;
+                }
+
+                if ksc.use_csk {
+                    // Start a CSK roll if the ZSK has expired. All other
+                    // rolls are a conflict.
+                    auto_start(
+                        &ksc.zsk_validity,
+                        &ksc.auto_csk,
+                        &ksc,
+                        &mut kss,
+                        env,
+                        &mut state_changed,
+                        |_| true,
+                        |keytype| matches!(keytype, KeyType::Zsk(_)),
+                        start_csk_roll,
+                    )?;
+                } else {
+                    auto_start(
+                        &ksc.zsk_validity,
+                        &ksc.auto_zsk,
+                        &ksc,
+                        &mut kss,
+                        env,
+                        &mut state_changed,
+                        |r| r != RollType::KskRoll && r != RollType::KskDoubleDsRoll,
+                        |keytype| matches!(keytype, KeyType::Zsk(_)),
+                        start_zsk_roll,
+                    )?;
+                }
 
                 auto_start(
-                    &ksc.zsk_validity,
-                    &ksc.auto_zsk,
+                    &ksc.csk_validity,
+                    &ksc.auto_csk,
                     &ksc,
                     &mut kss,
                     env,
                     &mut state_changed,
-                    |r| r != RollType::KskRoll && r != RollType::KskDoubleDsRoll,
-                    |keytype| matches!(keytype, KeyType::Zsk(_)),
-                    start_zsk_roll,
+                    |_| true,
+                    |keytype| matches!(keytype, KeyType::Csk(_, _)),
+                    start_csk_roll,
                 )?;
 
                 auto_report_expire_done(
@@ -1082,6 +924,15 @@ impl Keyset {
                 auto_report_expire_done(
                     &ksc.auto_zsk,
                     &[RollType::ZskRoll, RollType::ZskDoubleSignatureRoll],
+                    &ksc,
+                    &mut kss,
+                    env,
+                    &mut state_changed,
+                )
+                .await?;
+                auto_report_expire_done(
+                    &ksc.auto_csk,
+                    &[RollType::CskRoll],
                     &ksc,
                     &mut kss,
                     env,
@@ -1105,28 +956,77 @@ impl Keyset {
 
         cron_next.push(compute_cron_next(&kss.cds_rrset, &ksc.cds_remain_time));
 
-        cron_next_auto_start(
-            ksc.ksk_validity,
-            &ksc.auto_ksk,
-            &kss,
-            |r| r != RollType::ZskRoll && r != RollType::ZskDoubleSignatureRoll,
-            |keytype| {
-                if let KeyType::Ksk(keystate) = keytype {
-                    Some(keystate)
-                } else {
-                    None
-                }
-            },
-            &mut cron_next,
-        );
+        if ksc.use_csk {
+            cron_next_auto_start(
+                ksc.ksk_validity,
+                &ksc.auto_csk,
+                &kss,
+                |_| true,
+                |keytype| {
+                    if let KeyType::Ksk(keystate) = keytype {
+                        Some(keystate)
+                    } else {
+                        None
+                    }
+                },
+                &mut cron_next,
+            );
+        } else {
+            cron_next_auto_start(
+                ksc.ksk_validity,
+                &ksc.auto_ksk,
+                &kss,
+                |r| r != RollType::ZskRoll && r != RollType::ZskDoubleSignatureRoll,
+                |keytype| {
+                    if let KeyType::Ksk(keystate) = keytype {
+                        Some(keystate)
+                    } else {
+                        None
+                    }
+                },
+                &mut cron_next,
+            );
+        }
+
+        if ksc.use_csk {
+            cron_next_auto_start(
+                ksc.zsk_validity,
+                &ksc.auto_csk,
+                &kss,
+                |_| true,
+                |keytype| {
+                    if let KeyType::Zsk(keystate) = keytype {
+                        Some(keystate)
+                    } else {
+                        None
+                    }
+                },
+                &mut cron_next,
+            );
+        } else {
+            cron_next_auto_start(
+                ksc.zsk_validity,
+                &ksc.auto_zsk,
+                &kss,
+                |r| r != RollType::KskRoll && r != RollType::KskDoubleDsRoll,
+                |keytype| {
+                    if let KeyType::Zsk(keystate) = keytype {
+                        Some(keystate)
+                    } else {
+                        None
+                    }
+                },
+                &mut cron_next,
+            );
+        }
 
         cron_next_auto_start(
-            ksc.zsk_validity,
-            &ksc.auto_zsk,
+            ksc.csk_validity,
+            &ksc.auto_csk,
             &kss,
-            |r| r != RollType::KskRoll && r != RollType::KskDoubleDsRoll,
+            |_| true,
             |keytype| {
-                if let KeyType::Zsk(keystate) = keytype {
+                if let KeyType::Csk(keystate, _) = keytype {
                     Some(keystate)
                 } else {
                     None
@@ -1144,6 +1044,12 @@ impl Keyset {
         cron_next_auto_report_expire_done(
             &ksc.auto_zsk,
             &[RollType::ZskRoll, RollType::ZskDoubleSignatureRoll],
+            &kss,
+            &mut cron_next,
+        )?;
+        cron_next_auto_report_expire_done(
+            &ksc.auto_csk,
+            &[RollType::CskRoll],
             &kss,
             &mut cron_next,
         )?;
@@ -1281,6 +1187,20 @@ fn set_command(
             };
             *config_changed = true;
         }
+        SetCommands::AutoCsk {
+            start,
+            report,
+            expire,
+            done,
+        } => {
+            ksc.auto_csk = AutoConfig {
+                start,
+                report,
+                expire,
+                done,
+            };
+            *config_changed = true;
+        }
         SetCommands::DsAlgorithm { algorithm } => {
             ksc.ds_algorithm = algorithm;
         }
@@ -1335,6 +1255,7 @@ struct KeySetConfig {
 
     auto_ksk: AutoConfig,
     auto_zsk: AutoConfig,
+    auto_csk: AutoConfig,
 
     // DNSKEY inception offset
     dnskey_inception_offset: Duration,
@@ -2269,7 +2190,10 @@ async fn auto_report_actions(
                                     return ds_status.clone();
                                 }
                             }
-                            AutoReportActionsResult::Report(_) => todo!(),
+                            AutoReportActionsResult::Report(ttl) => {
+                                max_ttl = max(max_ttl, *ttl);
+                                continue;
+                            }
                         }
                     }
                     drop(report_state_locked);
@@ -2459,7 +2383,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                         AutoReportActionsResult::Wait(next) => {
                             return AutoActionsResult::Wait(next.clone())
                         }
-                        AutoReportActionsResult::Report(_) => todo!(),
+                        AutoReportActionsResult::Report(_) => return AutoActionsResult::Ok,
                     }
                 }
                 drop(report_state_locked);
@@ -2739,6 +2663,143 @@ fn start_zsk_roll(
                 })?;
             } else {
                 panic!("unsupported URL scheme in {zsk_pub_url}");
+            }
+            return Err(e);
+        }
+    };
+
+    handle_actions(&actions, ksc, kss, env)?;
+    kss.internal.insert(roll_type, Default::default());
+    Ok(actions)
+}
+
+fn start_csk_roll(
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+) -> Result<Vec<Action>, Error> {
+    let roll_type = RollType::CskRoll;
+
+    assert!(!kss.keyset.keys().is_empty());
+
+    // Find existing KSKs, ZSKs and CSKs. Do we complain if there
+    // are none?
+    let old_stored: Vec<_> = kss
+        .keyset
+        .keys()
+        .iter()
+        .filter(|(_, key)| match key.keytype() {
+            KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Csk(keystate, _) => {
+                // Assume that for a CSK it is sufficient to check
+                // one of the key states. Also assume that we
+                // can check at_parent for a ZSK.
+                !keystate.old() || keystate.signer() || keystate.present() || keystate.at_parent()
+            }
+            KeyType::Include(_) => false,
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
+
+    // Collect algorithms. Maybe this needs to be in the library.
+
+    let (new_stored, new_urls) = if ksc.use_csk {
+        let mut new_urls = Vec::new();
+
+        // Create a new CSK
+        let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.csk_generate_params.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+        )?;
+        new_urls.push(csk_priv_url.clone());
+        new_urls.push(csk_pub_url.clone());
+        kss.keyset
+            .add_key_csk(
+                csk_pub_url.to_string(),
+                Some(csk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add CSK {csk_pub_url}: {e}\n").into())?;
+
+        let new = vec![csk_pub_url];
+        (new, new_urls)
+    } else {
+        let mut new_urls = Vec::new();
+
+        // Create a new KSK
+        let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.ksk_generate_params.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+        )?;
+        new_urls.push(ksk_priv_url.clone());
+        new_urls.push(ksk_pub_url.clone());
+        kss.keyset
+            .add_key_ksk(
+                ksk_pub_url.to_string(),
+                Some(ksk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
+
+        // Create a new ZSK
+        let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.zsk_generate_params.to_generate_params(),
+            false,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+        )?;
+        new_urls.push(zsk_priv_url.clone());
+        new_urls.push(zsk_pub_url.clone());
+        kss.keyset
+            .add_key_zsk(
+                zsk_pub_url.to_string(),
+                Some(zsk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
+
+        let new = vec![ksk_pub_url, zsk_pub_url];
+        (new, new_urls)
+    };
+
+    let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+
+    // Start the key roll
+    let actions = match kss
+        .keyset
+        .start_roll(roll_type, &old, &new)
+        .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+    {
+        Ok(actions) => actions,
+        Err(e) => {
+            // Remove the key files we just created.
+            for u in new_urls {
+                if u.scheme() == "file" {
+                    remove_file(u.path()).map_err::<Error, _>(|e| {
+                        format!("unable to remove private key file {u}: {e}\n").into()
+                    })?;
+                } else {
+                    panic!("unsupported URL scheme in {u}");
+                }
             }
             return Err(e);
         }
