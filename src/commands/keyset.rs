@@ -2980,7 +2980,7 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
                 }
 
                 if r.rtype() == Rtype::RRSIG {
-                    let owner = r.owner();
+                    let owner = r.owner().to_name();
                     let r = r.to_record::<Rrsig<_, _>>().unwrap().unwrap();
                     let key = (owner, r.data().type_covered());
                     let value = (r.data().algorithm(), r.data().key_tag());
@@ -2988,14 +2988,11 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
                     alg_kt_map.insert(value);
                     max_ttl = max(max_ttl, r.ttl());
                 } else {
-                    let key = r.owner();
+                    let key = r.owner().to_name();
                     let rtype_map = treemap.entry(key).or_insert_with(HashSet::new);
                     rtype_map.insert(r.rtype());
                 }
             }
-            println!("TCP reply: {reply:?}");
-
-            todo!();
         }
     }
 
@@ -3525,8 +3522,8 @@ enum CheckRrsigsResult {
 // Returns:
 // Done - if the zone changes out
 fn check_rrsigs(
-    treemap: BTreeMap<ParsedName<&Bytes>, HashSet<Rtype>>,
-    sigmap: HashMap<(ParsedName<&Bytes>, Rtype), HashSet<(SecurityAlgorithm, u16)>>,
+    treemap: BTreeMap<Name<Vec<u8>>, HashSet<Rtype>>,
+    sigmap: HashMap<(Name<Vec<u8>>, Rtype), HashSet<(SecurityAlgorithm, u16)>>,
     zone: &Name<Vec<u8>>,
     expected_set: HashSet<(SecurityAlgorithm, u16)>,
 ) -> CheckRrsigsResult {
@@ -3541,7 +3538,7 @@ fn check_rrsigs(
             delegation = None;
         }
         if rtype_map.contains(&Rtype::NS) && key != zone {
-            delegation = Some(key);
+            delegation = Some(key.clone());
         }
         for rtype in rtype_map {
             if delegation.is_some() {
@@ -3551,7 +3548,7 @@ fn check_rrsigs(
                 } else if rtype == Rtype::DS {
                     // DS records are signed. Just keep going.
                 } else {
-                    error!("Weird type {rtype} in delegation {key}");
+                    error!("Weird type {rtype} in delegation {}", &key);
                     continue;
                 }
             }
@@ -3561,7 +3558,7 @@ fn check_rrsigs(
                 // These rtypes are signed with the KSKs
                 continue;
             }
-            let Some(set) = sigmap.get(&(key, rtype)) else {
+            let Some(set) = sigmap.get(&(key.clone(), rtype)) else {
                 warn!("RRSIG not found for {key}/{rtype}");
                 todo!();
             };
