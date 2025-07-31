@@ -1901,7 +1901,7 @@ fn key_expired(key: &Key, ksc: &KeySetConfig) -> (bool, &'static str) {
         KeyType::Csk(keystate, _) => (keystate, "CSK", ksc.csk_validity),
         KeyType::Include(_) => return (false, ""), // Does not expire.
     };
-    if keystate.old() && !keystate.present() && !keystate.signer() && !keystate.at_parent() {
+    if keystate.stale() {
         // Old key.
         return (false, "");
     }
@@ -1978,6 +1978,8 @@ enum AutoReportRrsigResult {
     },
 }
 
+/// Handle the actions for the Done state automatically. Actions for this
+/// state cannot have report actions, but there can be wait actions.
 async fn auto_actions(
     actions: &[Action],
     kss: &KeySetState,
@@ -2003,7 +2005,7 @@ async fn auto_actions(
                                     return AutoActionsResult::Wait(next.clone());
                                 }
                             }
-                            AutoReportActionsResult::Report(_) => todo!(),
+                            AutoReportActionsResult::Report(_) => continue,
                         }
                     }
 
@@ -2176,10 +2178,11 @@ async fn auto_actions(
                     AutoReportRrsigResult::Report(_) => (),
                 }
             }
-            _ => {
-                dbg!(a);
-                todo!();
-            }
+            // These actions are not compatible with the 'done' state because
+            // the 'done' state does not report anything, it can only wait.
+            Action::ReportDnskeyPropagated
+            | Action::ReportDsPropagated
+            | Action::ReportRrsigPropagated => unreachable!(),
         }
     }
     AutoActionsResult::Ok
@@ -2394,10 +2397,13 @@ async fn auto_report_actions(
             | Action::RemoveCdsRrset
             | Action::UpdateDsRrset
             | Action::UpdateRrsig => (),
-            _ => {
-                dbg!(a);
-                todo!();
-            }
+
+            // These actions should not occur here. Actions in this functions
+            // need to be no-ops or report a TTL. Wait actions are not
+            // compatible with this.
+            Action::WaitDnskeyPropagated
+            | Action::WaitDsPropagated
+            | Action::WaitRrsigPropagated => unreachable!(),
         }
     }
     AutoReportActionsResult::Report(max_ttl)
@@ -2418,7 +2424,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                         AutoReportActionsResult::Wait(next) => {
                             return AutoActionsResult::Wait(next.clone())
                         }
-                        AutoReportActionsResult::Report(_) => todo!(),
+                        AutoReportActionsResult::Report(_) => continue,
                     }
                 }
                 drop(report_state_locked);
@@ -2433,7 +2439,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                         AutoReportActionsResult::Wait(next) => {
                             return AutoActionsResult::Wait(next.clone())
                         }
-                        AutoReportActionsResult::Report(_) => return AutoActionsResult::Ok,
+                        AutoReportActionsResult::Report(_) => continue,
                     }
                 }
                 drop(report_state_locked);
@@ -2441,7 +2447,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                 // No status, request cron
                 return AutoActionsResult::Wait(UnixTime::now());
             }
-            Action::ReportRrsigPropagated => {
+            Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
                 let report_state_locked = report_state.lock().unwrap();
                 if let Some(rrsig_status) = &report_state_locked.rrsig {
                     match rrsig_status {
@@ -2461,10 +2467,6 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
 
                 // No status, request cron
                 return AutoActionsResult::Wait(UnixTime::now());
-            }
-            _ => {
-                dbg!(a);
-                todo!();
             }
         }
     }
@@ -2504,7 +2506,7 @@ fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Resu
                     KeyType::Csk(state, _) => state,
                     KeyType::Include(state) => state,
                 };
-                state.old() && !state.signer() && !state.present() && !state.at_parent()
+                state.stale()
             })
             .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
             .collect();
@@ -2547,12 +2549,13 @@ fn start_ksk_roll(
     }
 
     // Refuse if we can find a CSK key.
-    if kss
-        .keyset
-        .keys()
-        .iter()
-        .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
-    {
+    if kss.keyset.keys().iter().any(|(_, key)| {
+        if let KeyType::Csk(keystate, _) = key.keytype() {
+            !keystate.stale()
+        } else {
+            false
+        }
+    }) {
         return Err(format!("cannot start {roll_type:?} roll, found CSK\n").into());
     }
 
@@ -2563,7 +2566,7 @@ fn start_ksk_roll(
         .iter()
         .filter(|(_, key)| {
             if let KeyType::Ksk(keystate) = key.keytype() {
-                !keystate.old() || keystate.signer() || keystate.present() || keystate.at_parent()
+                !keystate.stale()
             } else {
                 false
             }
@@ -2658,7 +2661,7 @@ fn start_zsk_roll(
         .iter()
         .filter(|(_, key)| {
             if let KeyType::Zsk(keystate) = key.keytype() {
-                !keystate.old() || keystate.signer() || keystate.present()
+                !keystate.stale()
             } else {
                 false
             }
@@ -2743,7 +2746,7 @@ fn start_csk_roll(
                 // Assume that for a CSK it is sufficient to check
                 // one of the key states. Also assume that we
                 // can check at_parent for a ZSK.
-                !keystate.old() || keystate.signer() || keystate.present() || keystate.at_parent()
+                !keystate.stale()
             }
             KeyType::Include(_) => false,
         })
@@ -2880,7 +2883,7 @@ fn start_algorithm_roll(
                 // Assume that for a CSK it is sufficient to check
                 // one of the key states. Also assume that we
                 // can check at_parent for a ZSK.
-                !keystate.old() || keystate.signer() || keystate.present() || keystate.at_parent()
+                !keystate.stale()
             }
             KeyType::Include(_) => false,
         })
@@ -3512,11 +3515,7 @@ fn auto_start<Env>(
                     .iter()
                     .filter_map(|(_, k)| {
                         if let Some(keystate) = match_keytype(k.keytype()) {
-                            if !keystate.old()
-                                || keystate.signer()
-                                || keystate.present()
-                                || keystate.at_parent()
-                            {
+                            if !keystate.stale() {
                                 k.timestamps()
                                     .published()
                                     .map(|published| published + *validity)
@@ -3665,11 +3664,7 @@ fn cron_next_auto_start(
                     .iter()
                     .filter_map(|(_, k)| {
                         if let Some(keystate) = match_keytype(k.keytype()) {
-                            if !keystate.old()
-                                || keystate.signer()
-                                || keystate.present()
-                                || keystate.at_parent()
-                            {
+                            if !keystate.stale() {
                                 k.timestamps().published()
                             } else {
                                 None
@@ -3973,11 +3968,7 @@ fn algorithm_roll_needed(ksc: &KeySetConfig, kss: &KeySetState) -> bool {
                 KeyType::Csk(keystate, _) => Some(keystate),
                 KeyType::Include(_) => None,
             } {
-                if !keystate.old()
-                    || keystate.signer()
-                    || keystate.present()
-                    || keystate.at_parent()
-                {
+                if !keystate.stale() {
                     Some(k.algorithm())
                 } else {
                     None
