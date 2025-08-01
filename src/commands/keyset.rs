@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::util;
 use bytes::Bytes;
 use clap::Subcommand;
-use domain::base::iana::{Class, DigestAlgorithm, SecurityAlgorithm};
+use domain::base::iana::{Class, DigestAlgorithm, OptRcode, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{MessageBuilder, Name, ParsedName, Record, Rtype, Serial, ToName, Ttl};
@@ -44,6 +44,9 @@ use tracing::{debug, error, warn};
 use url::Url;
 
 const MAX_KEY_TAG_TRIES: u8 = 10;
+
+// Wait this amount before retrying for network errors, DNS errors, etc.
+const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Keyset {
@@ -566,7 +569,7 @@ impl Keyset {
                     }
                 }
                 if let Some(cron_next) = &kss.cron_next {
-                    println!("Next time to run the 'cron' subcommand {}", cron_next);
+                    println!("Next time to run the 'cron' subcommand {cron_next}");
                 }
             }
             Commands::Actions => {
@@ -2037,7 +2040,7 @@ async fn auto_actions(
                                     return AutoActionsResult::Wait(next.clone());
                                 }
                             }
-                            AutoReportActionsResult::Report(_) => todo!(),
+                            AutoReportActionsResult::Report(_) => continue,
                         }
                     }
                     drop(report_state_locked);
@@ -2073,7 +2076,7 @@ async fn auto_actions(
                                 return AutoActionsResult::Wait(next.clone());
                             }
                         }
-                        AutoReportRrsigResult::Report(_) => todo!(),
+                        AutoReportRrsigResult::Report(_) => continue,
                         AutoReportRrsigResult::WaitSoa {
                             next,
                             serial,
@@ -2117,7 +2120,7 @@ async fn auto_actions(
                             if next > UnixTime::now() {
                                 return AutoActionsResult::Wait(next.clone());
                             }
-                            let res = check_record(&name, &rtype, kss).await;
+                            let res = check_record(&name, &rtype, kss).await.unwrap();
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
                                 let mut report_state_locked = report_state.lock().unwrap();
@@ -2140,7 +2143,7 @@ async fn auto_actions(
                             if next > UnixTime::now() {
                                 return AutoActionsResult::Wait(next.clone());
                             }
-                            let res = check_next_serial(serial, kss).await;
+                            let res = check_next_serial(serial, kss).await.unwrap();
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
                                 let mut report_state_locked = report_state.lock().unwrap();
@@ -2160,7 +2163,7 @@ async fn auto_actions(
                     }
                 }
 
-                let result = report_rrsig_propagated(kss).await;
+                let result = report_rrsig_propagated(kss).await.unwrap();
 
                 let mut report_state_locked = report_state.lock().unwrap();
                 dbg!("Setting rrsig to WaitSoa");
@@ -2284,7 +2287,10 @@ async fn auto_report_actions(
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
                         }
-                        AutoReportRrsigResult::Report(_) => todo!(),
+                        AutoReportRrsigResult::Report(ttl) => {
+                            max_ttl = max(max_ttl, ttl);
+                            continue;
+                        }
                         AutoReportRrsigResult::WaitSoa {
                             next,
                             serial,
@@ -2329,7 +2335,10 @@ async fn auto_report_actions(
                             if next > UnixTime::now() {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
-                            let res = check_record(&name, &rtype, kss).await;
+                            let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
+                                warn!("record check failed: {e}");
+                                false
+                            });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
                                 let mut report_state_locked = report_state.lock().unwrap();
@@ -2352,7 +2361,10 @@ async fn auto_report_actions(
                             if next > UnixTime::now() {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
-                            let res = check_next_serial(serial, kss).await;
+                            let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
+                                warn!("next serial check failed: {e}");
+                                false
+                            });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
                                 let mut report_state_locked = report_state.lock().unwrap();
@@ -2372,7 +2384,10 @@ async fn auto_report_actions(
                     }
                 }
 
-                let result = report_rrsig_propagated(kss).await;
+                let result = report_rrsig_propagated(kss).await.unwrap_or_else(|e| {
+                    warn!("Check RRSIG propagation failed: {e}");
+                    AutoReportRrsigResult::Wait(UnixTime::now() + DEFAULT_WAIT)
+                });
 
                 let mut report_state_locked = report_state.lock().unwrap();
                 dbg!("Setting rrsig to WaitSoa");
@@ -2457,10 +2472,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                         | AutoReportRrsigResult::WaitSoa { next, .. } => {
                             return AutoActionsResult::Wait(next.clone())
                         }
-                        AutoReportRrsigResult::Report(_) => {
-                            dbg!(rrsig_status);
-                            todo!();
-                        }
+                        AutoReportRrsigResult::Report(_) => continue,
                     }
                 }
                 drop(report_state_locked);
@@ -2539,7 +2551,7 @@ fn start_ksk_roll(
     kss: &mut KeySetState,
     env: &impl Env,
 ) -> Result<Vec<Action>, Error> {
-    let roll_type = RollType::KskRoll;
+    let roll_type = RollType::KskDoubleDsRoll;
 
     assert!(!kss.keyset.keys().is_empty());
 
@@ -3094,7 +3106,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> AutoReportActionsResult {
     todo!();
 }
 
-async fn report_rrsig_propagated(kss: &KeySetState) -> AutoReportRrsigResult {
+async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
     // This function assume a single signer. Multi-signer is not supported
     // at all, but any kind of active-passive or active-active setup would also
     // need changes. With more than one signer, each signer needs to be
@@ -3103,10 +3115,10 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> AutoReportRrsigResult {
     // Check the zone. If the zone checks out, make sure that all nameservers
     // have at least the version of the zone that was checked.
 
-    let result = check_zone(kss).await;
+    let result = check_zone(kss).await?;
     let (serial, ttl, report_ttl) = match result {
-        AutoReportRrsigResult::Report(_) => todo!(),
-        AutoReportRrsigResult::Wait(_) => todo!(),
+        // check_zone never returns Report or Wait.
+        AutoReportRrsigResult::Report(_) | AutoReportRrsigResult::Wait(_) => unreachable!(),
         AutoReportRrsigResult::WaitSoa {
             serial,
             ttl,
@@ -3114,11 +3126,11 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> AutoReportRrsigResult {
             ..
         } => (serial, ttl, report_ttl),
         AutoReportRrsigResult::WaitRecord { .. } | AutoReportRrsigResult::WaitNextSerial { .. } => {
-            return result
+            return Ok(result)
         }
     };
 
-    if check_soa(serial, kss).await {
+    Ok(if check_soa(serial, kss).await {
         AutoReportRrsigResult::Report(report_ttl)
     } else {
         AutoReportRrsigResult::WaitSoa {
@@ -3127,10 +3139,10 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> AutoReportRrsigResult {
             ttl,
             report_ttl,
         }
-    }
+    })
 }
 
-async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
+async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
     // Check where the zone has signatures from the right keys.
     // Collect the ZSK algorithm and key tags into a HashSet
     // Get the primary nameserver from the SOA record (this should become
@@ -3157,13 +3169,18 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
         .map(|r| r.map(|r| (r.data().mname().clone(), r.data().serial())))
         .next()
     else {
-        todo!();
+        let rcode = answer.opt_rcode();
+        return if rcode != OptRcode::NOERROR {
+            Err(format!("Unable to resolve {zone}/SOA: {rcode}").into())
+        } else {
+            Err(format!("No result for {zone}/SOA").into())
+        };
     };
 
     let addresses = addresses_for_name(&resolver, mname).await;
 
-    for a in addresses {
-        let tcp_conn = TcpStream::connect((a, 53_u16)).await.unwrap();
+    for a in &addresses {
+        let tcp_conn = TcpStream::connect((*a, 53_u16)).await.unwrap();
 
         let (tcp, transport) = stream::Connection::<RequestMessage<Vec<u8>>, _>::new(tcp_conn);
         tokio::spawn(transport.run());
@@ -3185,7 +3202,7 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
             // Get the reply
             let reply = request.get_response().await.unwrap();
             let Some(reply) = reply else {
-                todo!();
+                return Err(format!("Unexpected end of AXFR for {zone}").into());
             };
             let answer = reply.answer().unwrap();
             for r in answer {
@@ -3193,7 +3210,11 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
                 if !first_soa {
                     if r.rtype() != Rtype::SOA {
                         // Bad start of zone transfer.
-                        todo!();
+                        return Err(format!(
+                            "Wrong start of AXFR for {zone}, expected SOA found {}",
+                            r.rtype()
+                        )
+                        .into());
                     }
                     first_soa = true;
 
@@ -3204,26 +3225,26 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
                     // The end.
                     let res = check_rrsigs(treemap, sigmap, zone, expected_set);
                     return match res {
-                        CheckRrsigsResult::Done => AutoReportRrsigResult::WaitSoa {
+                        CheckRrsigsResult::Done => Ok(AutoReportRrsigResult::WaitSoa {
                             next: UnixTime::now(),
                             serial,
                             ttl: r.ttl(),
                             report_ttl: max_ttl,
-                        },
+                        }),
                         CheckRrsigsResult::WaitRecord { name, rtype } => {
-                            AutoReportRrsigResult::WaitRecord {
+                            Ok(AutoReportRrsigResult::WaitRecord {
                                 next: UnixTime::now() + r.ttl().into(),
                                 name,
                                 rtype,
                                 ttl: r.ttl(),
-                            }
+                            })
                         }
-                        CheckRrsigsResult::WaitNextSerial { .. } => {
-                            AutoReportRrsigResult::WaitNextSerial {
+                        CheckRrsigsResult::WaitNextSerial => {
+                            Ok(AutoReportRrsigResult::WaitNextSerial {
                                 next: UnixTime::now() + r.ttl().into(),
                                 serial,
                                 ttl: r.ttl(),
-                            }
+                            })
                         }
                     };
                 }
@@ -3245,7 +3266,7 @@ async fn check_zone(kss: &KeySetState) -> AutoReportRrsigResult {
         }
     }
 
-    todo!();
+    Err(format!("AXFR for {zone} failed for all addresses {addresses:?}").into())
 }
 
 async fn addresses_for_zone(zone: &impl ToName) -> HashSet<IpAddr> {
@@ -3375,10 +3396,12 @@ async fn check_dnskey_for_address(
             continue;
         }
     }
-    if target_dnskey.is_empty() {
-        AutoReportActionsResult::Report(max_ttl)
+    if let Some(record) = target_dnskey.iter().next() {
+        // Not all DNSKEY records were found.
+        warn!("Not all required DNSKEY records were found for {zone}");
+        AutoReportActionsResult::Wait(UnixTime::now() + record.ttl().into())
     } else {
-        todo!();
+        AutoReportActionsResult::Report(max_ttl)
     }
 }
 
@@ -3608,7 +3631,7 @@ async fn auto_report_expire_done(
                     continue;
                 }
                 let actions = actions.map_err::<Error, _>(|e| {
-                    format!("cache_expired[12] failed for state {:?}: {e}", r).into()
+                    format!("cache_expired[12] failed for state {r:?}: {e}").into()
                 })?;
                 handle_actions(&actions, ksc, kss, env)?;
                 // Report actions
@@ -3729,7 +3752,7 @@ fn cron_next_auto_report_expire_done(
                     continue;
                 }
                 let _ = actions.map_err::<Error, _>(|e| {
-                    format!("cache_expired[12] failed for state {:?}: {e}", r).into()
+                    format!("cache_expired[12] failed for state {r:?}: {e}").into()
                 })?;
 
                 // Time to call cron. Report the current time.
@@ -3807,11 +3830,13 @@ fn check_rrsigs(
                 // These rtypes are signed with the KSKs
                 continue;
             }
-            let Some(set) = sigmap.get(&(key.clone(), rtype)) else {
+            let set = if let Some(set) = sigmap.get(&(key.clone(), rtype)) {
+                set.clone()
+            } else {
                 warn!("RRSIG not found for {key}/{rtype}");
-                todo!();
+                HashSet::new()
             };
-            if *set != expected_set {
+            if set != expected_set {
                 if rtype != Rtype::NSEC3 {
                     warn!(
                         "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
@@ -3836,11 +3861,15 @@ fn check_rrsigs(
     result
 }
 
-async fn check_record(name: &Name<Vec<u8>>, rtype: &Rtype, kss: &KeySetState) -> bool {
+async fn check_record(
+    name: &Name<Vec<u8>>,
+    rtype: &Rtype,
+    kss: &KeySetState,
+) -> Result<bool, Error> {
     let expected = get_expected_zsk_key_tags(kss);
-    let addresses = get_primary_addresses(kss.keyset.name()).await;
-    for address in addresses {
-        let server_addr = SocketAddr::new(address, 53);
+    let addresses = get_primary_addresses(kss.keyset.name()).await.unwrap();
+    for address in &addresses {
+        let server_addr = SocketAddr::new(*address, 53);
         let udp_connect = UdpConnect::new(server_addr);
         let tcp_connect = TcpConnect::new(server_addr);
         let (udptcp_conn, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
@@ -3864,16 +3893,16 @@ async fn check_record(name: &Name<Vec<u8>>, rtype: &Rtype, kss: &KeySetState) ->
             }
             alg_tag_set.insert((r.data().algorithm(), r.data().key_tag()));
         }
-        return alg_tag_set == expected;
+        return Ok(alg_tag_set == expected);
     }
-    todo!();
+    Err(format!("lookup of {name}/{rtype} failed for all addresses {addresses:?}").into())
 }
 
-async fn check_next_serial(serial: Serial, kss: &KeySetState) -> bool {
+async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
     let zone = kss.keyset.name();
-    let addresses = get_primary_addresses(zone).await;
-    for address in addresses {
-        let server_addr = SocketAddr::new(address, 53);
+    let addresses = get_primary_addresses(zone).await?;
+    for address in &addresses {
+        let server_addr = SocketAddr::new(*address, 53);
         let udp_connect = UdpConnect::new(server_addr);
         let tcp_connect = TcpConnect::new(server_addr);
         let (udptcp_conn, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
@@ -3889,12 +3918,12 @@ async fn check_next_serial(serial: Serial, kss: &KeySetState) -> bool {
 
         for r in response.answer().unwrap().limit_to_in::<Soa<_>>() {
             let r = r.unwrap();
-            return r.data().serial() > serial;
+            return Ok(r.data().serial() > serial);
         }
         warn!("No SOA record in reply to SOA query for zone {zone}");
-        return false;
+        return Ok(false);
     }
-    todo!();
+    Err(format!("lookup of {zone}/SOA failed for all addresses {addresses:?}").into())
 }
 
 async fn check_soa(serial: Serial, kss: &KeySetState) -> bool {
@@ -3937,7 +3966,7 @@ fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u
         .collect()
 }
 
-async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Vec<IpAddr> {
+async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Error> {
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::SOA)).await.unwrap();
     dbg!(&answer.answer());
@@ -3948,10 +3977,15 @@ async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Vec<IpAddr> {
         .map(|r| r.map(|r| r.data().mname().clone()))
         .next()
     else {
-        todo!();
+        let rcode = answer.opt_rcode();
+        return if rcode != OptRcode::NOERROR {
+            Err(format!("Unable to resolve {zone}/SOA: {rcode}").into())
+        } else {
+            Err(format!("No result for {zone}/SOA").into())
+        };
     };
 
-    addresses_for_name(&resolver, mname).await
+    Ok(addresses_for_name(&resolver, mname).await)
 }
 
 fn algorithm_roll_needed(ksc: &KeySetConfig, kss: &KeySetState) -> bool {
@@ -3960,7 +3994,7 @@ fn algorithm_roll_needed(ksc: &KeySetConfig, kss: &KeySetState) -> bool {
     let curr_algs: HashSet<_> = kss
         .keyset
         .keys()
-        .into_iter()
+        .iter()
         .filter_map(|(_, k)| {
             if let Some(keystate) = match k.keytype() {
                 KeyType::Ksk(keystate) => Some(keystate),
