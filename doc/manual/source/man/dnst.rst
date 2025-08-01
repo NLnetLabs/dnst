@@ -17,8 +17,20 @@ managing DNS servers and DNS zones.
 Please consult the manual pages for these individual commands for more
 information.
 
-dnst Commands
--------------
+Options
+-------
+
+.. option:: -h, --help
+
+      Print the help text (short summary with ``-h``, long help with
+      ``--help``).
+
+.. option:: -V, --version
+
+      Print the version.
+
+Commands
+--------
 
 .. glossary::
 
