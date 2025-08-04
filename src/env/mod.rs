@@ -96,17 +96,13 @@ impl<T: io::Write> io::Write for &Stream<T> {
 
 impl<T: io::Write> Stream<T> {
     pub fn write_fmt(&mut self, args: fmt::Arguments<'_>) {
-        // This unwrap is not _really_ safe, but we are using this as stdout.
-        // The `println` macro also ignores errors and `push_str` of the
-        // fake stream also does not return an error. If this fails, it means
-        // we can't write to stdout anymore so a graceful exit will be very
-        // hard anyway.
-        self.writer
-            .lock()
-            .unwrap()
-            .deref_mut()
-            .write_fmt(args)
-            .unwrap();
+        if let Err(e) = self.writer.lock().unwrap().deref_mut().write_fmt(args) {
+            // This will panic, if stderr is also broken, but then neither the
+            // panic nor this error would be printed out.
+            eprintln!("failed printing to stdout: {e}");
+            // using exit(101) to replicate rust's default error exit code
+            std::process::exit(101);
+        }
     }
 
     pub fn is_terminal(&self) -> bool {
