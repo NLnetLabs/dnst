@@ -357,7 +357,7 @@ impl Keygen {
         let algorithm = public_key.algorithm();
         let secret_key = secret_key.display_as_bind().to_string();
         let public_key = format!(
-            "{} IN DNSKEY {}",
+            "{} IN DNSKEY {}\n",
             self.name.fmt_with_dot(),
             public_key.display_zonefile(DisplayKind::Simple)
         );
@@ -612,7 +612,7 @@ mod test {
 
         let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
         let public_key_regex =
-            Regex::new(r"^example.org. IN DNSKEY 256 3 15 [A-Za-z0-9/+=]+").unwrap();
+            Regex::new(r"^example.org. IN DNSKEY 256 3 15 [A-Za-z0-9/+=]+\n$").unwrap();
         let secret_key_regex = Regex::new(
             r"^Private-key-format: v1\.2\nAlgorithm: 15 \(ED25519\)\nPrivateKey: [A-Za-z0-9/+=]+\n$",
         )
@@ -644,7 +644,7 @@ mod test {
 
         let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
         let public_key_regex =
-            Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
+            Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+\n$").unwrap();
         let digest_key_regex =
             Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
 
