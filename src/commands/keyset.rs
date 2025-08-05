@@ -348,6 +348,8 @@ impl Keyset {
                     return Err("already initialized\n".into());
                 }
 
+                // XXX create common function for new CSK keys.
+
                 // Check for CSK.
                 let actions = if ksc.use_csk {
                     // Generate CSK.
@@ -418,6 +420,8 @@ impl Keyset {
                 };
 
                 handle_actions(&actions, &ksc, &mut kss, env)?;
+                kss.internal
+                    .insert(RollType::AlgorithmRoll, Default::default());
 
                 print_actions(&actions);
                 state_changed = true;
@@ -435,7 +439,7 @@ impl Keyset {
                 state_changed = true;
             }
             Commands::StartCskRoll => {
-                let actions = start_zsk_roll(&ksc, &mut kss, env)?;
+                let actions = start_csk_roll(&ksc, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -2000,7 +2004,7 @@ async fn auto_actions(
                 // Note, an extra scope here to make clippy happy. Otherwise
                 // clippy thinks that the lock is used across an await point.
                 {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
                             AutoReportActionsResult::Wait(next) => {
@@ -2019,7 +2023,7 @@ async fn auto_actions(
 
                 dbg!(&result);
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.dnskey = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2032,7 +2036,7 @@ async fn auto_actions(
             Action::WaitDsPropagated => {
                 // Clippy problem
                 {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
                             AutoReportActionsResult::Wait(next) => {
@@ -2046,9 +2050,9 @@ async fn auto_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_ds_propagated(kss).await;
+                let result = report_ds_propagated(kss).await.unwrap();
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.ds = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2061,7 +2065,7 @@ async fn auto_actions(
             Action::WaitRrsigPropagated => {
                 // Clippy problem
                 let opt_rrsig_status = {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     // Make a copy of the state. We need to release the lock
                     // before calling await.
                     let opt_rrsig_status = report_state_locked.rrsig.clone();
@@ -2090,7 +2094,8 @@ async fn auto_actions(
                             dbg!(format!("got {res} for {serial}"));
                             if res {
                                 dbg!("Setting rrsig to Report");
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::Report(report_ttl));
                                 drop(report_state_locked);
@@ -2099,7 +2104,8 @@ async fn auto_actions(
                             } else {
                                 let next = UnixTime::now() + ttl.into();
                                 dbg!("Setting rrsig to WaitSoa");
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
                                     next: next.clone(),
                                     serial,
@@ -2120,10 +2126,14 @@ async fn auto_actions(
                             if next > UnixTime::now() {
                                 return AutoActionsResult::Wait(next.clone());
                             }
-                            let res = check_record(&name, &rtype, kss).await.unwrap();
+                            let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
+                                warn!("record check failed: {e}");
+                                false
+                            });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitRecord {
                                         next: next.clone(),
@@ -2143,10 +2153,14 @@ async fn auto_actions(
                             if next > UnixTime::now() {
                                 return AutoActionsResult::Wait(next.clone());
                             }
-                            let res = check_next_serial(serial, kss).await.unwrap();
+                            let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
+                                warn!("next serial check failed: {e}");
+                                false
+                            });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitNextSerial {
                                         next: next.clone(),
@@ -2163,9 +2177,12 @@ async fn auto_actions(
                     }
                 }
 
-                let result = report_rrsig_propagated(kss).await.unwrap();
+                let result = report_rrsig_propagated(kss).await.unwrap_or_else(|e| {
+                    warn!("Check RRSIG propagation failed: {e}");
+                    AutoReportRrsigResult::Wait(UnixTime::now() + DEFAULT_WAIT)
+                });
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 dbg!("Setting rrsig to WaitSoa");
                 report_state_locked.rrsig = Some(result.clone());
                 drop(report_state_locked);
@@ -2204,7 +2221,7 @@ async fn auto_report_actions(
             Action::ReportDnskeyPropagated => {
                 // Clippy problem
                 {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
                             AutoReportActionsResult::Wait(next) => {
@@ -2223,7 +2240,7 @@ async fn auto_report_actions(
 
                 let result = report_dnskey_propagated(kss).await;
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.dnskey = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2238,7 +2255,7 @@ async fn auto_report_actions(
             Action::ReportDsPropagated => {
                 // Clippy problem
                 {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
                             AutoReportActionsResult::Wait(next) => {
@@ -2255,9 +2272,12 @@ async fn auto_report_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_ds_propagated(kss).await;
+                let result = report_ds_propagated(kss).await.unwrap_or_else(|e| {
+                    warn!("Check DS propagation failed: {e}");
+                    AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT)
+                });
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.ds = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2272,7 +2292,7 @@ async fn auto_report_actions(
             Action::ReportRrsigPropagated => {
                 // Clippy problem
                 let opt_rrsig_status = {
-                    let report_state_locked = report_state.lock().unwrap();
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
                     // Make a copy of the state. We need to release the lock
                     // before calling await.
                     let opt_rrsig_status = report_state_locked.rrsig.clone();
@@ -2304,7 +2324,8 @@ async fn auto_report_actions(
                             dbg!(format!("got {res} for {serial}"));
                             if res {
                                 dbg!("Setting rrsig to Report");
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::Report(report_ttl));
                                 drop(report_state_locked);
@@ -2314,7 +2335,8 @@ async fn auto_report_actions(
                             } else {
                                 let next = UnixTime::now() + ttl.into();
                                 dbg!("Setting rrsig to WaitSoa");
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
                                     next: next.clone(),
                                     serial,
@@ -2341,7 +2363,8 @@ async fn auto_report_actions(
                             });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitRecord {
                                         next: next.clone(),
@@ -2367,7 +2390,8 @@ async fn auto_report_actions(
                             });
                             if !res {
                                 let next = UnixTime::now() + ttl.into();
-                                let mut report_state_locked = report_state.lock().unwrap();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitNextSerial {
                                         next: next.clone(),
@@ -2389,7 +2413,7 @@ async fn auto_report_actions(
                     AutoReportRrsigResult::Wait(UnixTime::now() + DEFAULT_WAIT)
                 });
 
-                let mut report_state_locked = report_state.lock().unwrap();
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 dbg!("Setting rrsig to WaitSoa");
                 report_state_locked.rrsig = Some(result.clone());
                 drop(report_state_locked);
@@ -2433,7 +2457,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
             | Action::UpdateDsRrset
             | Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
-                let report_state_locked = report_state.lock().unwrap();
+                let report_state_locked = report_state.lock().expect("lock() should not fail");
                 if let Some(dnskey_status) = &report_state_locked.dnskey {
                     match dnskey_status {
                         AutoReportActionsResult::Wait(next) => {
@@ -2448,7 +2472,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                 return AutoActionsResult::Wait(UnixTime::now());
             }
             Action::ReportDsPropagated | Action::WaitDsPropagated => {
-                let report_state_locked = report_state.lock().unwrap();
+                let report_state_locked = report_state.lock().expect("lock() should not fail");
                 if let Some(ds_status) = &report_state_locked.ds {
                     match ds_status {
                         AutoReportActionsResult::Wait(next) => {
@@ -2463,7 +2487,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
                 return AutoActionsResult::Wait(UnixTime::now());
             }
             Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
-                let report_state_locked = report_state.lock().unwrap();
+                let report_state_locked = report_state.lock().expect("lock() should not fail");
                 if let Some(rrsig_status) = &report_state_locked.rrsig {
                     match rrsig_status {
                         AutoReportRrsigResult::Wait(next)
@@ -2657,12 +2681,13 @@ fn start_zsk_roll(
     }
 
     // Refuse if we can find a CSK key.
-    if kss
-        .keyset
-        .keys()
-        .iter()
-        .any(|(_, key)| matches!(key.keytype(), KeyType::Csk(_, _)))
-    {
+    if kss.keyset.keys().iter().any(|(_, key)| {
+        if let KeyType::Csk(keystate, _) = key.keytype() {
+            !keystate.stale()
+        } else {
+            false
+        }
+    }) {
         return Err(format!("cannot start {roll_type:?} roll, found CSK\n").into());
     }
 
@@ -3056,7 +3081,7 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
     todo!();
 }
 
-async fn report_ds_propagated(kss: &KeySetState) -> AutoReportActionsResult {
+async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResult, Error> {
     // Convert the CDNSKEY RRset into a HashSet.
     // Find the name of the parent zone.
     // Find the address of all name servers of the parent zone.
@@ -3078,7 +3103,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> AutoReportActionsResult {
     }
 
     let zone = kss.keyset.name();
-    let parent_zone = parent_zone(zone).unwrap();
+    let parent_zone = parent_zone(zone).await?;
     let addresses = addresses_for_zone(&parent_zone).await;
     dbg!(&addresses);
     let futures: Vec<_> = addresses
@@ -3091,7 +3116,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> AutoReportActionsResult {
     for r in res {
         match r {
             // It doesn't really matter how long we have to wait.
-            AutoReportActionsResult::Wait(_) => return r,
+            AutoReportActionsResult::Wait(_) => return Ok(r),
             AutoReportActionsResult::Report(ttl) => {
                 max_ttl = max(max_ttl, ttl);
                 found_report = true;
@@ -3100,7 +3125,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> AutoReportActionsResult {
     }
 
     if found_report {
-        return AutoReportActionsResult::Report(max_ttl);
+        return Ok(AutoReportActionsResult::Report(max_ttl));
     }
 
     todo!();
@@ -3282,6 +3307,7 @@ async fn addresses_for_zone(zone: &impl ToName) -> HashSet<IpAddr> {
     // Current method, ask a resolver for the apex NS RRset. Loop over the
     // set and ask for addresses. Return the list of addresses.
 
+    dbg!(zone.to_name::<Vec<u8>>());
     let mut nameservers = Vec::new();
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::NS)).await.unwrap();
@@ -3300,6 +3326,7 @@ async fn addresses_for_zone(zone: &impl ToName) -> HashSet<IpAddr> {
         }
         nameservers.push(ns.nsdname().clone());
     }
+    dbg!(&nameservers);
 
     let mut futures = Vec::new();
     for n in nameservers {
@@ -3506,8 +3533,45 @@ async fn check_soa_for_address(
     AutoReportActionsResult::Report(Ttl::from_secs(0))
 }
 
-fn parent_zone(name: &Name<Vec<u8>>) -> Option<Name<&[u8]>> {
-    name.parent()
+async fn parent_zone(name: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
+    let parent = name
+        .parent()
+        .ok_or_else::<Error, _>(|| format!("unable to get parent of {name}").into())?;
+
+    let resolver = StubResolver::new();
+    let answer = resolver.query((parent, Rtype::SOA)).await.unwrap();
+    dbg!(&answer.answer());
+    if let Some(Ok(owner)) = answer
+        .answer()
+        .unwrap()
+        .limit_to_in::<Soa<_>>()
+        .map(|r| r.map(|r| r.owner().to_name::<Vec<u8>>()))
+        .next()
+    {
+        return Ok(owner);
+    }
+
+    // Try the authority section.
+    if let Some(Ok(owner)) = answer
+        .authority()
+        .unwrap()
+        .limit_to_in::<Soa<_>>()
+        .map(|r| r.map(|r| r.owner().to_name::<Vec<u8>>()))
+        .next()
+    {
+        return Ok(owner);
+    }
+    todo!();
+    /*
+        else {
+            let rcode = answer.opt_rcode();
+            return if rcode != OptRcode::NOERROR {
+                Err(format!("Unable to resolve {zone}/SOA: {rcode}").into())
+            } else {
+                Err(format!("No result for {zone}/SOA").into())
+            };
+        };
+    */
 }
 
 fn auto_start<Env>(
@@ -3817,7 +3881,7 @@ fn check_rrsigs(
                 // NS is not signed. A and AAAA are glue.
                 if rtype == Rtype::NS || rtype == Rtype::A || rtype == Rtype::AAAA {
                     continue;
-                } else if rtype == Rtype::DS {
+                } else if rtype == Rtype::DS || rtype == Rtype::NSEC {
                     // DS records are signed. Just keep going.
                 } else {
                     error!("Weird type {rtype} in delegation {}", &key);
