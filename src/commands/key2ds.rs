@@ -45,6 +45,9 @@ pub struct Key2ds {
     /// Keyfile to read
     #[arg()]
     keyfile: PathBuf,
+
+    #[arg(skip = false)]
+    invoked_as_ldns: bool,
 }
 
 pub fn parse_digest_alg(arg: &str) -> Result<DigestAlgorithm, Error> {
@@ -123,6 +126,7 @@ impl LdnsCommand for Key2ds {
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
+            invoked_as_ldns: true,
         })))
     }
 }
@@ -185,7 +189,19 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(DisplayKind::Simple));
+                if self.invoked_as_ldns {
+                    writeln!(
+                        env.stdout(),
+                        "{} {} {} {} {}",
+                        rr.owner().fmt_with_dot(),
+                        rr.ttl().as_secs(),
+                        rr.class(),
+                        rr.rtype(),
+                        rr.data()
+                    );
+                } else {
+                    writeln!(env.stdout(), "{}", rr.display_zonefile(DisplayKind::Simple));
+                }
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -215,8 +231,21 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(DisplayKind::Simple))
+                if self.invoked_as_ldns {
+                    writeln!(
+                        out_file,
+                        "{} {} {} {} {}",
+                        rr.owner().fmt_with_dot(),
+                        rr.ttl().as_secs(),
+                        rr.class(),
+                        rr.rtype(),
+                        rr.data()
+                    )
                     .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                } else {
+                    writeln!(out_file, "{}", rr.display_zonefile(DisplayKind::Simple))
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                }
 
                 writeln!(env.stdout(), "{keyname}");
             }
@@ -276,6 +305,7 @@ mod test {
             force_overwrite: false,
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: false,
         };
 
         // Check the defaults
@@ -365,6 +395,7 @@ mod test {
             force_overwrite: true, // note that this is true
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: true,
         };
 
         // Check the defaults
@@ -499,5 +530,30 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
         assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn ldns_lowercase_digest() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["ldns-key2ds", "-n", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            "example.test. 3600 IN DS 60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n"
+        );
+        assert_eq!(res.stderr, "");
+
+        let res = FakeCmd::new(["ldns-key2ds", "key1.key"]).cwd(&dir).run();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
+        assert_eq!(res.stderr, "");
+
+        let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
+        assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n");
     }
 }
