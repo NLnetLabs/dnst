@@ -279,12 +279,11 @@ jobs:
       #   # See <https://github.com/actions/runner-images/issues/12432>
       #   echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld" >> "$GITHUB_ENV"
       id: vcpkg
-      uses: johnwason/vcpkg-action@v6
+      uses: johnwason/vcpkg-action@v7
       with:
         pkgs: openssl
         triplet: ${{ env.VCPKGRS_TRIPLET }}
         token: ${{ github.token }}
-        github-binarycache: true
 
     - name: Install OpenSSL
       if: matrix.os == 'ubuntu-latest'
@@ -396,12 +395,11 @@ jobs:
       #   mkdir -p .cargo
       #   printf '[target.x86_64-pc-windows-msvc]\nlinker = "rust-lld"\n' >> .cargo/config.toml
       id: vcpkg
-      uses: johnwason/vcpkg-action@v6
+      uses: johnwason/vcpkg-action@v7
       with:
         pkgs: openssl
         triplet: ${{ env.VCPKGRS_TRIPLET }}
         token: ${{ github.token }}
-        github-binarycache: true
 
     - name: Install OpenSSL
       if: matrix.os == 'ubuntu-latest'
