@@ -1264,7 +1264,21 @@ impl SignZone {
                             && rrset.owner() == apex)
                 }) {
                     for rr in rrset.iter() {
-                        self.write_rr(&mut writer, rr)?;
+                        if self.invoked_as_ldns {
+                            if let ZoneRecordData::Nsec3(nsec3) = rr.data() {
+                                let rr =
+                                    Record::new(rr.owner(), rr.class(), rr.ttl(), LdnsNsec3(nsec3));
+                                writer.write_fmt(format_args!(
+                                    "{}",
+                                    rr.display_zonefile(DISPLAY_KIND)
+                                ))?;
+                            } else {
+                                self.write_rr(&mut writer, rr)?;
+                            }
+                        } else {
+                            self.write_rr(&mut writer, rr)?;
+                        }
+
                         match rr.data() {
                             ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
                                 nsec3.comment(&mut writer, rr, nsec3_cs)?
@@ -1282,6 +1296,7 @@ impl SignZone {
                         }
                         writer.write_str("\n")?;
                     }
+
                     // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
                     for covering_rrsigs in owner_rrs
                         .rrsets()
@@ -2074,6 +2089,52 @@ impl<O: AsRef<[u8]>, N: ToName> ZonefileFmt for YyyyMmDdHhMMSsRrsig<'_, O, N> {
 impl<O, N> RecordData for YyyyMmDdHhMMSsRrsig<'_, O, N> {
     fn rtype(&self) -> Rtype {
         Rtype::RRSIG
+    }
+}
+
+//------------ LdnsNsec3 -----------------------------------------------------
+
+/// A wrapper around Nsec3 to print the Nsec3 data in the exact format used by
+/// ldns-signzone with all its quirks.
+struct LdnsNsec3<'a, O>(&'a Nsec3<O>);
+
+impl<O: AsRef<[u8]>> ZonefileFmt for LdnsNsec3<'_, O> {
+    fn fmt(&self, p: &mut impl Formatter) -> zonefile_fmt::Result {
+        // This block of code was copied from the `domain` crate impl of
+        // `Zonefilefmt` for domain::rdata::nsec3::Nsec3 and adapted for
+        // ldns output format.
+        p.block(|p| {
+            p.write_show(self.0.hash_algorithm())?;
+            p.write_token(self.0.flags())?;
+            p.write_comment(format_args!(
+                "flags: {}",
+                if self.0.opt_out() {
+                    "opt-out"
+                } else {
+                    "<none>"
+                }
+            ))?;
+            p.write_token(self.0.iterations())?;
+            p.write_comment("iterations")?;
+            p.write_show(self.0.salt())?;
+            p.write_token(format!(
+                " {}",
+                domain::utils::base32::encode_display_hex(&self.0.next_owner())
+                    .to_string()
+                    .to_lowercase()
+            ))?;
+            p.write_show(self.0.types())?;
+            // ldns-signzone ends its NSEC3 rtype bitmap with a trailing
+            // space. Adding an empty token, because the formatter will add
+            // a space as a delimiter.
+            p.write_token("")
+        })
+    }
+}
+
+impl<O> RecordData for LdnsNsec3<'_, O> {
+    fn rtype(&self) -> Rtype {
+        Rtype::NSEC3
     }
 }
 
@@ -3011,14 +3072,14 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
 
         // (dnst) ldns-signzone -np -f - -e 20241127162422 -i 20241127162422 nsec3_optout1_example.org.zone ksk1 | grep NSEC3
         let ldns_dnst_output_stripped: &str = "\
-            example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. 0XdDm1l2Mm8dyhtzbyQb91CmyNONs8lc9d22FUGvpjfqo8T2h0xs04x5MIfP0DjmiVnNqIyPK6sipnDqf6tCDg==\n\
             example.org.\t3600\tIN\tNSEC3PARAM\t1 1 1 -\n\
+            example.org.\t3600\tIN\tRRSIG\tNSEC3PARAM 15 2 3600 20241127162422 20241127162422 38873 example.org. 0XdDm1l2Mm8dyhtzbyQb91CmyNONs8lc9d22FUGvpjfqo8T2h0xs04x5MIfP0DjmiVnNqIyPK6sipnDqf6tCDg==\n\
+            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1 1 1 -  k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue A NS SOA RRSIG DNSKEY NSEC3PARAM \n\
             93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. z4ceUmbSZiSnluFj8CDJ7B9fukCR2flTWgca4GE2xrw48+fiieH/04xCKhJmDRJUJTVkKtIYpB4p0Q4m60M1Cg==\n\
-            93u63bg57ppj6649al2n31l92iedkjd6.example.org.\t240\tIN\tNSEC3\t1 1 1 - K71KU6AICR5JPDJOE9J7CDNLK6D5C3UE A NS SOA RRSIG DNSKEY NSEC3PARAM\n\
+            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tNSEC3\t1 1 1 -  ojicmhri4vp8po7h2kvej99sklqnj5p2 NS \n\
             k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. HUrf7tOm3simXqpZj1oZeKX/P3eWoTTKc3fsyqfuLD6sGssXrBfpv1/LINBR9eEBjJ9rFbQXILgweS6huBL/Ag==\n\
-            k71ku6aicr5jpdjoe9j7cdnlk6d5c3ue.example.org.\t240\tIN\tNSEC3\t1 1 1 - OJICMHRI4VP8PO7H2KVEJ99SKLQNJ5P2 NS\n\
+            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tNSEC3\t1 1 1 -  93u63bg57ppj6649al2n31l92iedkjd6 NS DS RRSIG \n\
             ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tRRSIG\tNSEC3 15 3 240 20241127162422 20241127162422 38873 example.org. NG/8jk3UHht1ZYNEjUZ4swaEHea1amF4l3jZ893oARi95oxtPVLKoinVbBbfVuoanicOgeZxUPpKWHMBR12XDA==\n\
-            ojicmhri4vp8po7h2kvej99sklqnj5p2.example.org.\t240\tIN\tNSEC3\t1 1 1 - 93U63BG57PPJ6649AL2N31L92IEDKJD6 NS DS RRSIG\n\
             ";
 
         let res = FakeCmd::new([
