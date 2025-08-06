@@ -2070,23 +2070,9 @@ fn kmip_get_dnskey(
     flags: u16,
     kmip_conn_pool: SyncConnPool,
 ) -> Result<Dnskey<Vec<u8>>, Error> {
-    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool);
-    let mut retries = 3;
-    let dnskey = loop {
-        match public_key.dnskey(flags) {
-            Ok(dnskey) => break dnskey,
-            Err(err) if retries == 0 => {
-                Err(format!(
-                    "Error while trying to determine KMIP dnskey: {err}"
-                ))?;
-                tokio::task::spawn_blocking(|| {
-                    std::thread::sleep(Duration::from_secs(3));
-                });
-            }
-            Err(_) => retries -= 1,
-        }
-    };
-    Ok(dnskey)
+    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool)
+        .map_err::<Error, _>(|err| format!("unable to fetch KMIP public key: {err}").into())?;
+    Ok(public_key.dnskey(flags))
 }
 
 fn create_cds_rrset(
