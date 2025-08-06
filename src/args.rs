@@ -10,6 +10,15 @@ use clap::Parser;
 pub struct Args {
     #[command(subcommand)]
     pub command: Command,
+
+    /// Verbosity. 0-5 or level name ("off" to "trace")
+    #[arg(
+        short = 'v',
+        long = "verbosity",
+        value_name = "level",
+        default_value_t = tracing_subscriber::filter::LevelFilter::from_level(tracing::Level::WARN),
+    )]
+    pub verbosity: tracing_subscriber::filter::LevelFilter,
 }
 
 impl Args {
@@ -20,6 +29,9 @@ impl Args {
 
 impl From<Command> for Args {
     fn from(value: Command) -> Self {
-        Args { command: value }
+        Args {
+            command: value,
+            verbosity: tracing_subscriber::filter::LevelFilter::from_level(tracing::Level::WARN),
+        }
     }
 }
