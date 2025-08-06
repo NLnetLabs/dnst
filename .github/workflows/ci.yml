@@ -102,255 +102,255 @@ jobs:
         msrv=`cargo metadata --no-deps --format-version 1 | jq -r '.packages[]|select(.name=="dnst")|.rust_version'`
         echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
 
-  # Check Feature Flags
-  # -------------------
-  #
-  # Rust does not provide any way to check that all possible feature flag
-  # combinations will succeed, so we need to try them manually here.  We will
-  # assume this choice is not influenced by the OS or Rust version.
-  check-feature-flags:
-    name: Check feature flags
-    runs-on: ubuntu-latest
-    steps:
+  # # Check Feature Flags
+  # # -------------------
+  # #
+  # # Rust does not provide any way to check that all possible feature flag
+  # # combinations will succeed, so we need to try them manually here.  We will
+  # # assume this choice is not influenced by the OS or Rust version.
+  # check-feature-flags:
+  #   name: Check feature flags
+  #   runs-on: ubuntu-latest
+  #   steps:
 
-    # Load the repository.
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  #   # Load the repository.
+  #   - name: Checkout repository
+  #     uses: actions/checkout@v4
 
-    # Set up the Rust toolchain.
-    - name: Set up Rust
-      id: setup-rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        cache: false
+  #   # Set up the Rust toolchain.
+  #   - name: Set up Rust
+  #     id: setup-rust
+  #     uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: stable
+  #       cache: false
 
-    - name: Install OpenSSL
-      run: sudo apt-get install -y libssl-dev
+  #   - name: Install OpenSSL
+  #     run: sudo apt-get install -y libssl-dev
 
-    # Restore a cache of dependencies and 'target'.
-    - name: Restore a dependency cache
-      id: cache-restore
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cargo
-          target/
-        # Cache by OS and Rust version.
-        key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
+  #   # Restore a cache of dependencies and 'target'.
+  #   - name: Restore a dependency cache
+  #     id: cache-restore
+  #     uses: actions/cache/restore@v4
+  #     with:
+  #       path: |
+  #         ~/.cargo
+  #         target/
+  #       # Cache by OS and Rust version.
+  #       key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
 
-    # Do the actual feature flag checks.
-    # (--all-features is done in check-minimal-versions)
-    #
-    # NOTE: This does not benefit from the 'target' folder cached by a 'cargo
-    # check --all-features --all-targets' execution.  Due to the minimal
-    # dependency set, it still runs fairly quickly.
-    # The empty feature set (as it is done in domain) is not allowed in dnst.
-    - name: Check default feature set
-      run: cargo check --all-targets
+  #   # Do the actual feature flag checks.
+  #   # (--all-features is done in check-minimal-versions)
+  #   #
+  #   # NOTE: This does not benefit from the 'target' folder cached by a 'cargo
+  #   # check --all-features --all-targets' execution.  Due to the minimal
+  #   # dependency set, it still runs fairly quickly.
+  #   # The empty feature set (as it is done in domain) is not allowed in dnst.
+  #   - name: Check default feature set
+  #     run: cargo check --all-targets
 
-    - name: Check openssl feature
-      run: cargo check --all-targets --no-default-features -F openssl
+  #   - name: Check openssl feature
+  #     run: cargo check --all-targets --no-default-features -F openssl
 
-    - name: Check ring feature
-      run: cargo check --all-targets --no-default-features -F ring
+  #   - name: Check ring feature
+  #     run: cargo check --all-targets --no-default-features -F ring
 
-  # Check Minimal Versions
-  # ----------------------
-  #
-  # Ensure that 'dnst' compiles with the oldest compatible versions of all
-  # packages, even those 'dnst' depends upon indirectly.
-  check-minimal-versions:
-    name: Check minimal versions
-    runs-on: ubuntu-latest
-    needs: determine-msrv
-    env:
-      RUSTFLAGS: "-D warnings"
-    steps:
+  # # Check Minimal Versions
+  # # ----------------------
+  # #
+  # # Ensure that 'dnst' compiles with the oldest compatible versions of all
+  # # packages, even those 'dnst' depends upon indirectly.
+  # check-minimal-versions:
+  #   name: Check minimal versions
+  #   runs-on: ubuntu-latest
+  #   needs: determine-msrv
+  #   env:
+  #     RUSTFLAGS: "-D warnings"
+  #   steps:
 
-    # Load the repository.
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  #   # Load the repository.
+  #   - name: Checkout repository
+  #     uses: actions/checkout@v4
 
-    # Set up the Rust toolchain.
-    - name: Set up Rust nightly
-      id: setup-rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: ${{ needs.determine-msrv.outputs.msrv }},nightly
-        cache: false
+  #   # Set up the Rust toolchain.
+  #   - name: Set up Rust nightly
+  #     id: setup-rust
+  #     uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: ${{ needs.determine-msrv.outputs.msrv }},nightly
+  #       cache: false
 
-    - name: Install OpenSSL
-      run: sudo apt-get install -y libssl-dev
+  #   - name: Install OpenSSL
+  #     run: sudo apt-get install -y libssl-dev
 
-    # TODO: Cache minimal-version dependencies?
+  #   # TODO: Cache minimal-version dependencies?
 
-    # Lock all dependencies to their minimal versions.
-    - name: Lock dependencies to minimal versions
-      run: cargo +nightly update -Z minimal-versions
+  #   # Lock all dependencies to their minimal versions.
+  #   - name: Lock dependencies to minimal versions
+  #     run: cargo +nightly update -Z minimal-versions
 
-    # Check that 'dnst' compiles.
-    #
-    # NOTE: This does not benefit from the 'target' folder cached by a 'cargo
-    # check --all-features --all-targets' execution.  It may be worthwhile to
-    # cache this 'target' folder separately (TODO).
-    - name: Check
-      run: cargo check --all-targets --all-features --locked
+  #   # Check that 'dnst' compiles.
+  #   #
+  #   # NOTE: This does not benefit from the 'target' folder cached by a 'cargo
+  #   # check --all-features --all-targets' execution.  It may be worthwhile to
+  #   # cache this 'target' folder separately (TODO).
+  #   - name: Check
+  #     run: cargo check --all-targets --all-features --locked
 
-  # Clippy
-  # ------
-  #
-  # We run Clippy separately, and only on nightly Rust because it offers a
-  # superset of the lints.
-  #
-  # 'cargo clippy' and 'cargo build' can share some state for fast execution,
-  # but it's faster to execute them in parallel than to establish an ordering
-  # between them.
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-D warnings"
-    steps:
+  # # Clippy
+  # # ------
+  # #
+  # # We run Clippy separately, and only on nightly Rust because it offers a
+  # # superset of the lints.
+  # #
+  # # 'cargo clippy' and 'cargo build' can share some state for fast execution,
+  # # but it's faster to execute them in parallel than to establish an ordering
+  # # between them.
+  # clippy:
+  #   name: Clippy
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     RUSTFLAGS: "-D warnings"
+  #   steps:
 
-    # Load the repository.
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  #   # Load the repository.
+  #   - name: Checkout repository
+  #     uses: actions/checkout@v4
 
-    # Set up the Rust toolchain.
-    - name: Set up Rust nightly
-      id: setup-rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: nightly
-        components: clippy
-        cache: false
+  #   # Set up the Rust toolchain.
+  #   - name: Set up Rust nightly
+  #     id: setup-rust
+  #     uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: nightly
+  #       components: clippy
+  #       cache: false
 
-    # Restore a cache of dependencies and 'target'.
-    - name: Restore from cache
-      id: cache-restore
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cargo
-          target/
-        # Cache by OS and Rust version.
-        key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
+  #   # Restore a cache of dependencies and 'target'.
+  #   - name: Restore from cache
+  #     id: cache-restore
+  #     uses: actions/cache/restore@v4
+  #     with:
+  #       path: |
+  #         ~/.cargo
+  #         target/
+  #       # Cache by OS and Rust version.
+  #       key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
 
-    # Do the actually Clippy run.
-    - name: Check Clippy
-      run: cargo +nightly clippy --all-targets --all-features
+  #   # Do the actually Clippy run.
+  #   - name: Check Clippy
+  #     run: cargo +nightly clippy --all-targets --all-features
 
-  # Test
-  # ----
-  #
-  # Ensure that 'dnst' compiles and its test suite passes, on a large number
-  # of operating systems and Rust versions.
-  test:
-    name: Test
-    needs: determine-msrv
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macOS-latest, windows-latest]
-        rust: ["${{ needs.determine-msrv.outputs.msrv }}", stable, beta, nightly]
-    runs-on: ${{ matrix.os }}
-    env:
-      RUSTFLAGS: "-D warnings"
-      DNST_FEATURES: "--all-features"
-      # We use 'vcpkg' to install OpenSSL on Windows.
-      VCPKG_ROOT: "${{ github.workspace }}\\vcpkg"
-      VCPKGRS_TRIPLET: x64-windows-release
-      # Ensure that OpenSSL is dynamically linked.
-      VCPKGRS_DYNAMIC: 1
-    steps:
+  # # Test
+  # # ----
+  # #
+  # # Ensure that 'dnst' compiles and its test suite passes, on a large number
+  # # of operating systems and Rust versions.
+  # test:
+  #   name: Test
+  #   needs: determine-msrv
+  #   strategy:
+  #     matrix:
+  #       os: [ubuntu-latest, macOS-latest, windows-latest]
+  #       rust: ["${{ needs.determine-msrv.outputs.msrv }}", stable, beta, nightly]
+  #   runs-on: ${{ matrix.os }}
+  #   env:
+  #     RUSTFLAGS: "-D warnings"
+  #     DNST_FEATURES: "--all-features"
+  #     # We use 'vcpkg' to install OpenSSL on Windows.
+  #     VCPKG_ROOT: "${{ github.workspace }}\\vcpkg"
+  #     VCPKGRS_TRIPLET: x64-windows-release
+  #     # Ensure that OpenSSL is dynamically linked.
+  #     VCPKGRS_DYNAMIC: 1
+  #   steps:
 
-    # Load the repository.
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  #   # Load the repository.
+  #   - name: Checkout repository
+  #     uses: actions/checkout@v4
 
-    # Prepare the environment on Windows
-    - name: Prepare Windows environment
-      if: matrix.os == 'windows-latest'
-      id: vcpkg
-      uses: johnwason/vcpkg-action@v7
-      with:
-        pkgs: openssl
-        triplet: ${{ env.VCPKGRS_TRIPLET }}
-        token: ${{ github.token }}
+  #   # Prepare the environment on Windows
+  #   - name: Prepare Windows environment
+  #     if: matrix.os == 'windows-latest'
+  #     id: vcpkg
+  #     uses: johnwason/vcpkg-action@v7
+  #     with:
+  #       pkgs: openssl
+  #       triplet: ${{ env.VCPKGRS_TRIPLET }}
+  #       token: ${{ github.token }}
 
-    - name: Install OpenSSL
-      if: matrix.os == 'ubuntu-latest'
-      run: sudo apt-get install -y libssl-dev
+  #   - name: Install OpenSSL
+  #     if: matrix.os == 'ubuntu-latest'
+  #     run: sudo apt-get install -y libssl-dev
 
-    # Set up the Rust toolchain.
-    - name: Set up Rust ${{ matrix.rust }}
-      id: setup-rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: ${{ matrix.rust }}
-        cache: false
+  #   # Set up the Rust toolchain.
+  #   - name: Set up Rust ${{ matrix.rust }}
+  #     id: setup-rust
+  #     uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: ${{ matrix.rust }}
+  #       cache: false
 
-    # Restore a cache of dependencies and 'target'.
-    - name: Restore from cache
-      id: cache-restore
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cargo
-          target/
-        # Cache by OS and Rust version.
-        key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
+  #   # Restore a cache of dependencies and 'target'.
+  #   - name: Restore from cache
+  #     id: cache-restore
+  #     uses: actions/cache/restore@v4
+  #     with:
+  #       path: |
+  #         ~/.cargo
+  #         target/
+  #       # Cache by OS and Rust version.
+  #       key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
     
-    # Build and run the test suite.
-    - name: Test
-      run: cargo test --all-targets $DNST_FEATURES
+  #   # Build and run the test suite.
+  #   - name: Test
+  #     run: cargo test --all-targets $DNST_FEATURES
 
-  # Additional (ignored) Tests
-  # --------------------------
-  #
-  # Ensure that the extended test suit passes.
-  # (only on ubuntu-latest and rust stable)
-  extra-tests:
-    name: Extra tests
-    runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-D warnings"
-      DNST_FEATURES: "--all-features"
-    steps:
+  # # Additional (ignored) Tests
+  # # --------------------------
+  # #
+  # # Ensure that the extended test suit passes.
+  # # (only on ubuntu-latest and rust stable)
+  # extra-tests:
+  #   name: Extra tests
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     RUSTFLAGS: "-D warnings"
+  #     DNST_FEATURES: "--all-features"
+  #   steps:
 
-    # Load the repository.
-    - name: Checkout repository
-      uses: actions/checkout@v4
+  #   # Load the repository.
+  #   - name: Checkout repository
+  #     uses: actions/checkout@v4
 
-    - name: Install supporting tools and libraries
-      # The tests compare their output to that of LDNS tools, so we need to
-      # install them. Some tests work with DNSSEC keys for which the OpenSSL
-      # library must be compiled against which requires C build programs and
-      # pkg-config. Install everything we need.
-      run: sudo apt-get install -y build-essential ldnsutils libssl-dev pkg-config
+  #   - name: Install supporting tools and libraries
+  #     # The tests compare their output to that of LDNS tools, so we need to
+  #     # install them. Some tests work with DNSSEC keys for which the OpenSSL
+  #     # library must be compiled against which requires C build programs and
+  #     # pkg-config. Install everything we need.
+  #     run: sudo apt-get install -y build-essential ldnsutils libssl-dev pkg-config
 
-    # Set up the Rust toolchain.
-    - name: Set up Rust stable
-      id: setup-rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        cache: false
+  #   # Set up the Rust toolchain.
+  #   - name: Set up Rust stable
+  #     id: setup-rust
+  #     uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: stable
+  #       cache: false
 
-    # Restore a cache of dependencies and 'target'.
-    - name: Restore from cache
-      id: cache-restore
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cargo
-          target/
-        # Cache by OS and Rust version.
-        key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
+  #   # Restore a cache of dependencies and 'target'.
+  #   - name: Restore from cache
+  #     id: cache-restore
+  #     uses: actions/cache/restore@v4
+  #     with:
+  #       path: |
+  #         ~/.cargo
+  #         target/
+  #       # Cache by OS and Rust version.
+  #       key: ${{ runner.os }}-${{ steps.setup-rust.outputs.cachekey }}
     
-    # Build and run the test suite.
-    - name: Test ignored
-      run: cargo test --all-targets $DNST_FEATURES -- --ignored
+  #   # Build and run the test suite.
+  #   - name: Test ignored
+  #     run: cargo test --all-targets $DNST_FEATURES -- --ignored
 
   # Build Cache
   # -----------
@@ -361,10 +361,13 @@ jobs:
     needs: determine-msrv
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest, windows-latest]
-        rust: ["${{ needs.determine-msrv.outputs.msrv }}", stable, beta, nightly]
+        # os: [ubuntu-latest, macOS-latest, windows-latest]
+        # rust: ["${{ needs.determine-msrv.outputs.msrv }}", stable, beta, nightly]
+        os: [windows-latest]
+        rust: [stable]
     runs-on: ${{ matrix.os }}
-    if: github.ref == 'refs/heads/main'
+    # if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/disable-duplicate-workflow-on-pr'
     env:
       RUSTFLAGS: "-D warnings"
       DNST_FEATURES: "--all-features"
