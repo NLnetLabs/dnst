@@ -368,6 +368,11 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
       DNST_FEATURES: "--all-features"
+      # We use 'vcpkg' to install OpenSSL on Windows.
+      VCPKG_ROOT: "${{ github.workspace }}\\vcpkg"
+      VCPKGRS_TRIPLET: x64-windows-release
+      # Ensure that OpenSSL is dynamically linked.
+      VCPKGRS_DYNAMIC: 1
     steps:
 
     # Load the repository.
