@@ -36,6 +36,8 @@ pub struct Keygen {
         feature = "openssl",
         doc = " - ED448:              An Ed448 key (algorithm 16)"
     )]
+    ///
+    /// Tip: Using the algorithm number instead of the name is also supported.
     #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
@@ -268,11 +270,11 @@ impl From<Keygen> for Command {
 impl Keygen {
     fn parse_algorithm(value: &str) -> Result<GenerateParams, clap::Error> {
         match value {
-            "RSASHA256" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
-            "ECDSAP256SHA256" => return Ok(GenerateParams::EcdsaP256Sha256),
-            "ECDSAP384SHA384" => return Ok(GenerateParams::EcdsaP384Sha384),
-            "ED25519" => return Ok(GenerateParams::Ed25519),
-            "ED448" => return Ok(GenerateParams::Ed448),
+            "RSASHA256" | "8" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
+            "ECDSAP256SHA256" | "13" => return Ok(GenerateParams::EcdsaP256Sha256),
+            "ECDSAP384SHA384" | "14" => return Ok(GenerateParams::EcdsaP384Sha384),
+            "ED25519" | "15" => return Ok(GenerateParams::Ed25519),
+            "ED448" | "16" => return Ok(GenerateParams::Ed448),
             _ => {}
         }
 
@@ -281,7 +283,7 @@ impl Keygen {
         if let Some((name, params)) = value.split_once(':') {
             #[allow(clippy::single_match)]
             match name {
-                "RSASHA256" => {
+                "RSASHA256" | "8" => {
                     let bits: u32 = params.parse().map_err(|err| {
                         clap::Error::raw(
                             clap::error::ErrorKind::InvalidValue,
@@ -470,6 +472,22 @@ mod test {
         // - RSA-SHA256 accepts other key sizes.
         assert_eq!(
             parse(cmd.args(["-a", "RSASHA256:1024", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                ..base.clone()
+            }
+        );
+        // - Specifying the algorithm by number
+        assert_eq!(
+            parse(cmd.args(["-a", "8", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                ..base.clone()
+            }
+        );
+        // - Specifying the algorithm by number incl. keysize
+        assert_eq!(
+            parse(cmd.args(["-a", "8:1024", "example.org"])),
             Keygen {
                 algorithm: GenerateParams::RsaSha256 { bits: 1024 },
                 ..base.clone()
