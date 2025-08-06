@@ -1562,12 +1562,8 @@ impl SignZone {
         Self::write_iterations_warning(env, "NSEC3 iterations larger than 0 increases performance cost while providing only moderate protection!");
     }
 
-    fn write_iterations_warning(env: &impl Env, text: &str) {
-        warn!("{text}");
-        writeln!(
-            env.stderr(),
-            "See: https://www.rfc-editor.org/rfc/rfc9276.html"
-        );
+    fn write_iterations_warning(_env: &impl Env, text: &str) {
+        warn!("{text}\nSee: https://www.rfc-editor.org/rfc/rfc9276.html");
     }
 
     /// Create the ZONEMD digest for the SIMPLE scheme.
