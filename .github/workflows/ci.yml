@@ -6,6 +6,8 @@
 # used by others successfully.  It verifies certain aspects of the codebase,
 # such as the formatting and feature flag combinations, and runs the full test
 # suite.  It runs on Ubuntu, Mac OS, and Windows.
+#
+# Based on https://github.com/NLnetLabs/domain/blob/main/.github/workflows/ci.yml
 
 name: CI
 
