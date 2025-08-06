@@ -37,7 +37,7 @@ pub struct Keygen {
         doc = " - ED448:              An Ed448 key (algorithm 16)"
     )]
     ///
-    /// The algorithm numbers may be used inplace of the mnemonics
+    /// Tip: Using the algorithm number instead of the name is also supported.
     #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
