@@ -505,8 +505,8 @@ impl LdnsCommand for SignZone {
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: true,
             preceed_zone_with_hash_list,
-            order_rrsigs_after_the_rtype_they_cover: extra_comments,
-            order_nsec3_rrs_by_unhashed_owner_name: extra_comments,
+            order_rrsigs_after_the_rtype_they_cover: true,
+            order_nsec3_rrs_by_unhashed_owner_name: true,
             zonefile_path,
             key_paths,
             invoked_as_ldns: true,
@@ -977,7 +977,11 @@ impl SignZone {
 
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
-        if self.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
+        if self.use_nsec3
+            && (self.extra_comments
+                || self.preceed_zone_with_hash_list
+                || self.order_nsec3_rrs_by_unhashed_owner_name)
+        {
             // Create a collection of NSEC3 hashes that can later be used for
             // debug output.
             let mut hash_provider = Nsec3HashMap::new();
@@ -1160,9 +1164,6 @@ impl SignZone {
         // compatibility with ldns-signzone, re-order them to be in canonical
         // order by unhashed owner name and so that hashed names come after
         // equivalent unhashed names.
-        //
-        // INCOMAPATIBILITY WARNING: Unlike ldns-signzone, we only apply this
-        // ordering if `-b` is specified.
         let mut owner_rrs;
         let owner_rrs_iter: AnyOwnerRrsIter =
             if self.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
@@ -1255,10 +1256,13 @@ impl SignZone {
             // we skip that, and we skip RRSIGs as they are output only after
             // the RRset that they cover.
             if self.order_rrsigs_after_the_rtype_they_cover {
-                for rrset in owner_rrs
-                    .rrsets()
-                    .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
-                {
+                for rrset in owner_rrs.rrsets().filter(|rrset| {
+                    !(matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG)
+                        || self.invoked_as_ldns
+                            && !self.use_nsec3
+                            && rrset.rtype() == Rtype::NSEC
+                            && rrset.owner() == apex)
+                }) {
                     for rr in rrset.iter() {
                         self.write_rr(&mut writer, rr)?;
                         match rr.data() {
@@ -1278,18 +1282,58 @@ impl SignZone {
                         }
                         writer.write_str("\n")?;
                     }
-
                     // Now attempt to print the RRSIGs that covers the RTYPE of this RRSET.
                     for covering_rrsigs in owner_rrs
                         .rrsets()
                         .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
-                        .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
+                        .map(|this_rrset| {
+                            this_rrset.iter().filter(|rr| {
+                                matches!(rr.data(), ZoneRecordData::Rrsig(rrsig)
+                                    if rrsig.type_covered() == rrset.rtype()
+                                        // && (!self.invoked_as_ldns || rr.owner() != apex
+                                        //     || (rr.owner() == apex && rrsig.type_covered() != Rtype::NSEC))
+                                        && if self.invoked_as_ldns && rr.owner() == apex {
+                                            rrsig.type_covered() != Rtype::NSEC
+                                        } else { true }
+                                )
+                            })
+                        })
                     {
                         for covering_rrsig_rr in covering_rrsigs {
                             self.writeln_rr(&mut writer, covering_rrsig_rr)?;
                         }
                     }
                 }
+
+                if self.invoked_as_ldns && !self.use_nsec3 && owner_rrs.owner() == apex {
+                    for covering_nsec in owner_rrs
+                        .rrsets()
+                        .filter(|this_rrset| this_rrset.rtype() == Rtype::NSEC)
+                        .map(|this_rrset| this_rrset.iter())
+                    {
+                        for covering_nsec_rr in covering_nsec {
+                            self.writeln_rr(&mut writer, covering_nsec_rr)?;
+                        }
+                    }
+
+                    for covering_rrsigs in owner_rrs
+                        .rrsets()
+                        .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
+                        .map(|this_rrset| {
+                            this_rrset.iter().filter(|rr| {
+                                matches!(
+                                    rr.data(), ZoneRecordData::Rrsig(rrsig)
+                                        if rrsig.type_covered() == Rtype::NSEC && rr.owner() == apex
+                                )
+                            })
+                        })
+                    {
+                        for covering_rrsig_rr in covering_rrsigs {
+                            self.writeln_rr(&mut writer, covering_rrsig_rr)?;
+                        }
+                    }
+                }
+
                 if self.extra_comments {
                     writer.write_str(";\n")?;
                 }
@@ -2427,8 +2471,8 @@ mod test {
             hash_only: false,
             use_yyyymmddhhmmss_rrsig_format: true,
             preceed_zone_with_hash_list: false,
-            order_rrsigs_after_the_rtype_they_cover: false,
-            order_nsec3_rrs_by_unhashed_owner_name: false,
+            order_rrsigs_after_the_rtype_they_cover: true,
+            order_nsec3_rrs_by_unhashed_owner_name: true,
             zonefile_path: PathBuf::from("example.org.zone"),
             key_paths: Vec::from([PathBuf::from("anykey")]),
             invoked_as_ldns: true,
@@ -3003,14 +3047,14 @@ m.root-servers.net.\t3600000\tIN\tAAAA\t2001:dc3::35
     fn ldns_signzone_disables_minus_b_when_output_is_to_stdout() {
         let expected_output = r###"example.org.\t239\tIN\tSOA\texample.net. hostmaster.example.net. 1234567890 28800 7200 604800 238
 example.org.\t239\tIN\tRRSIG\tSOA 8 2 239 20241127162422 20241127162422 51331 example.org. XD5+Exk0KLfvLYA7y+Qs6jhF+JeESFONqZAjkSvznXdjod80W6cv9C77XeHqqod+5glGHlw9bXmVhuJ/5n056BbnDcMWF+AV4taFc/RrDcZb5A0tS6LnRWbpO9puKeLVK10FeAChCygct6/+GNiE12DDLnzKJFuyMuu+nLa2p88=
-example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 20241127162422 20241127162422 51331 example.org. AT4PDLEolpApcrYi7mcTXrqCQ6psXeZNdmFub08m6BJRs2jeW07fM11Amft53FXKgqbT23WILkEM7Raai8E8qPJoSdDCys6zYXW/NCU9Cf/oXIKdD4nxQXXWbnX4GCMN4XJy382dYnxTDssQK6lNIKKi4OvGYIxVUPthaLKJFU0=
+example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
 example.org.\t239\tIN\tRRSIG\tDNSKEY 8 2 239 20241127162422 20241127162422 51331 example.org. rLwqlu9fYkzAy0jM9crtw5du4rUaDVH9PI4m06lRwjSKhu1VQ1AHjRhlKy1OgUee/5LovXSRGcgNZi4wiTS5ZULTJw7UQTBRXaaNhVACENX/MoVw9SmYuDSTyvQboChmFmYSMch3Q/02VhgN+BT8F7+OdDVgsWqZUEKPVNixk/0=
 example.org.\t238\tIN\tNSEC\tsome.example.org. SOA RRSIG NSEC DNSKEY
-example.org.\t239\tIN\tDNSKEY\t257 3 8 AwEAAckp/oMmocs+pv4KsCkCciazIl2+SohAZ2/bH2viAMg3tHAPjw5YfPNErUBqMGvN4c23iBCnt9TktT5bVoQdpXyCJ+ZwmWrFxlXvXIqG8rpkwHi1xFoXWVZLrG9XYCqLVMq2cB+FgMIaX504XMGk7WQydtV1LAqLgP3B8JA2Fc1j ;{id = 51331 (ksk), size = 1024b}
+example.org.\t238\tIN\tRRSIG\tNSEC 8 2 238 20241127162422 20241127162422 51331 example.org. AT4PDLEolpApcrYi7mcTXrqCQ6psXeZNdmFub08m6BJRs2jeW07fM11Amft53FXKgqbT23WILkEM7Raai8E8qPJoSdDCys6zYXW/NCU9Cf/oXIKdD4nxQXXWbnX4GCMN4XJy382dYnxTDssQK6lNIKKi4OvGYIxVUPthaLKJFU0=
 some.example.org.\t240\tIN\tA\t1.2.3.4
 some.example.org.\t240\tIN\tRRSIG\tA 8 3 240 20241127162422 20241127162422 51331 example.org. xdVbhbaMXEyMySCOKy2yYQgU2URAOnu+jLU5py+4R8R3yVVvdl6yMjzdUD3vyxprHitJ+xLrXU/wHSQvtjSwmxVL53ztu+9wrnrhQm6nqXGLW+iw58LepdLVRlppz2WlV0CJAlLIQPJ8rw4hND3NYLJojnO8OdrgpHL89ajD4II=
-some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20241127162422 20241127162422 51331 example.org. PP4tH4Y6JNymWSJebPd3zjvDrjyZXVBF8QTKxKAmbmtPacbWyIcRuI0L8+8Z1folAN2U5cUZmCaIbt5Ylaj6ab4UAYHiy0BrcF/zbNIeLRSTz4hOteencIooTDvqIqYuI9/xTVXcfJ+gVzzlIh2dJK2GW5O4+B1xR+CINLNJ/j8=
 some.example.org.\t238\tIN\tNSEC\texample.org. A RRSIG NSEC
+some.example.org.\t238\tIN\tRRSIG\tNSEC 8 3 238 20241127162422 20241127162422 51331 example.org. PP4tH4Y6JNymWSJebPd3zjvDrjyZXVBF8QTKxKAmbmtPacbWyIcRuI0L8+8Z1folAN2U5cUZmCaIbt5Ylaj6ab4UAYHiy0BrcF/zbNIeLRSTz4hOteencIooTDvqIqYuI9/xTVXcfJ+gVzzlIh2dJK2GW5O4+B1xR+CINLNJ/j8=
 "###.replace("\\t", "\t");
 
         let zone_file_path =
