@@ -10,6 +10,7 @@ use domain::rdata::Soa;
 use domain::tsig::Key;
 use domain::utils::base16;
 use lexopt::Arg;
+use tracing::warn;
 
 use crate::env::Env;
 use crate::error::Error;
@@ -26,10 +27,10 @@ pub struct Notify {
 
     // The -I option is supported by ldns but is not available in domain yet.
     // It requires creating a connection from a UdpSocket (or similar).
-    // /// Source address to query from
-    // #[arg(short = 'I', required = false)]
-    // source_address: (),
-    //
+    /// Source address to query from
+    #[arg(short = 'I')]
+    source_address: Option<SocketAddr>,
+
     /// SOA version number to include
     #[arg(short = 's', long = "soa")]
     soa_version: Option<u32>,
@@ -87,6 +88,7 @@ impl LdnsCommand for Notify {
         let mut debug = false;
         let mut retries = 15;
         let mut servers = Vec::new();
+        let mut source_address = None;
 
         let mut parser = lexopt::Parser::from_args(args);
 
@@ -96,7 +98,10 @@ impl LdnsCommand for Notify {
                     let val = parser.value()?;
                     zone = Some(parse_os("zone (-z)", &val)?);
                 }
-                Arg::Short('I') => return Err("The -I option is currently unsupported".into()),
+                Arg::Short('I') => {
+                    let val = parser.value()?;
+                    source_address = Some(parse_os("ip (-I)", &val)?);
+                }
                 Arg::Short('s') => {
                     let val = parser.value()?;
                     soa_version = Some(parse_os("soa version (-s)", &val)?);
@@ -136,6 +141,7 @@ impl LdnsCommand for Notify {
 
         Ok(Args::from(Command::Notify(Notify {
             zone,
+            source_address,
             soa_version,
             tsig,
             port,
@@ -209,7 +215,7 @@ impl Notify {
         let resolver = env.stub_resolver().await;
 
         for server in &self.servers {
-            writeln!(env.stdout(), "# sending to {}", server);
+            writeln!(env.stdout(), "# sending to {server}");
 
             // The specified server might be an IP address. In ldns, this case is
             // handled by `getaddrinfo`, but we have to do it ourselves.
@@ -223,26 +229,17 @@ impl Notify {
             }
 
             let Ok(name) = Name::<Vec<u8>>::from_str(server) else {
-                writeln!(
-                    env.stderr(),
-                    "warning: invalid domain name \"{server}\", skipping."
-                );
+                warn!("invalid domain name \"{server}\", skipping.");
                 continue;
             };
 
             let Ok(hosts) = resolver.lookup_host(&name).await else {
-                writeln!(
-                    env.stderr(),
-                    "warning: could not resolve host \"{name}\", skipping."
-                );
+                warn!("could not resolve host \"{name}\", skipping.");
                 continue;
             };
 
             if hosts.is_empty() {
-                writeln!(
-                    env.stderr(),
-                    "skipping bad address: {name}: Name or service not known"
-                );
+                warn!("skipping bad address: {name}: Name or service not known");
                 continue;
             }
 
@@ -259,7 +256,7 @@ impl Notify {
     async fn notify_host(
         &self,
         env: &impl Env,
-        socket: SocketAddr,
+        dest: SocketAddr,
         msg: Message<Vec<u8>>,
         server: &str,
         tsig_key: &Option<Key>,
@@ -271,7 +268,15 @@ impl Notify {
         // See: https://github.com/opendnssec/opendnssec/pull/865
         config.set_udp_payload_size(None);
 
-        let dgram_connection = dgram::Connection::with_config(env.dgram(socket), config);
+        let src = if let Some(local) = self.source_address {
+            local
+        } else if dest.is_ipv4() {
+            ([0u8; 4], 0).into()
+        } else {
+            ([0u16; 8], 0).into()
+        };
+
+        let dgram_connection = dgram::Connection::with_config(env.dgram(src, dest), config);
 
         let connection: Box<dyn SendRequest<_>> = if let Some(k) = tsig_key {
             Box::new(tsig::Connection::new(k.clone(), dgram_connection))
@@ -289,22 +294,19 @@ impl Notify {
         match res {
             Ok(msg) => {
                 let mut out = env.stdout();
-                writeln!(out, "# reply from {server} at {socket}:");
+                writeln!(out, "# reply from {server} at {dest}:");
                 writeln!(out, "{}", msg.display_dig_style());
                 writeln!(
                     out,
                     ";; Query time: {} msec",
                     (time2 - time1).num_milliseconds()
                 );
-                writeln!(out, ";; Server: {}#{}", socket.ip(), socket.port());
+                writeln!(out, ";; Server: {}#{}", dest.ip(), dest.port());
                 writeln!(out, ";; WHEN: {}", time1.format("%a %b %d %H:%M:%S %Z %Y"));
                 writeln!(out, ";; MSG SIZE  rcvd: {}", msg.as_slice().len());
             }
             Err(e) => {
-                writeln!(
-                    env.stdout(),
-                    "warning: reply was not received or erroneous from: {socket}: {e}"
-                );
+                warn!("reply was not received or erroneous from: {dest}: {e}");
             }
         }
     }
@@ -346,6 +348,7 @@ mod tests {
 
         let base = Notify {
             zone: Name::from_str("example.test").unwrap(),
+            source_address: None,
             soa_version: None,
             tsig: None,
             port: 53,
@@ -419,6 +422,7 @@ mod tests {
 
         let base = Notify {
             zone: Name::from_str("example.test").unwrap(),
+            source_address: None,
             soa_version: None,
             tsig: None,
             port: 53,
@@ -586,5 +590,22 @@ mod tests {
         let res = cmd.run();
         assert_eq!(res.exit_code, 0);
         assert!(res.stderr.contains("Name or service not known"));
+    }
+
+    #[test]
+    fn invalid_domain_name() {
+        let rpl = "
+            CONFIG_END
+
+            SCENARIO_BEGIN
+
+            SCENARIO_END
+        ";
+
+        let cmd = FakeCmd::new(["dnst", "notify", "-z", "nlnetlabs.test", ""])
+            .stelline(rpl.as_bytes(), "notify.rpl");
+
+        let res = cmd.run();
+        assert!(res.stderr.contains("invalid domain name"));
     }
 }
