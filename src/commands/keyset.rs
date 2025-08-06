@@ -1,14 +1,25 @@
-use crate::env::Env;
-use crate::error::Error;
-use crate::util;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::convert::From;
+use std::fmt::{Debug, Display, Formatter};
+use std::fs::{remove_file, File};
+use std::io::Write;
+use std::path::{absolute, Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::SystemTime;
+
 use bytes::Bytes;
 use clap::Subcommand;
 use domain::base::iana::Class;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
+use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
-use domain::crypto::sign;
-use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
+use domain::crypto::kmip::sign::KeyUrl;
+use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings};
+use domain::crypto::kmip_pool::{ConnectionManager, SyncConnPool};
+use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{Action, Key, KeySet, KeyType, RollType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
@@ -16,20 +27,16 @@ use domain::dnssec::sign::records::Rrset;
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::dnssec::Timestamp;
-use domain::rdata::{Cdnskey, Cds, Ds, ZoneRecordData};
+use domain::rdata::{Cdnskey, Cds, Dnskey, Ds, ZoneRecordData};
 use domain::zonefile::inplace::Zonefile;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
-use std::cmp::min;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::fs::{remove_file, File};
-use std::io::Write;
-use std::path::{absolute, Path, PathBuf};
-use std::time::Duration;
-use std::time::SystemTime;
 use url::Url;
+
+use crate::env::Env;
+use crate::error::Error;
+use crate::util;
 
 const MAX_KEY_TAG_TRIES: u8 = 10;
 
@@ -115,6 +122,10 @@ enum Commands {
 
     Show,
     Cron,
+    Kmip {
+        #[command(subcommand)]
+        subcommand: KmipCommands,
+    },
 }
 
 #[derive(Clone, Debug, Subcommand)]
@@ -202,6 +213,53 @@ enum SetCommands {
     },
 }
 
+#[derive(Clone, Debug, Subcommand)]
+enum KmipCommands {
+    /// Disable use of KMIP.
+    Disable,
+
+    /// Add a KMIP server to use for key generation & signing.
+    ///
+    /// Will be set as the default server if it is the only KMIP server.
+    AddServer {
+        server_id: String,
+
+        ip_host_or_fqdn: String,
+
+        #[arg(long = "port")]
+        port: Option<u16>,
+
+        #[arg(long = "username")]
+        username: Option<String>,
+
+        #[arg(long = "password")]
+        password: Option<String>,
+
+        #[arg(long = "insecure", action = clap::ArgAction::SetTrue)]
+        insecure: Option<bool>,
+
+        #[arg(long = "client-cert")]
+        client_cert_path: Option<PathBuf>,
+
+        #[arg(long = "client-key")]
+        client_key_path: Option<PathBuf>,
+    },
+
+    /// Remove an existing non-default KMIP server.
+    ///
+    /// To remove the default KMIP server use `kmip disable` first.
+    RemoveServer { server_id: String },
+
+    /// Set the default KMIP server to use for key generation & signing.
+    SetDefaultServer { server_id: String },
+
+    /// Get the details of an existing KMIP server.
+    GetServer { server_id: String },
+
+    /// List all configured KMIP servers.
+    ListServers,
+}
+
 impl Keyset {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -249,6 +307,8 @@ impl Keyset {
                 cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
                 autoremove: false,
+                kmip_servers: HashMap::new(),
+                default_kmip_server: None,
             };
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
             let mut file = File::create(&state_file).map_err::<Error, _>(|e| {
@@ -295,6 +355,9 @@ impl Keyset {
         let mut config_changed = false;
         let mut state_changed = false;
 
+        // Determine the KMIP connection pool to use, if configured.
+        let kmip_conn_pool = get_kmip_pool(&ksc)?;
+
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
             Commands::Init => {
@@ -314,6 +377,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     kss.keyset
                         .add_key_csk(
@@ -337,6 +401,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     kss.keyset
                         .add_key_ksk(
@@ -355,6 +420,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     kss.keyset
                         .add_key_zsk(
@@ -428,6 +494,7 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
+                    &kmip_conn_pool,
                 )?;
                 kss.keyset
                     .add_key_ksk(
@@ -453,24 +520,8 @@ impl Keyset {
                     Ok(actions) => actions,
                     Err(e) => {
                         // Remove the key files we just created.
-                        if ksk_priv_url.scheme() == "file" {
-                            remove_file(ksk_priv_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove private key file {ksk_priv_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {ksk_priv_url}");
-                        }
-
-                        if ksk_pub_url.scheme() == "file" {
-                            remove_file(ksk_pub_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove public key file {ksk_pub_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {ksk_pub_url}");
-                        }
-
+                        remove_key(&ksc, ksk_priv_url)?;
+                        remove_key(&ksc, ksk_pub_url)?;
                         return Err(e);
                     }
                 };
@@ -526,6 +577,7 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
+                    &kmip_conn_pool,
                 )?;
                 kss.keyset
                     .add_key_zsk(
@@ -551,22 +603,8 @@ impl Keyset {
                     Ok(actions) => actions,
                     Err(e) => {
                         // Remove the key files we just created.
-                        if zsk_priv_url.scheme() == "file" {
-                            remove_file(zsk_priv_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove private key file {zsk_priv_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {zsk_priv_url}");
-                        }
-                        if zsk_pub_url.scheme() == "file" {
-                            remove_file(zsk_pub_url.path()).map_err::<Error, _>(|e| {
-                                format!("unable to remove public key file {zsk_pub_url}: {e}\n")
-                                    .into()
-                            })?;
-                        } else {
-                            panic!("unsupported URL scheme in {zsk_pub_url}");
-                        }
+                        remove_key(&ksc, zsk_priv_url)?;
+                        remove_key(&ksc, zsk_pub_url)?;
                         return Err(e);
                     }
                 };
@@ -613,6 +651,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(csk_priv_url.clone());
                     new_urls.push(csk_pub_url.clone());
@@ -642,6 +681,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(ksk_priv_url.clone());
                     new_urls.push(ksk_pub_url.clone());
@@ -666,6 +706,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(zsk_priv_url.clone());
                     new_urls.push(zsk_pub_url.clone());
@@ -698,13 +739,7 @@ impl Keyset {
                     Err(e) => {
                         // Remove the key files we just created.
                         for u in new_urls {
-                            if u.scheme() == "file" {
-                                remove_file(u.path()).map_err::<Error, _>(|e| {
-                                    format!("unable to remove private key file {u}: {e}\n").into()
-                                })?;
-                            } else {
-                                panic!("unsupported URL scheme in {u}");
-                            }
+                            remove_key(&ksc, u)?;
                         }
                         return Err(e);
                     }
@@ -751,6 +786,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(csk_priv_url.clone());
                     new_urls.push(csk_pub_url.clone());
@@ -780,6 +816,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(ksk_priv_url.clone());
                     new_urls.push(ksk_pub_url.clone());
@@ -804,6 +841,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
+                        &kmip_conn_pool,
                     )?;
                     new_urls.push(zsk_priv_url.clone());
                     new_urls.push(zsk_pub_url.clone());
@@ -836,13 +874,7 @@ impl Keyset {
                     Err(e) => {
                         // Remove the key files we just created.
                         for u in new_urls {
-                            if u.scheme() == "file" {
-                                remove_file(u.path()).map_err::<Error, _>(|e| {
-                                    format!("unable to private key file {u}: {e}\n").into()
-                                })?;
-                            } else {
-                                panic!("unsupported scheme in {u}");
-                            }
+                            remove_key(&ksc, u)?;
                         }
                         return Err(e);
                     }
@@ -968,7 +1000,7 @@ impl Keyset {
 
                 // Remove old keys.
                 if ksc.autoremove {
-                    let files: Vec<_> = kss
+                    let key_urls: Vec<_> = kss
                         .keyset
                         .keys()
                         .iter()
@@ -983,23 +1015,26 @@ impl Keyset {
                         })
                         .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
                         .collect();
-                    if !files.is_empty() {
+                    if !key_urls.is_empty() {
                         print!("Removing:");
-                        for f in files {
-                            let (pubkey, privkey) = &f;
-                            print!(" {pubkey}");
-                            kss.keyset.delete_key(pubkey).map_err::<Error, _>(|e| {
-                                format!("unable to remove key {pubkey}: {e}\n").into()
+                        for u in key_urls {
+                            let (pubref, privkey) = &u;
+                            print!(" {pubref}");
+                            kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
+                                format!("unable to remove key {pubref}: {e}\n").into()
                             })?;
-                            remove_file(pubkey).map_err::<Error, _>(|e| {
-                                format!("unable to remove file {pubkey}: {e}\n").into()
-                            })?;
+
                             if let Some(privkey) = privkey {
-                                print!(" {privkey}");
-                                remove_file(privkey).map_err::<Error, _>(|e| {
-                                    format!("unable to remove file {privkey}: {e}\n").into()
+                                let priv_url = Url::parse(privkey).map_err::<Error, _>(|e| {
+                                    format!("unable to parse {privkey} as URL: {e}").into()
                                 })?;
+                                remove_key(&ksc, priv_url)?;
                             }
+
+                            let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
+                                format!("unable to parse {pubref} as URL: {e}").into()
+                            })?;
+                            remove_key(&ksc, pub_url)?;
                         }
                         println!();
                     }
@@ -1130,6 +1165,9 @@ impl Keyset {
                     state_changed = true;
                 }
             }
+            Commands::Kmip { subcommand } => {
+                config_changed = kmip_command(subcommand, &mut ksc)?;
+            }
         }
 
         let cron_next_dnskey = compute_cron_next(&kss.dnskey_rrset, &ksc.dnskey_remain_time);
@@ -1171,6 +1209,51 @@ impl Keyset {
         }
         Ok(())
     }
+}
+
+fn get_kmip_pool(ksc: &KeySetConfig) -> Result<Option<SyncConnPool>, Error> {
+    let Some(id) = &ksc.default_kmip_server else {
+        return Ok(None);
+    };
+
+    let Some(kmip_conn_settings) = ksc.kmip_servers.get(id) else {
+        return Err(format!("No KMIP server config exists for id '{id}").into());
+    };
+
+    let conn_settings = Arc::new(ConnectionSettings::try_from(kmip_conn_settings.clone())?);
+    let kmip_conn_pool = Some(kmip_create_conn_pool(id.clone(), conn_settings)?);
+    Ok(kmip_conn_pool)
+}
+
+fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
+    match url.scheme() {
+        "file" => {
+            remove_file(url.path()).map_err::<Error, _>(|e| {
+                format!("unable to remove key file {}: {e}\n", url.path()).into()
+            })?;
+        }
+
+        "kmip" => {
+            let (server_id, key_id, _algorithm, _flags, conn_settings) =
+                parse_kmip_key_url(ksc, url)?;
+            let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
+            let conn = kmip_conn_pool
+                .get()
+                .map_err(|err| format!("Failed to acquire connection from KMIP pool: {err}"))?;
+
+            // TODO: Batch these together?
+            conn.revoke_key(&key_id)
+                .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
+            conn.destroy_key(&key_id)
+                .map_err(|err| format!("Failed to destroy KMIP key {key_id}: {err}"))?;
+        }
+
+        _ => {
+            panic!("Unsupported URL scheme while removing key {url}");
+        }
+    }
+
+    Ok(())
 }
 
 fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
@@ -1281,6 +1364,74 @@ fn set_command(
     Ok(())
 }
 
+fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error> {
+    match cmd {
+        KmipCommands::Disable => {
+            ksc.default_kmip_server = None;
+        }
+
+        KmipCommands::AddServer {
+            server_id,
+            ip_host_or_fqdn,
+            port,
+            username,
+            password,
+            insecure,
+            client_cert_path,
+            client_key_path,
+        } => {
+            let settings = KmipServerConnectionSettings {
+                client_cert_path,
+                client_key_path,
+                server_insecure: insecure.unwrap_or(false),
+                server_addr: ip_host_or_fqdn,
+                server_port: port.unwrap_or(5696),
+                server_username: username,
+                server_password: password,
+                ..Default::default()
+            };
+
+            ksc.kmip_servers.insert(server_id.clone(), settings);
+
+            if ksc.kmip_servers.len() == 1 {
+                ksc.default_kmip_server = Some(server_id);
+            }
+        }
+
+        KmipCommands::RemoveServer { server_id } => {
+            if ksc.default_kmip_server.as_ref() == Some(&server_id) {
+                return Err(format!(
+                    "KMIP server index {server_id} cannot be removed as it is the current default. Use kmip disable first."
+                )
+                .into());
+            }
+            let _ = ksc.kmip_servers.remove(&server_id);
+        }
+
+        KmipCommands::SetDefaultServer { server_id } => {
+            if !ksc.kmip_servers.contains_key(&server_id) {
+                return Err(format!("KMIP server id '{server_id}' is not known").into());
+            }
+            ksc.default_kmip_server = Some(server_id);
+        }
+
+        KmipCommands::GetServer { server_id } => {
+            let Some(server) = ksc.kmip_servers.get(&server_id) else {
+                return Err(format!("KMIP server id '{server_id}' is not known").into());
+            };
+            dbg!(server);
+            return Ok(false);
+        }
+
+        KmipCommands::ListServers => {
+            dbg!(&ksc.kmip_servers);
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 /// Config for the keyset command.
 #[derive(Deserialize, Serialize)]
 struct KeySetConfig {
@@ -1323,6 +1474,144 @@ struct KeySetConfig {
 
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
+
+    /// KMIP servers to use, keyed by user chosen HSM id.
+    kmip_servers: HashMap<String, KmipServerConnectionSettings>,
+
+    /// Which KMIP server should new keys be created in, if any?
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    default_kmip_server: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KmipServerConnectionSettings {
+    /// Path to the client certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_cert_path: Option<PathBuf>,
+
+    /// Path to the client certificate key file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_key_path: Option<PathBuf>,
+
+    /// Path to the client certificate and key file in PKCS#12 format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_pkcs12_path: Option<PathBuf>,
+
+    /// Disable secure checks (e.g. verification of the server certificate).
+    #[serde(default)]
+    server_insecure: bool,
+
+    /// Path to the server certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    server_cert_path: Option<PathBuf>,
+
+    /// Path to the server CA certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    ca_cert_path: Option<PathBuf>,
+
+    /// IP address, hostname or FQDN of the KMIP server.
+    server_addr: String,
+
+    /// The TCP port number on which the KMIP server listens.
+    server_port: u16,
+
+    /// The user name to authenticate with the KMIP server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    server_username: Option<String>,
+
+    /// The password to authenticate with the KMIP server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    server_password: Option<String>,
+}
+
+impl Default for KmipServerConnectionSettings {
+    fn default() -> Self {
+        Self {
+            server_addr: "localhost".into(),
+            server_port: 5696,
+            server_insecure: false,
+            client_cert_path: None,
+            client_key_path: None,
+            client_pkcs12_path: None,
+            server_cert_path: None,
+            ca_cert_path: None,
+            server_username: None,
+            server_password: None,
+        }
+    }
+}
+
+impl TryFrom<KmipServerConnectionSettings> for ConnectionSettings {
+    type Error = Error;
+
+    fn try_from(cfg: KmipServerConnectionSettings) -> Result<Self, Self::Error> {
+        let client_cert = load_client_cert(&cfg)?;
+        let server_cert = match cfg.server_cert_path {
+            Some(p) => Some(load_binary_file(&p)?),
+            None => None,
+        };
+        let ca_cert = match cfg.ca_cert_path {
+            Some(p) => Some(load_binary_file(&p)?),
+            None => None,
+        };
+        Ok(ConnectionSettings {
+            host: cfg.server_addr,
+            port: cfg.server_port,
+            username: cfg.server_username,
+            password: cfg.server_password,
+            insecure: cfg.server_insecure,
+            client_cert,
+            server_cert,
+            ca_cert,
+            connect_timeout: None,    // TODO
+            read_timeout: None,       // TODO
+            write_timeout: None,      // TODO
+            max_response_bytes: None, // TODO
+        })
+    }
+}
+
+fn load_client_cert(
+    opt: &KmipServerConnectionSettings,
+) -> Result<Option<ClientCertificate>, Error> {
+    let client_cert = {
+        match (
+            &opt.client_cert_path,
+            &opt.client_key_path,
+            &opt.client_pkcs12_path,
+        ) {
+            (None, None, None) => None,
+            (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
+                cert_bytes: load_binary_file(path)?,
+            }),
+            (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
+                cert_bytes: load_binary_file(path)?,
+                key_bytes: None,
+            }),
+            (None, Some(_), None) => {
+                return Err(
+                    "Client certificate key path requires a client certificate path".into(),
+                );
+            }
+            (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
+                return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
+            }
+            (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
+                cert_bytes: load_binary_file(cert_path)?,
+                key_bytes: Some(load_binary_file(key_path)?),
+            }),
+        }
+    };
+    Ok(client_cert)
+}
+
+pub fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
+    use std::{fs::File, io::Read};
+
+    let mut bytes = Vec::new();
+    File::open(path)?.read_to_end(&mut bytes)?;
+
+    Ok(bytes)
 }
 
 /// Persistent state for the keyset command.
@@ -1441,72 +1730,127 @@ fn new_keys(
     keys: &HashMap<String, Key>,
     keys_dir: &Path,
     env: &impl Env,
+    kmip_conn_pool: &Option<SyncConnPool>,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
     // TODO: Attempt repeated generation to avoid key tag collisions.
     // TODO: Add a high-level operation in 'domain' to select flags?
     let flags = if make_ksk { 257 } else { 256 };
-
     let mut retries = MAX_KEY_TAG_TRIES;
-    let (secret_key, public_key, key_tag) = loop {
-        let (secret_key, public_key) = sign::generate(algorithm.clone(), flags)
-            .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
 
-        let key_tag = public_key.key_tag();
-        if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
-            break (secret_key, public_key, key_tag);
-        }
-        if retries <= 1 {
-            return Err("unable to generate key with unique key tag".into());
-        }
-        retries -= 1;
-    };
+    if let Some(kmip_conn_pool) = kmip_conn_pool {
+        let (key_pair, dnskey) = loop {
+            // TODO: Fortanix DSM rejects attempts to create keys by names
+            // that are already taken. Should we be able to detect that case
+            // specifically and try again with a different name? Should we add
+            // a random element to each name? Should we keep track of used
+            // names and detect a collision ourselves when choosing a name?
+            // Is their some natural differentiator that can be used to name
+            // keys uniquely other than zone name?
+            let suffix = match make_ksk {
+                true => "_ksk",
+                false => "_zsk",
+            };
+            let key_pair = kmip::sign::generate(
+                format!("{}{suffix}", name.fmt_with_dot()),
+                algorithm.clone(),
+                flags,
+                kmip_conn_pool.clone(),
+            )
+            .map_err::<Error, _>(|e| format!("KMIP key generation failed: {e}\n").into())?;
 
-    let algorithm = public_key.algorithm();
+            let dnskey = key_pair.dnskey().map_err(|err| {
+                Error::new(&format!(
+                    "Unable to determine DNSKEY for newly generated signing key: {err}"
+                ))
+            })?;
 
-    let public_key = Record::new(name.clone(), Class::IN, Ttl::ZERO, public_key);
+            if !keys.iter().any(|(_, k)| k.key_tag() == dnskey.key_tag()) {
+                break (key_pair, dnskey);
+            }
+            if retries <= 1 {
+                return Err("unable to generate key with unique key tag".into());
+            }
+            retries -= 1;
+        };
 
-    let base = format!(
-        "K{}+{:03}+{:05}",
-        name.fmt_with_dot(),
-        algorithm.to_int(),
-        key_tag
-    );
+        let public_key_url = key_pair
+            .public_key_url()
+            .map_err(|err| format!("Failed to generate public key URL: {err}"))?;
+        let private_key_url = key_pair
+            .private_key_url()
+            .map_err(|err| format!("Failed to generate private key URL: {err}"))?;
 
-    let mut secret_key_path = keys_dir.to_path_buf();
-    secret_key_path.push(Path::new(&format!("{base}.private")));
-    let mut public_key_path = keys_dir.to_path_buf();
-    public_key_path.push(Path::new(&format!("{base}.key")));
+        Ok((
+            public_key_url,
+            private_key_url,
+            key_pair.algorithm(),
+            dnskey.key_tag(),
+        ))
+    } else {
+        let (secret_key, public_key, key_tag) = loop {
+            let (secret_key, public_key) = domain::crypto::sign::generate(algorithm.clone(), flags)
+                .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
 
-    let mut secret_key_file = util::create_new_file(&env, &secret_key_path)?;
-    let mut public_key_file = util::create_new_file(&env, &public_key_path)?;
-    // Prepare the contents to write.
-    let secret_key = secret_key.display_as_bind().to_string();
-    let public_key = display_as_bind(&public_key).to_string();
+            let key_tag = public_key.key_tag();
+            if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
+                break (secret_key, public_key, key_tag);
+            }
+            if retries <= 1 {
+                return Err("unable to generate key with unique key tag".into());
+            }
+            retries -= 1;
+        };
 
-    // Write the key files.
-    secret_key_file
-        .write_all(secret_key.as_bytes())
-        .map_err(|err| format!("error while writing private key file '{base}.private': {err}"))?;
-    public_key_file
-        .write_all(public_key.as_bytes())
-        .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+        let algorithm = public_key.algorithm();
 
-    let secret_key_path = secret_key_path.to_str().ok_or::<Error>(
-        format!("path {} needs to be valid UTF-8", secret_key_path.display()).into(),
-    )?;
-    let secret_key_url = "file://".to_owned() + secret_key_path;
-    let public_key_path = public_key_path.to_str().ok_or::<Error>(
-        format!("path {} needs to be valid UTF-8", public_key_path.display()).into(),
-    )?;
-    let public_key_url = "file://".to_owned() + public_key_path;
+        let public_key = Record::new(name.clone(), Class::IN, Ttl::ZERO, public_key);
 
-    let secret_key_url = Url::parse(&secret_key_url)
-        .map_err::<Error, _>(|e| format!("unable to parse {secret_key_url} as URL: {e}").into())?;
-    let public_key_url = Url::parse(&public_key_url)
-        .map_err::<Error, _>(|e| format!("unable to parse {public_key_url} as URL: {e}").into())?;
+        let base = format!(
+            "K{}+{:03}+{:05}",
+            name.fmt_with_dot(),
+            algorithm.to_int(),
+            key_tag
+        );
 
-    Ok((public_key_url, secret_key_url, algorithm, key_tag))
+        let mut secret_key_path = keys_dir.to_path_buf();
+        secret_key_path.push(Path::new(&format!("{base}.private")));
+        let mut public_key_path = keys_dir.to_path_buf();
+        public_key_path.push(Path::new(&format!("{base}.key")));
+
+        let mut secret_key_file = util::create_new_file(&env, &secret_key_path)?;
+        let mut public_key_file = util::create_new_file(&env, &public_key_path)?;
+        // Prepare the contents to write.
+        let secret_key = secret_key.display_as_bind().to_string();
+        let public_key = display_as_bind(&public_key).to_string();
+
+        // Write the key files.
+        secret_key_file
+            .write_all(secret_key.as_bytes())
+            .map_err(|err| {
+                format!("error while writing private key file '{base}.private': {err}")
+            })?;
+        public_key_file
+            .write_all(public_key.as_bytes())
+            .map_err(|err| format!("error while writing public key file '{base}.key': {err}"))?;
+
+        let secret_key_path = secret_key_path.to_str().ok_or::<Error>(
+            format!("path {} needs to be valid UTF-8", secret_key_path.display()).into(),
+        )?;
+        let secret_key_url = "file://".to_owned() + secret_key_path;
+        let public_key_path = public_key_path.to_str().ok_or::<Error>(
+            format!("path {} needs to be valid UTF-8", public_key_path.display()).into(),
+        )?;
+        let public_key_url = "file://".to_owned() + public_key_path;
+
+        let secret_key_url = Url::parse(&secret_key_url).map_err::<Error, _>(|e| {
+            format!("unable to parse {secret_key_url} as URL: {e}").into()
+        })?;
+        let public_key_url = Url::parse(&public_key_url).map_err::<Error, _>(|e| {
+            format!("unable to parse {public_key_url} as URL: {e}").into()
+        })?;
+        Ok((public_key_url, secret_key_url, algorithm, key_tag))
+    }
 }
 
 fn update_dnskey_rrset(
@@ -1526,44 +1870,59 @@ fn update_dnskey_rrset(
         let pub_url = Url::parse(k).expect("valid URL expected");
 
         if present {
-            let zonefile = if pub_url.scheme() == "file" {
+            if pub_url.scheme() == "file" {
                 let path = pub_url.path();
                 let filename = env.in_cwd(&path);
                 let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                    format!("unable to open public key file {}: {e}", filename.display()).into()
+                    format!(
+                        "update_dnskey_rrset: unable to open public key file {}: {e}",
+                        filename.display()
+                    )
+                    .into()
                 })?;
-                domain::zonefile::inplace::Zonefile::load(&mut file).map_err::<Error, _>(|e| {
-                    format!("unable load zone from file {}: {e}", filename.display()).into()
-                })?
+                let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                    .map_err::<Error, _>(|e| {
+                        format!("unable load zone from file {}: {e}", filename.display()).into()
+                    })?;
+                for entry in zonefile {
+                    let entry = entry.map_err::<Error, _>(|e| {
+                        format!("bad entry in key file {k}: {e}\n").into()
+                    })?;
+
+                    // We only care about records in a zonefile
+                    let Entry::Record(record) = entry else {
+                        continue;
+                    };
+
+                    // Of the records that we see, we only care about DNSKEY records
+                    let ScannedRecordData::Dnskey(dnskey) = record.data() else {
+                        continue;
+                    };
+
+                    let record = Record::new(
+                        record
+                            .owner()
+                            .try_to_name::<Bytes>()
+                            .expect("should not fail"),
+                        record.class(),
+                        record.ttl(),
+                        dnskey.clone(),
+                    );
+
+                    dnskeys.push(record);
+                }
+            } else if pub_url.scheme() == "kmip" {
+                let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                    parse_kmip_key_url(ksc, pub_url)?;
+                let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
+                let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                let owner = kss.keyset.name().clone().flatten_into();
+                // TODO: Where does this TTL come from?
+                let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey.convert());
+                dnskeys.push(record);
             } else {
                 panic!("unsupported scheme in {pub_url}");
             };
-            for entry in zonefile {
-                let entry = entry
-                    .map_err::<Error, _>(|e| format!("bad entry in key file {k}: {e}\n").into())?;
-
-                // We only care about records in a zonefile
-                let Entry::Record(record) = entry else {
-                    continue;
-                };
-
-                // Of the records that we see, we only care about DNSKEY records
-                let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                    continue;
-                };
-
-                let record = Record::new(
-                    record
-                        .owner()
-                        .try_to_name::<Bytes>()
-                        .expect("should not fail"),
-                    record.class(),
-                    record.ttl(),
-                    dnskey.clone(),
-                );
-
-                dnskeys.push(record);
-            }
         }
     }
     let now = Timestamp::now().into_int();
@@ -1585,42 +1944,55 @@ fn update_dnskey_rrset(
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
             let priv_url = Url::parse(privref).expect("valid URL expected");
-            let private_data = if priv_url.scheme() == "file" {
-                std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
-                    format!("unable read from file {}: {e}", priv_url.path()).into()
-                })?
-            } else {
-                panic!("unsupported URL scheme in {priv_url}");
-            };
-            let secret_key =
-                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
-                    format!("unable to parse private key file {privref}: {e}").into()
-                })?;
             let pub_url = Url::parse(k).expect("valid URL expected");
-            let public_data = if pub_url.scheme() == "file" {
-                std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
-                    format!("unable read from file {}: {e}", pub_url.path()).into()
-                })?
-            } else {
-                panic!("unsupported URL scheme in {pub_url}");
-            };
-            let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
-                format!("unable to parse public key file {k}: {e}").into()
-            })?;
+            let signing_key = match (priv_url.scheme(), pub_url.scheme()) {
+                ("file", "file") => {
+                    let private_data = std::fs::read_to_string(priv_url.path())
+                        .map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", priv_url.path()).into()
+                        })?;
+                    let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to parse private key file {privref}: {e}").into()
+                        })?;
+                    let public_data = if pub_url.scheme() == "file" {
+                        std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", pub_url.path()).into()
+                        })?
+                    } else {
+                        panic!("unsupported URL scheme in {pub_url}");
+                    };
+                    let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
+                        format!("unable to parse public key file {k}: {e}").into()
+                    })?;
 
-            let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                .map_err::<Error, _>(|e| {
-                    format!("private key {privref} and public key {k} do not match: {e}").into()
-                })?;
-            let signing_key = SigningKey::new(
-                public_key.owner().clone(),
-                public_key.data().flags(),
-                key_pair,
-            );
-            let sig = sign_rrset::<_, _, Bytes, _>(&signing_key, &rrset, inception, expiration)
-                .map_err::<Error, _>(|e| {
-                format!("error signing DNSKEY RRset with private key {privref}: {e}").into()
-            })?;
+                    let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                        .map_err::<Error, _>(|e| {
+                            format!("private key {privref} and public key {k} do not match: {e}")
+                                .into()
+                        })?;
+                    SigningKey::new(
+                        public_key.owner().clone(),
+                        public_key.data().flags(),
+                        key_pair,
+                    )
+                }
+
+                ("kmip", "kmip") => {
+                    let owner = kss.keyset.name().clone().flatten_into();
+                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
+                }
+
+                (priv_scheme, pub_scheme) => {
+                    panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
+                }
+            };
+
+            // TODO: Should there be a key not found error we can detect here so that we can retry if
+            // we believe that the key is simply not registered fully yet in the HSM?
+            let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err::<Error, _>(
+                |e| format!("error signing DNSKEY RRset with private key {privref}: {e}").into(),
+            )?;
             sigs.push(sig);
         }
     }
@@ -1636,6 +2008,71 @@ fn update_dnskey_rrset(
     }
     println!("Got DNSKEY RRset: {:?}", kss.dnskey_rrset);
     Ok(())
+}
+
+fn kmip_signing_key_from_urls(
+    ksc: &KeySetConfig,
+    owner: Name<Bytes>,
+    priv_url: Url,
+    pub_url: Url,
+) -> Result<SigningKey<Bytes, KeyPair>, Error> {
+    let (server_id1, private_key_id, algorithm1, flags1, conn_settings1) =
+        parse_kmip_key_url(ksc, priv_url)?;
+    let (server_id2, public_key_id, algorithm2, flags2, conn_settings2) =
+        parse_kmip_key_url(ksc, pub_url)?;
+
+    assert_eq!(server_id1, server_id2);
+    assert_eq!(algorithm1, algorithm2);
+    assert_eq!(flags1, flags2);
+    assert_eq!(conn_settings1, conn_settings2);
+
+    let kmip_conn_pool = kmip_create_conn_pool(server_id1, conn_settings1.into())?;
+
+    let key_pair = KeyPair::Kmip(
+        kmip::sign::KeyPair::new(
+            algorithm1,
+            flags1,
+            &private_key_id,
+            &public_key_id,
+            kmip_conn_pool,
+        )
+        .map_err(|err| format!("{err}"))?,
+    );
+
+    Ok(SigningKey::new(owner, flags1, key_pair))
+}
+
+fn kmip_create_conn_pool(
+    server_id: String,
+    conn_settings: Arc<ConnectionSettings>,
+) -> Result<SyncConnPool, Error> {
+    // TODO: Should the timeouts used here be configurable and/or set to some
+    // other value?
+    let kmip_conn_pool = ConnectionManager::create_connection_pool(
+        server_id,
+        conn_settings,
+        1,
+        Some(Duration::from_secs(60)),
+        Some(Duration::from_secs(60)),
+    )
+    .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
+    Ok(kmip_conn_pool)
+}
+
+/// Obtain the DNSKEY RR for a given KMIP key.
+///
+/// Retries up to 3 times on error, with a hard-coded sleep between tries, to
+/// handle the case where the key has been very recently created and for some
+/// reason cannot be queried yet (seen with Fortanix DSM).
+fn kmip_get_dnskey(
+    public_key_id: String,
+    algorithm: SecurityAlgorithm,
+    flags: u16,
+    kmip_conn_pool: SyncConnPool,
+) -> Result<Dnskey<Vec<u8>>, Error> {
+    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool)
+        .map_err::<Error, _>(|err| format!("unable to fetch KMIP public key: {err}").into())?;
+    Ok(public_key.dnskey(flags))
 }
 
 fn create_cds_rrset(
@@ -1656,72 +2093,49 @@ fn create_cds_rrset(
 
         if at_parent {
             let pub_url = Url::parse(k).expect("valid URL expected");
-            let path = pub_url.path();
-            let filename = env.in_cwd(&path);
-            let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                format!("unable to open public key file {}: {e}", filename.display()).into()
-            })?;
-            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
-                .map_err::<Error, _>(|e| {
-                    format!("unable to read zone from file {}: {e}", filename.display()).into()
-                })?;
-            for entry in zonefile {
-                let entry = entry
-                    .map_err::<Error, _>(|e| format!("bad entry in key file {k}: {e}\n").into())?;
-
-                // We only care about records in a zonefile
-                let Entry::Record(record) = entry else {
-                    continue;
-                };
-
-                // Of the records that we see, we only care about DNSKEY records
-                let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                    continue;
-                };
-
-                let cdnskey = Cdnskey::new(
-                    dnskey.flags(),
-                    dnskey.protocol(),
-                    dnskey.algorithm(),
-                    dnskey.public_key().clone(),
-                )
-                .expect("should not fail");
-                let cdnskey_record = Record::new(
-                    record
-                        .owner()
-                        .try_to_name::<Bytes>()
-                        .expect("should not fail"),
-                    record.class(),
-                    record.ttl(),
-                    cdnskey,
-                );
-
-                cdnskey_list.push(cdnskey_record);
-
-                let key_tag = dnskey.key_tag();
-                let sec_alg = dnskey.algorithm();
-
-                let digest = dnskey
-                    .digest(&record.owner(), digest_alg)
-                    .map_err::<Error, _>(|e| {
-                        format!("error creating digest for DNSKEY record: {e}").into()
+            match pub_url.scheme() {
+                "file" => {
+                    let path = pub_url.path();
+                    let filename = env.in_cwd(&path);
+                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
+                        format!("unable to open public key file {}: {e}", filename.display()).into()
                     })?;
+                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to read zone from file {}: {e}", filename.display())
+                                .into()
+                        })?;
+                    for entry in zonefile {
+                        let entry = entry.map_err::<Error, _>(|e| {
+                            format!("bad entry in key file {k}: {e}\n").into()
+                        })?;
 
-                let cds = Cds::new(key_tag, sec_alg, digest_alg, digest.as_ref().to_vec()).expect(
-                    "Infallible because the digest won't be too long since it's a valid digest",
-                );
+                        // We only care about records in a zonefile
+                        let Entry::Record(record) = entry else {
+                            continue;
+                        };
 
-                let cds_record = Record::new(
-                    record
-                        .owner()
-                        .try_to_name::<Bytes>()
-                        .expect("should not fail"),
-                    record.class(),
-                    record.ttl(),
-                    cds,
-                );
+                        create_cds_rrset_helper(
+                            digest_alg,
+                            &mut cds_list,
+                            &mut cdnskey_list,
+                            record.flatten_into(),
+                        )?;
+                    }
+                }
 
-                cds_list.push(cds_record);
+                "kmip" => {
+                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                        parse_kmip_key_url(ksc, pub_url)?;
+                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
+                    let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                    let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
+                    let owner = kss.keyset.name().clone().flatten_into();
+                    let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey);
+                    create_cds_rrset_helper(digest_alg, &mut cds_list, &mut cdnskey_list, record)?;
+                }
+
+                _ => panic!("unsupported scheme in {pub_url}"),
             }
         }
 
@@ -1750,47 +2164,63 @@ fn create_cds_rrset(
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
             let priv_url = Url::parse(privref).expect("valid URL expected");
-            let path = priv_url.path();
-            let filename = env.in_cwd(&path);
-            let private_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                format!(
-                    "unable to read from private key file {}: {e}",
-                    filename.display()
-                )
-                .into()
-            })?;
-            let secret_key =
-                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
-                    format!(
-                        "unable to parse private key file {}: {e}",
-                        filename.display()
-                    )
-                    .into()
-                })?;
             let pub_url = Url::parse(k).expect("valid URL expected");
-            let path = pub_url.path();
-            let filename = env.in_cwd(&path);
-            let public_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                format!(
-                    "unable to read from public key file {}: {e}",
-                    filename.display()
-                )
-                .into()
-            })?;
-            let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
-                format!("unable to parse public key file {k}: {e}").into()
-            })?;
+            let signing_key = match (priv_url.scheme(), pub_url.scheme()) {
+                ("file", "file") => {
+                    let path = priv_url.path();
+                    let filename = env.in_cwd(&path);
+                    let private_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to read from private key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
+                        })?;
+                    let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
+                        .map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to parse private key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
+                        })?;
+                    let path = pub_url.path();
+                    let filename = env.in_cwd(&path);
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to read from public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
+                        })?;
+                    let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
+                        format!("unable to parse public key file {k}: {e}").into()
+                    })?;
 
-            let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                .map_err::<Error, _>(|e| {
-                    format!("private key {privref} and public key {k} do not match: {e}").into()
-                })?;
-            let signing_key = SigningKey::new(
-                public_key.owner().clone(),
-                public_key.data().flags(),
-                key_pair,
-            );
-            let sig = sign_rrset::<_, _, Bytes, _>(&signing_key, &cds_rrset, inception, expiration)
+                    let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                        .map_err::<Error, _>(|e| {
+                            format!("private key {privref} and public key {k} do not match: {e}")
+                                .into()
+                        })?;
+                    SigningKey::new(
+                        public_key.owner().clone(),
+                        public_key.data().flags(),
+                        key_pair,
+                    )
+                }
+
+                ("kmip", "kmip") => {
+                    let owner = kss.keyset.name().clone().flatten_into();
+                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
+                }
+
+                (priv_scheme, pub_scheme) => {
+                    panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
+                }
+            };
+            let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
                 .map_err::<Error, _>(|e| {
                     format!("error signing CDS RRset with private key {privref}: {e}").into()
                 })?;
@@ -1826,11 +2256,77 @@ fn create_cds_rrset(
     Ok(())
 }
 
+fn parse_kmip_key_url(
+    ksc: &KeySetConfig,
+    kmip_key_url: Url,
+) -> Result<(String, String, SecurityAlgorithm, u16, ConnectionSettings), Error> {
+    let key_url =
+        KeyUrl::try_from(kmip_key_url).map_err(|err| format!("Invalid KMIP key URL: {err}"))?;
+
+    let server_id = key_url.server_id();
+
+    // Lookup KMIP server connection details
+    let srv = ksc
+        .kmip_servers
+        .get(server_id)
+        .ok_or(format!("No KMIP server configured with id {server_id}"))?;
+
+    let mut conn_settings = ConnectionSettings::try_from(srv.clone())?;
+
+    if srv.server_username.is_some() {
+        conn_settings.username = srv.server_username.clone();
+    }
+    if srv.server_password.is_some() {
+        conn_settings.password = srv.server_password.clone();
+    }
+
+    Ok((
+        server_id.to_string(),
+        key_url.key_id().to_string(),
+        key_url.algorithm(),
+        key_url.flags(),
+        conn_settings,
+    ))
+}
+
+fn create_cds_rrset_helper(
+    digest_alg: DigestAlgorithm,
+    cds_list: &mut Vec<Record<Name<Bytes>, Cds<Vec<u8>>>>,
+    cdnskey_list: &mut Vec<Record<Name<Bytes>, Cdnskey<Vec<u8>>>>,
+    record: Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+) -> Result<(), Error> {
+    let owner = record.owner().clone();
+    let ZoneRecordData::Dnskey(dnskey) = record.data() else {
+        return Ok(());
+    };
+    let dnskey: Dnskey<Vec<u8>> = dnskey.clone().convert();
+    let cdnskey = Cdnskey::new(
+        dnskey.flags(),
+        dnskey.protocol(),
+        dnskey.algorithm(),
+        dnskey.public_key().clone(),
+    )
+    .expect("should not fail");
+    let cdnskey_record = Record::new(owner.clone(), record.class(), record.ttl(), cdnskey);
+    cdnskey_list.push(cdnskey_record);
+    let key_tag = dnskey.key_tag();
+    let sec_alg = dnskey.algorithm();
+    let digest = dnskey
+        .digest(&record.owner(), digest_alg)
+        .map_err::<Error, _>(|e| format!("error creating digest for DNSKEY record: {e}").into())?;
+    let cds = Cds::new(key_tag, sec_alg, digest_alg, digest.as_ref().to_vec())
+        .expect("Infallible because the digest won't be too long since it's a valid digest");
+    let cds_record = Record::new(owner, record.class(), record.ttl(), cds);
+    cds_list.push(cds_record);
+    Ok(())
+}
+
 fn remove_cds_rrset(kss: &mut KeySetState) {
     kss.cds_rrset.truncate(0);
 }
 
 fn update_ds_rrset(
+    ksc: &KeySetConfig,
     kss: &mut KeySetState,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
@@ -1846,46 +2342,89 @@ fn update_ds_rrset(
 
         if at_parent {
             let pub_url = Url::parse(k).expect("valid URL expected");
-            let path = pub_url.path();
-            let filename = env.in_cwd(&path);
-            let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                format!("unable to open public key file {}: {e}", filename.display()).into()
-            })?;
-            let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
-                .map_err::<Error, _>(|e| {
-                    format!("unable to read zone from file {}: {e}", filename.display()).into()
-                })?;
-            for entry in zonefile {
-                let entry = entry
-                    .map_err::<Error, _>(|e| format!("bad entry in key file {k}: {e}\n").into())?;
-
-                // We only care about records in a zonefile
-                let Entry::Record(record) = entry else {
-                    continue;
-                };
-
-                // Of the records that we see, we only care about DNSKEY records
-                let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                    continue;
-                };
-
-                let key_tag = dnskey.key_tag();
-                let sec_alg = dnskey.algorithm();
-
-                let digest = dnskey
-                    .digest(&record.owner(), digest_alg)
-                    .map_err::<Error, _>(|e| {
-                        format!("error creating digest for DNSKEY record: {e}").into()
+            match pub_url.scheme() {
+                "file" => {
+                    let path = pub_url.path();
+                    let filename = env.in_cwd(&path);
+                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
+                        format!(
+                            "update_ds_rrset: unable to open public key file {}: {e}",
+                            filename.display()
+                        )
+                        .into()
                     })?;
+                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to read zone from file {}: {e}", filename.display())
+                                .into()
+                        })?;
+                    for entry in zonefile {
+                        let entry = entry.map_err::<Error, _>(|e| {
+                            format!("bad entry in key file {k}: {e}\n").into()
+                        })?;
 
-                let ds = Ds::new(key_tag, sec_alg, digest_alg, digest.as_ref().to_vec()).expect(
-                    "Infallible because the digest won't be too long since it's a valid digest",
-                );
+                        // We only care about records in a zonefile
+                        let Entry::Record(record) = entry else {
+                            continue;
+                        };
 
-                let ds_record =
-                    Record::new(record.owner().clone(), record.class(), record.ttl(), ds);
+                        // Of the records that we see, we only care about DNSKEY records
+                        let ScannedRecordData::Dnskey(dnskey) = record.data() else {
+                            continue;
+                        };
 
-                ds_list.push(ds_record);
+                        let digest = dnskey
+                            .digest(&record.owner(), digest_alg)
+                            .map_err::<Error, _>(|e| {
+                                format!("error creating digest for DNSKEY record: {e}").into()
+                            })?;
+
+                        let ds = Ds::new(dnskey.key_tag(), dnskey.algorithm(), digest_alg, digest.as_ref().to_vec()).expect(
+                            "Infallible because the digest won't be too long since it's a valid digest",
+                        );
+
+                        let ds_record = Record::new(
+                            record.owner().clone().flatten_into(),
+                            record.class(),
+                            record.ttl(),
+                            ds,
+                        );
+
+                        ds_list.push(ds_record);
+                    }
+                }
+
+                "kmip" => {
+                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                        parse_kmip_key_url(ksc, pub_url)?;
+                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
+                    let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                    let owner: Name<Bytes> = kss.keyset.name().clone().flatten_into();
+                    let record =
+                        Record::new(owner.clone(), Class::IN, Ttl::from_days(1), dnskey.clone());
+
+                    let digest = dnskey
+                        .digest(&record.owner(), digest_alg)
+                        .map_err::<Error, _>(|e| {
+                            format!("error creating digest for DNSKEY record: {e}").into()
+                        })?;
+
+                    let ds = Ds::new(
+                        dnskey.key_tag(),
+                        dnskey.algorithm(),
+                        digest_alg,
+                        digest.as_ref().to_vec(),
+                    )
+                    .expect(
+                        "Infallible because the digest won't be too long since it's a valid digest",
+                    );
+
+                    let ds_record = Record::new(owner, record.class(), record.ttl(), ds);
+
+                    ds_list.push(ds_record);
+                }
+
+                _ => panic!("unsupported scheme in {pub_url}"),
             }
         }
     }
@@ -1914,7 +2453,7 @@ fn handle_actions(
             }
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
-                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
+                update_ds_rrset(ksc, kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),

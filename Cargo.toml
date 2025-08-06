@@ -27,7 +27,7 @@ ring = ["domain/ring"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "bytes",
     "net",
     "resolv",
@@ -37,12 +37,14 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and
     "unstable-sign",
     "unstable-validator",
     "unstable-zonetree",
+    "kmip",
 ] }
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
+kmip = { git = "https://github.com/NLnetLabs/kmip-protocol", branch = "next", package = "kmip-protocol", version = "0.5.0", features = ["tls-with-openssl-vendored"] } # TLS features should match those used by domain.
 
 # LDNS-xxx mode specific dependencies.
 # TODO: put these behind a feature gate?
@@ -55,7 +57,7 @@ _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 serde_json = "1.0.137"
 serde = "1.0.217"
 tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19"}
 url = "2.5.4"
 
 [dev-dependencies]
@@ -63,7 +65,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
