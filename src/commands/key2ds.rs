@@ -45,6 +45,13 @@ pub struct Key2ds {
     /// Keyfile to read
     #[arg()]
     keyfile: PathBuf,
+
+    // -----------------------------------------------------------------------
+    // Non-command line argument fields:
+    // -----------------------------------------------------------------------
+    /// Whether or not we were invoked as `ldns-key2ds`.
+    #[arg(skip = false)]
+    invoked_as_ldns: bool,
 }
 
 pub fn parse_digest_alg(arg: &str) -> Result<DigestAlgorithm, Error> {
@@ -123,6 +130,7 @@ impl LdnsCommand for Key2ds {
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
+            invoked_as_ldns: true,
         })))
     }
 }
@@ -166,9 +174,13 @@ impl Key2ds {
 
             let key_tag = dnskey.key_tag();
             let sec_alg = dnskey.algorithm();
-            let digest_alg = self
-                .algorithm
-                .unwrap_or_else(|| determine_hash_from_sec_alg(sec_alg));
+            let digest_alg = if let Some(alg) = self.algorithm {
+                alg
+            } else if self.invoked_as_ldns {
+                determine_hash_from_sec_alg(sec_alg).unwrap_or(DigestAlgorithm::SHA1)
+            } else {
+                determine_hash_from_sec_alg(sec_alg)?
+            };
 
             if digest_alg == DigestAlgorithm::GOST {
                 return Err("Error: the GOST algorithm is deprecated and must not be used. Try a different algorithm.".into());
@@ -226,16 +238,20 @@ impl Key2ds {
     }
 }
 
-fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> DigestAlgorithm {
+fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> Result<DigestAlgorithm, Error> {
     match sec_alg {
         SecurityAlgorithm::RSASHA256
         | SecurityAlgorithm::RSASHA512
         | SecurityAlgorithm::ED25519
         | SecurityAlgorithm::ED448
-        | SecurityAlgorithm::ECDSAP256SHA256 => DigestAlgorithm::SHA256,
-        SecurityAlgorithm::ECDSAP384SHA384 => DigestAlgorithm::SHA384,
-        SecurityAlgorithm::ECC_GOST => DigestAlgorithm::GOST,
-        _ => DigestAlgorithm::SHA1,
+        | SecurityAlgorithm::ECDSAP256SHA256 => Ok(DigestAlgorithm::SHA256),
+        SecurityAlgorithm::ECDSAP384SHA384 => Ok(DigestAlgorithm::SHA384),
+        SecurityAlgorithm::ECC_GOST => Ok(DigestAlgorithm::GOST),
+        _ => Err(concat!(
+            "Unable to derive digest algorithm from used key algorithm. ",
+            "Please select a digest algorithm using --algorithm."
+        )
+        .into()),
     }
 }
 
@@ -276,6 +292,7 @@ mod test {
             force_overwrite: false,
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: false,
         };
 
         // Check the defaults
@@ -365,6 +382,7 @@ mod test {
             force_overwrite: true, // note that this is true
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: true,
         };
 
         // Check the defaults
@@ -426,6 +444,11 @@ mod test {
             ",
         )
         .unwrap();
+        let mut file = File::create(dir.path().join("key3.key")).unwrap();
+        // DSA Key for fallback testing
+        file
+            .write_all(b".   IN  DNSKEY  256 3 3 CJ7RxFssAV8F41ftNWyGNW6eo49FhiDQpuR1Nop1dIzcFVD15Do76z1mZaLoheVttGMtE3jah0gFThjyUeBI65pmofV1pALXzrfbyDsoKJM2cjdaqICr9Zg/OcQ4yqkkJpTt1+e+w8xv6YrBOrvSwYwOIUGkj2ci/84HXC90W8I8ph6MHk1vaYmGoOS9wM+S9x2RO6sxD/UtB4QUGFp1qDlFc+C4dc1kB+rs868C004mRGoHe+PHHeDXdfKwr5zVpdgPc85TkBJAY82XYfzIE7rUpXFI4JzRE1Lz1Mu7rXZnwNve6bVykghJ8uOAaDO1KFLdIgThqJh1N8XMSinNKhPwU2qPMX7dsC5hh82BHg04fc3O2hzUG3A1z49i6Hbqa+zgvJe70AQZdqiFSaOpfgC6a8wRfdyGSTYBxsi2YhG2G1/x6qr8sToEeZjq9awPRY+bXT8kJijg9AH9/adrjvF77m+NJASepFTre40I79+Ymo3fnjFU1oSnsGTB91tQbbSNV55fd5Jsqndj9AJkhYJUpbVN ;{id = 15147 (zsk), size = 1024b}\n")
+            .unwrap();
 
         dir
     }
@@ -499,5 +522,36 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
         assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn ldns_algorithm_fallback() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["ldns-key2ds", "-nf", "key3.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            ". 3600 IN DS 15147 3 1 DBCCC2CC359D4661AB39C72898EF58E9CDCD27AB\n"
+        );
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn dnst_algorithm_fallback_err() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "-n", "--ignore-sep", "key3.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 1);
+        assert_eq!(res.stdout, "");
+        assert!(res.stderr.contains(
+            "Unable to derive digest algorithm from used key algorithm. Please select a digest algorithm using --algorithm."
+        ));
     }
 }
