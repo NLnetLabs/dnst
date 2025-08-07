@@ -271,7 +271,7 @@ fn write_rr_as_ldns<W: io::Write, N: ToName, D: RecordData + Display>(
 ) -> Result<(), io::Error> {
     writeln!(
         w,
-        "{} {} {} {} {}",
+        "{}\t{}\t{}\t{}\t{}",
         rr.owner().fmt_with_dot(),
         rr.ttl().as_secs(),
         rr.class(),
@@ -560,7 +560,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "example.test. 3600 IN DS 60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n"
+            "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n"
         );
         assert_eq!(res.stderr, "");
 
@@ -571,7 +571,7 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
-        assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n");
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n");
     }
 
     #[test]
@@ -585,7 +585,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            ". 3600 IN DS 15147 3 1 dbccc2cc359d4661ab39c72898ef58e9cdcd27ab\n"
+            ".\t3600\tIN\tDS\t15147 3 1 dbccc2cc359d4661ab39c72898ef58e9cdcd27ab\n"
         );
         assert_eq!(res.stderr, "");
     }
