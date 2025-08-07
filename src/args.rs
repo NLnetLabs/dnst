@@ -12,7 +12,7 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Command,
 
-    /// Verbosity. 0-5 or level name ("off" to "trace")
+    /// Verbosity: 0-5 or a level name ("off", "error", "warn", "info", "debug" or "trace")
     #[arg(
         short = 'v',
         long = "verbosity",
