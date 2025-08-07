@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
@@ -6,8 +7,8 @@ use std::path::PathBuf;
 use clap::builder::ValueParser;
 use clap::Parser;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
-use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
-use domain::base::Record;
+use domain::base::zonefile_fmt::ZonefileFmt;
+use domain::base::{Record, RecordData, ToName};
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::Ds;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
@@ -15,7 +16,7 @@ use lexopt::Arg;
 
 use crate::env::Env;
 use crate::error::Error;
-use crate::Args;
+use crate::{Args, DISPLAY_KIND};
 
 use super::{Command, LdnsCommand};
 
@@ -45,6 +46,13 @@ pub struct Key2ds {
     /// Keyfile to read
     #[arg()]
     keyfile: PathBuf,
+
+    // -----------------------------------------------------------------------
+    // Non-command line argument fields:
+    // -----------------------------------------------------------------------
+    /// Whether or not we were invoked as `ldns-key2ds`.
+    #[arg(skip = false)]
+    invoked_as_ldns: bool,
 }
 
 pub fn parse_digest_alg(arg: &str) -> Result<DigestAlgorithm, Error> {
@@ -123,6 +131,7 @@ impl LdnsCommand for Key2ds {
             // present in the ldns version of this command.
             force_overwrite: true,
             keyfile: keyfile.into(),
+            invoked_as_ldns: true,
         })))
     }
 }
@@ -166,9 +175,13 @@ impl Key2ds {
 
             let key_tag = dnskey.key_tag();
             let sec_alg = dnskey.algorithm();
-            let digest_alg = self
-                .algorithm
-                .unwrap_or_else(|| determine_hash_from_sec_alg(sec_alg));
+            let digest_alg = if let Some(alg) = self.algorithm {
+                alg
+            } else if self.invoked_as_ldns {
+                determine_hash_from_sec_alg(sec_alg).unwrap_or(DigestAlgorithm::SHA1)
+            } else {
+                determine_hash_from_sec_alg(sec_alg)?
+            };
 
             if digest_alg == DigestAlgorithm::GOST {
                 return Err("Error: the GOST algorithm is deprecated and must not be used. Try a different algorithm.".into());
@@ -185,7 +198,11 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(DisplayKind::Simple));
+                if self.invoked_as_ldns {
+                    let _ = write_rr_as_ldns(&env.stdout(), &rr);
+                } else {
+                    writeln!(env.stdout(), "{}", rr.display_zonefile(DISPLAY_KIND));
+                }
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -215,8 +232,13 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(DisplayKind::Simple))
-                    .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                if self.invoked_as_ldns {
+                    write_rr_as_ldns(out_file, &rr)
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                } else {
+                    writeln!(out_file, "{}", rr.display_zonefile(DISPLAY_KIND))
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                }
 
                 writeln!(env.stdout(), "{keyname}");
             }
@@ -226,17 +248,36 @@ impl Key2ds {
     }
 }
 
-fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> DigestAlgorithm {
+fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> Result<DigestAlgorithm, Error> {
     match sec_alg {
         SecurityAlgorithm::RSASHA256
         | SecurityAlgorithm::RSASHA512
         | SecurityAlgorithm::ED25519
         | SecurityAlgorithm::ED448
-        | SecurityAlgorithm::ECDSAP256SHA256 => DigestAlgorithm::SHA256,
-        SecurityAlgorithm::ECDSAP384SHA384 => DigestAlgorithm::SHA384,
-        SecurityAlgorithm::ECC_GOST => DigestAlgorithm::GOST,
-        _ => DigestAlgorithm::SHA1,
+        | SecurityAlgorithm::ECDSAP256SHA256 => Ok(DigestAlgorithm::SHA256),
+        SecurityAlgorithm::ECDSAP384SHA384 => Ok(DigestAlgorithm::SHA384),
+        SecurityAlgorithm::ECC_GOST => Ok(DigestAlgorithm::GOST),
+        _ => Err(concat!(
+            "Unable to derive digest algorithm from used key algorithm. ",
+            "Please select a digest algorithm using --algorithm."
+        )
+        .into()),
     }
+}
+
+fn write_rr_as_ldns<W: io::Write, N: ToName, D: RecordData + Display>(
+    mut w: W,
+    rr: &Record<N, D>,
+) -> Result<(), io::Error> {
+    writeln!(
+        w,
+        "{}\t{}\t{}\t{}\t{}",
+        rr.owner().fmt_with_dot(),
+        rr.ttl().as_secs(),
+        rr.class(),
+        rr.rtype(),
+        rr.data()
+    )
 }
 
 #[cfg(test)]
@@ -276,6 +317,7 @@ mod test {
             force_overwrite: false,
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: false,
         };
 
         // Check the defaults
@@ -365,6 +407,7 @@ mod test {
             force_overwrite: true, // note that this is true
             algorithm: None,
             keyfile: PathBuf::from("keyfile1.key"),
+            invoked_as_ldns: true,
         };
 
         // Check the defaults
@@ -426,6 +469,11 @@ mod test {
             ",
         )
         .unwrap();
+        let mut file = File::create(dir.path().join("key3.key")).unwrap();
+        // DSA Key for fallback testing
+        file
+            .write_all(b".   IN  DNSKEY  256 3 3 CJ7RxFssAV8F41ftNWyGNW6eo49FhiDQpuR1Nop1dIzcFVD15Do76z1mZaLoheVttGMtE3jah0gFThjyUeBI65pmofV1pALXzrfbyDsoKJM2cjdaqICr9Zg/OcQ4yqkkJpTt1+e+w8xv6YrBOrvSwYwOIUGkj2ci/84HXC90W8I8ph6MHk1vaYmGoOS9wM+S9x2RO6sxD/UtB4QUGFp1qDlFc+C4dc1kB+rs868C004mRGoHe+PHHeDXdfKwr5zVpdgPc85TkBJAY82XYfzIE7rUpXFI4JzRE1Lz1Mu7rXZnwNve6bVykghJ8uOAaDO1KFLdIgThqJh1N8XMSinNKhPwU2qPMX7dsC5hh82BHg04fc3O2hzUG3A1z49i6Hbqa+zgvJe70AQZdqiFSaOpfgC6a8wRfdyGSTYBxsi2YhG2G1/x6qr8sToEeZjq9awPRY+bXT8kJijg9AH9/adrjvF77m+NJASepFTre40I79+Ymo3fnjFU1oSnsGTB91tQbbSNV55fd5Jsqndj9AJkhYJUpbVN ;{id = 15147 (zsk), size = 1024b}\n")
+            .unwrap();
 
         dir
     }
@@ -441,7 +489,7 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
-        assert_eq!(out, "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n");
     }
 
     #[test]
@@ -455,10 +503,10 @@ mod test {
         assert_eq!(res.stderr, "");
 
         let out = std::fs::read_to_string(dir.path().join("Kone.test.+015+38429.ds")).unwrap();
-        assert_eq!(out, "one.test. 3600 IN DS 38429 15 2 B85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
+        assert_eq!(out, "one.test.\t3600\tIN\tDS\t38429 15 2 B85F7D27C48A7B84D633C7A41C3022EA0F7FC80896227B61AE7BFC59BF5F0256\n");
 
         let out = std::fs::read_to_string(dir.path().join("Ktwo.test.+015+00425.ds")).unwrap();
-        assert_eq!(out, "two.test. 3600 IN DS 425 15 2 AA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
+        assert_eq!(out, "two.test.\t3600\tIN\tDS\t425 15 2 AA2030287A7C5C56CB3C0E9C64BE55616729C0C78DE2B83613D03B10C0F1EA93\n");
     }
 
     #[test]
@@ -472,7 +520,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            "example.test. 3600 IN DS 60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
+            "example.test.\t3600\tIN\tDS\t60136 15 2 52BD3BF40C8220BF1A3E2A3751C423BC4B69BCD7F328D38C4CD021A85DE65AD4\n"
         );
         assert_eq!(res.stderr, "");
     }
@@ -499,5 +547,61 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
         assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn ldns_lowercase_digest() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["ldns-key2ds", "-n", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n"
+        );
+        assert_eq!(res.stderr, "");
+
+        let res = FakeCmd::new(["ldns-key2ds", "key1.key"]).cwd(&dir).run();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
+        assert_eq!(res.stderr, "");
+
+        let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n");
+    }
+
+    #[test]
+    fn ldns_algorithm_fallback() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["ldns-key2ds", "-nf", "key3.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            ".\t3600\tIN\tDS\t15147 3 1 dbccc2cc359d4661ab39c72898ef58e9cdcd27ab\n"
+        );
+        assert_eq!(res.stderr, "");
+    }
+
+    #[test]
+    fn dnst_algorithm_fallback_err() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["dnst", "key2ds", "-n", "--ignore-sep", "key3.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 1);
+        assert_eq!(res.stdout, "");
+        assert!(res.stderr.contains(
+            "Unable to derive digest algorithm from used key algorithm. Please select a digest algorithm using --algorithm."
+        ));
     }
 }
