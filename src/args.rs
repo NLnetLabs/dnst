@@ -4,6 +4,7 @@ use super::commands::Command;
 use super::error::Error;
 
 use clap::Parser;
+use tracing::level_filters::LevelFilter;
 
 #[derive(Clone, Debug, Parser)]
 #[command(version, disable_help_subcommand = true)]
@@ -16,9 +17,9 @@ pub struct Args {
         short = 'v',
         long = "verbosity",
         value_name = "level",
-        default_value_t = tracing_subscriber::filter::LevelFilter::from_level(tracing::Level::WARN),
+        default_value_t = LevelFilter::from_level(tracing::Level::WARN),
     )]
-    pub verbosity: tracing_subscriber::filter::LevelFilter,
+    pub verbosity: LevelFilter,
 }
 
 impl Args {
@@ -31,7 +32,7 @@ impl From<Command> for Args {
     fn from(value: Command) -> Self {
         Args {
             command: value,
-            verbosity: tracing_subscriber::filter::LevelFilter::from_level(tracing::Level::WARN),
+            verbosity: LevelFilter::from_level(tracing::Level::WARN),
         }
     }
 }
