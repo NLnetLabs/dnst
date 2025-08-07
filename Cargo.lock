@@ -340,7 +340,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?rev=a3e7ab0bc248bada2c2564bf77ddc58010d4ce25#a3e7ab0bc248bada2c2564bf77ddc58010d4ce25"
+source = "git+https://github.com/NLnetLabs/domain.git?rev=17fb0e38120c9939ca28462af082d88ae8bc8b1d#17fb0e38120c9939ca28462af082d88ae8bc8b1d"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -372,7 +372,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?rev=a3e7ab0bc248bada2c2564bf77ddc58010d4ce25#a3e7ab0bc248bada2c2564bf77ddc58010d4ce25"
+source = "git+https://github.com/NLnetLabs/domain.git?rev=17fb0e38120c9939ca28462af082d88ae8bc8b1d#17fb0e38120c9939ca28462af082d88ae8bc8b1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -797,9 +797,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-src"
-version = "300.5.0+3.5.0"
+version = "300.5.1+3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8ce546f549326b0e6052b649198487d91320875da901e7bd11a06d1ee3f9c2f"
+checksum = "735230c832b28c000e3bc117119e6466a663ec73506bc0a9907ea4187508e42a"
 dependencies = [
  "cc",
 ]
