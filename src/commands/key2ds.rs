@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
@@ -7,7 +8,7 @@ use clap::builder::ValueParser;
 use clap::Parser;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::Record;
+use domain::base::{Record, RecordData, ToName};
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::Ds;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
@@ -197,7 +198,11 @@ impl Key2ds {
             let rr = Record::new(owner, class, ttl, ds);
 
             if self.write_to_stdout {
-                writeln!(env.stdout(), "{}", rr.display_zonefile(DISPLAY_KIND));
+                if self.invoked_as_ldns {
+                    let _ = write_rr_as_ldns(&env.stdout(), &rr);
+                } else {
+                    writeln!(env.stdout(), "{}", rr.display_zonefile(DISPLAY_KIND));
+                }
             } else {
                 let owner = owner.fmt_with_dot();
                 let sec_alg = sec_alg.to_int();
@@ -227,8 +232,13 @@ impl Key2ds {
                 let mut out_file =
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
-                writeln!(out_file, "{}", rr.display_zonefile(DISPLAY_KIND))
-                    .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                if self.invoked_as_ldns {
+                    write_rr_as_ldns(out_file, &rr)
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                } else {
+                    writeln!(out_file, "{}", rr.display_zonefile(DISPLAY_KIND))
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                }
 
                 writeln!(env.stdout(), "{keyname}");
             }
@@ -253,6 +263,21 @@ fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> Result<DigestAlgor
         )
         .into()),
     }
+}
+
+fn write_rr_as_ldns<W: io::Write, N: ToName, D: RecordData + Display>(
+    mut w: W,
+    rr: &Record<N, D>,
+) -> Result<(), io::Error> {
+    writeln!(
+        w,
+        "{}\t{}\t{}\t{}\t{}",
+        rr.owner().fmt_with_dot(),
+        rr.ttl().as_secs(),
+        rr.class(),
+        rr.rtype(),
+        rr.data()
+    )
 }
 
 #[cfg(test)]
@@ -525,6 +550,31 @@ mod test {
     }
 
     #[test]
+    fn ldns_lowercase_digest() {
+        let dir = run_setup();
+
+        let res = FakeCmd::new(["ldns-key2ds", "-n", "key1.key"])
+            .cwd(&dir)
+            .run();
+
+        assert_eq!(res.exit_code, 0);
+        assert_eq!(
+            res.stdout,
+            "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n"
+        );
+        assert_eq!(res.stderr, "");
+
+        let res = FakeCmd::new(["ldns-key2ds", "key1.key"]).cwd(&dir).run();
+
+        assert_eq!(res.exit_code, 0, "{res:?}");
+        assert_eq!(res.stdout, "Kexample.test.+015+60136\n");
+        assert_eq!(res.stderr, "");
+
+        let out = std::fs::read_to_string(dir.path().join("Kexample.test.+015+60136.ds")).unwrap();
+        assert_eq!(out, "example.test.\t3600\tIN\tDS\t60136 15 2 52bd3bf40c8220bf1a3e2a3751c423bc4b69bcd7f328d38c4cd021a85de65ad4\n");
+    }
+
+    #[test]
     fn ldns_algorithm_fallback() {
         let dir = run_setup();
 
@@ -535,7 +585,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            ". 3600 IN DS 15147 3 1 DBCCC2CC359D4661AB39C72898EF58E9CDCD27AB\n"
+            ".\t3600\tIN\tDS\t15147 3 1 dbccc2cc359d4661ab39c72898ef58e9cdcd27ab\n"
         );
         assert_eq!(res.stderr, "");
     }
