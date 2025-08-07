@@ -1264,20 +1264,7 @@ impl SignZone {
                             && rrset.owner() == apex)
                 }) {
                     for rr in rrset.iter() {
-                        if self.invoked_as_ldns {
-                            if let ZoneRecordData::Nsec3(nsec3) = rr.data() {
-                                let rr =
-                                    Record::new(rr.owner(), rr.class(), rr.ttl(), LdnsNsec3(nsec3));
-                                writer.write_fmt(format_args!(
-                                    "{}",
-                                    rr.display_zonefile(DISPLAY_KIND)
-                                ))?;
-                            } else {
-                                self.write_rr(&mut writer, rr)?;
-                            }
-                        } else {
-                            self.write_rr(&mut writer, rr)?;
-                        }
+                        self.write_rr(&mut writer, rr)?;
 
                         match rr.data() {
                             ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
@@ -1389,6 +1376,13 @@ impl SignZone {
         if self.use_yyyymmddhhmmss_rrsig_format {
             if let ZoneRecordData::Rrsig(rrsig) = rr.data() {
                 let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
+                return writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)));
+            }
+        }
+
+        if self.invoked_as_ldns {
+            if let ZoneRecordData::Nsec3(nsec3) = rr.data() {
+                let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), LdnsNsec3(nsec3));
                 return writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)));
             }
         }
