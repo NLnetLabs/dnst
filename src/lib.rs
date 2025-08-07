@@ -100,8 +100,9 @@ fn parse_args(env: impl Env) -> Result<Args, Error> {
 
 pub fn run(env: impl Env) -> u8 {
     let stderr = env.stderr();
-    match parse_args(&env) {
-        Ok(args) => {
+
+    parse_args(&env)
+        .and_then(|args| {
             let subscriber = tracing_subscriber::FmtSubscriber::builder()
                 .with_ansi(stderr.is_terminal())
                 .with_writer(stderr)
@@ -111,20 +112,11 @@ pub fn run(env: impl Env) -> u8 {
                 })
                 .finish();
 
-            tracing::subscriber::with_default(subscriber, || {
-                let res = args.execute(&env);
-                match res {
-                    Ok(()) => 0,
-                    Err(err) => {
-                        err.pretty_print(&env);
-                        err.exit_code()
-                    }
-                }
-            })
-        }
-        Err(err) => {
+            tracing::subscriber::with_default(subscriber, || args.execute(&env))
+        })
+        .map(|()| 0)
+        .unwrap_or_else(|err| {
             err.pretty_print(&env);
             err.exit_code()
-        }
-    }
+        })
 }
