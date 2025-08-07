@@ -1258,10 +1258,17 @@ impl SignZone {
             if self.order_rrsigs_after_the_rtype_they_cover {
                 for rrset in owner_rrs.rrsets().filter(|rrset| {
                     !(matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG)
-                        || self.invoked_as_ldns
+                    // If run as ldns-signzone we want to list the NSEC RR
+                    // at the end of the RRset of the apex. By default,
+                    // the NSEC RR would preceed the DNSKEY RRset, so we
+                    // need to filter it out here to manually reinsert it
+                    // later. This is only necessary for the NSEC RR at
+                    // the apex, as the ordering issue doesn't appear at
+                    // other locations than the apex.
+                        || (self.invoked_as_ldns
                             && !self.use_nsec3
                             && rrset.rtype() == Rtype::NSEC
-                            && rrset.owner() == apex)
+                            && rrset.owner() == apex))
                 }) {
                     for rr in rrset.iter() {
                         self.write_rr(&mut writer, rr)?;
@@ -1292,9 +1299,9 @@ impl SignZone {
                             this_rrset.iter().filter(|rr| {
                                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig)
                                     if rrsig.type_covered() == rrset.rtype()
-                                        // && (!self.invoked_as_ldns || rr.owner() != apex
-                                        //     || (rr.owner() == apex && rrsig.type_covered() != Rtype::NSEC))
                                         && if self.invoked_as_ldns && rr.owner() == apex {
+                                            // Withhold an RRSIG that covers the NSEC of the apex
+                                            // as we' reinserting them at the end of the apex' RRsets
                                             rrsig.type_covered() != Rtype::NSEC
                                         } else { true }
                                 )
@@ -1307,6 +1314,11 @@ impl SignZone {
                     }
                 }
 
+                // If running as ldns-signzone, we've been withholding the NSEC and NSEC's RRSIG at
+                // the apex above to reinsert them after all other RRsets at the apex. By default,
+                // the DNSKEY RRset and it's RRSIG would take the rear of the RRsets at the apex.
+                // This doesn't apply, if we're using NSEC3. Additionally, the NSEC RRs at other
+                // places than the apex do not have the ordering issue.
                 if self.invoked_as_ldns && !self.use_nsec3 && owner_rrs.owner() == apex {
                     for covering_nsec in owner_rrs
                         .rrsets()
