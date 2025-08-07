@@ -186,14 +186,7 @@ pub struct SignZone {
     allow_zonemd_without_signing: bool,
 
     /// Hashing algorithm.
-    #[arg(
-        help_heading = Some("NSEC3 (when using '-n')"),
-        short = 'a',
-        value_name = "algorithm",
-        default_value = "SHA-1",
-        value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg),
-        requires = "nsec3"
-    )]
+    #[arg(skip = Nsec3HashAlgorithm::SHA1)]
     algorithm: Nsec3HashAlgorithm,
 
     /// Number of hash iterations.
