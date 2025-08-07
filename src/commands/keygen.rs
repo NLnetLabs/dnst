@@ -16,7 +16,7 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args};
+use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
@@ -369,7 +369,7 @@ impl Keygen {
                 self.name.fmt_with_dot(),
                 Ds::new(key_tag, algorithm, digest_alg, digest)
                     .expect("we generated the digest, so don't expect it to be too long")
-                    .display_zonefile(DisplayKind::Simple)
+                    .display_zonefile(DISPLAY_KIND)
             )
         });
 

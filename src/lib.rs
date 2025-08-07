@@ -9,11 +9,10 @@ use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
 use commands::update::Update;
 use commands::LdnsCommand;
+use domain::base::zonefile_fmt::DisplayKind;
 use env::Env;
 use error::{Error, PrettyPrintTarget};
 use log::LogFormatter;
-
-use domain::base::zonefile_fmt::DisplayKind;
 
 pub use self::args::Args;
 
