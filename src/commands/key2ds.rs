@@ -585,7 +585,7 @@ mod test {
         assert_eq!(res.exit_code, 0);
         assert_eq!(
             res.stdout,
-            ". 3600 IN DS 15147 3 1 DBCCC2CC359D4661AB39C72898EF58E9CDCD27AB\n"
+            ". 3600 IN DS 15147 3 1 dbccc2cc359d4661ab39c72898ef58e9cdcd27ab\n"
         );
         assert_eq!(res.stderr, "");
     }
