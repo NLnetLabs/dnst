@@ -99,7 +99,7 @@ impl<T: io::Write> Stream<T> {
         if let Err(e) = self.writer.lock().unwrap().deref_mut().write_fmt(args) {
             // This will panic, if stderr is also broken, but then neither the
             // panic nor this error would be printed out.
-            eprintln!("failed printing to stdout: {e}");
+            eprintln!("dnst: failed printing to stdout: {e}");
             // using exit(101) to replicate rust's default error exit code
             std::process::exit(101);
         }
