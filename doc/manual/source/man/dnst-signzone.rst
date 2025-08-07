@@ -140,10 +140,6 @@ NSEC3 options
 The following options can be used with ``-n`` to override the default NSEC3
 settings used.
 
-.. option:: -a <ALGORITHM NUMBER OR MNEMONIC>
-
-      Specify the hashing algorithm. Defaults to SHA-1.
-
 .. option:: -s <STRING>
 
       Specify the salt as a hex string. Defaults to ``-``, meaning empty salt.
