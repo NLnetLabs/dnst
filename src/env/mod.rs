@@ -101,7 +101,11 @@ impl<T: io::Write> Stream<T> {
             // terminates before we do. Note: If stderr is also broken this
             // will panc, but then neither the panic nor this error would be
             // printed out.
-            let prog = std::env::args_os().next().unwrap().to_string_lossy().to_string();
+            let prog = std::env::args_os()
+                .next()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
             eprintln!("{prog}: failed printing to stdout: {e}");
             // using exit(101) to replicate rust's default error exit code
             std::process::exit(101);
