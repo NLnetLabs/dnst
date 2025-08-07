@@ -10,7 +10,7 @@ use commands::signzone::SignZone;
 use commands::update::Update;
 use commands::LdnsCommand;
 use env::Env;
-use error::Error;
+use error::{Error, PrettyPrintTarget};
 use log::LogFormatter;
 
 use domain::base::zonefile_fmt::DisplayKind;
@@ -116,14 +116,14 @@ pub fn run(env: impl Env) -> u8 {
                 match res {
                     Ok(()) => 0,
                     Err(err) => {
-                        err.pretty_print(&env);
+                        err.pretty_print(&env, PrettyPrintTarget::Tracing);
                         err.exit_code()
                     }
                 }
             })
         }
         Err(err) => {
-            err.pretty_print(&env);
+            err.pretty_print(&env, PrettyPrintTarget::Stderr);
             err.exit_code()
         }
     }

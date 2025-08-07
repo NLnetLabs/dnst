@@ -6,6 +6,7 @@
 
 use std::process::ExitCode;
 
+use dnst::error::PrettyPrintTarget;
 use dnst::try_ldns_compatibility;
 
 fn main() -> ExitCode {
@@ -19,7 +20,7 @@ fn main() -> ExitCode {
     match args.and_then(|args| args.execute(&env)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            err.pretty_print(env);
+            err.pretty_print(env, PrettyPrintTarget::Stderr);
             ExitCode::FAILURE
         }
     }

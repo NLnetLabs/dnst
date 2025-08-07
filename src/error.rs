@@ -60,7 +60,7 @@ impl Error {
     }
 
     /// Pretty-print this error.
-    pub fn pretty_print(&self, env: impl Env) {
+    pub fn pretty_print(&self, env: impl Env, target: PrettyPrintTarget) {
         let msg = match &self.0.primary {
             // Clap errors are already styled. We don't want our own pretty
             // styling around that and context does not make sense for command
@@ -74,11 +74,33 @@ impl Error {
             PrimaryError::Other(error) => error,
         };
 
-        let mut buf = String::new();
-        for context in &self.0.context {
-            buf.push_str(&format!("... while {context}\n"));
+        match target {
+            PrettyPrintTarget::Tracing => {
+                let mut buf = String::new();
+                for context in &self.0.context {
+                    buf.push_str(&format!("... while {context}\n"));
+                }
+                error!("{msg}\n{buf}");
+            }
+            PrettyPrintTarget::Stderr => {
+                // This is a multicall binary, so argv[0] is necessary for
+                // program operation.  We would fail very early if it didn't exist.
+                let prog = std::env::args().next().unwrap();
+                let term = env.stderr().is_terminal();
+                let mut err = env.stderr();
+
+                let error_marker = if term {
+                    "\x1B[31mERROR:\x1B[0m"
+                } else {
+                    "ERROR:"
+                };
+
+                writeln!(err, "[{prog}] {error_marker} {msg}");
+                for context in &self.0.context {
+                    writeln!(err, "... while {context}");
+                }
+            }
         }
-        error!("{msg}\n{buf}");
     }
 
     pub fn exit_code(&self) -> u8 {
@@ -164,6 +186,13 @@ impl fmt::Debug for Error {
 //--- Error
 
 impl std::error::Error for Error {}
+
+//--- PrettyPrintTarget
+
+pub enum PrettyPrintTarget {
+    Tracing,
+    Stderr,
+}
 
 //------------ Macros --------------------------------------------------------
 
