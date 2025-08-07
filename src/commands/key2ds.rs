@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
@@ -7,7 +8,7 @@ use clap::builder::ValueParser;
 use clap::Parser;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::Record;
+use domain::base::{Record, RecordData, ToName};
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::Ds;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
@@ -198,15 +199,7 @@ impl Key2ds {
 
             if self.write_to_stdout {
                 if self.invoked_as_ldns {
-                    writeln!(
-                        env.stdout(),
-                        "{} {} {} {} {}",
-                        rr.owner().fmt_with_dot(),
-                        rr.ttl().as_secs(),
-                        rr.class(),
-                        rr.rtype(),
-                        rr.data()
-                    );
+                    let _ = write_rr_as_ldns(&env.stdout(), &rr);
                 } else {
                     writeln!(env.stdout(), "{}", rr.display_zonefile(DISPLAY_KIND));
                 }
@@ -240,16 +233,8 @@ impl Key2ds {
                     res.map_err(|e| format!("Could not create file \"{filename}\": {e}"))?;
 
                 if self.invoked_as_ldns {
-                    writeln!(
-                        out_file,
-                        "{} {} {} {} {}",
-                        rr.owner().fmt_with_dot(),
-                        rr.ttl().as_secs(),
-                        rr.class(),
-                        rr.rtype(),
-                        rr.data()
-                    )
-                    .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
+                    write_rr_as_ldns(out_file, &rr)
+                        .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
                 } else {
                     writeln!(out_file, "{}", rr.display_zonefile(DISPLAY_KIND))
                         .map_err(|e| format!("Could not write to file \"{filename}\": {e}"))?;
@@ -278,6 +263,21 @@ fn determine_hash_from_sec_alg(sec_alg: SecurityAlgorithm) -> Result<DigestAlgor
         )
         .into()),
     }
+}
+
+fn write_rr_as_ldns<W: io::Write, N: ToName, D: RecordData + Display>(
+    mut w: W,
+    rr: &Record<N, D>,
+) -> Result<(), io::Error> {
+    writeln!(
+        w,
+        "{} {} {} {} {}",
+        rr.owner().fmt_with_dot(),
+        rr.ttl().as_secs(),
+        rr.class(),
+        rr.rtype(),
+        rr.data()
+    )
 }
 
 #[cfg(test)]
