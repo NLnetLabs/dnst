@@ -11,7 +11,7 @@ use commands::update::Update;
 use commands::LdnsCommand;
 use domain::base::zonefile_fmt::DisplayKind;
 use env::Env;
-use error::{Error, PrettyPrintTarget};
+use error::Error;
 use log::LogFormatter;
 
 pub use self::args::Args;
@@ -115,14 +115,14 @@ pub fn run(env: impl Env) -> u8 {
                 match res {
                     Ok(()) => 0,
                     Err(err) => {
-                        err.pretty_print(&env, PrettyPrintTarget::Tracing);
+                        err.pretty_print(&env);
                         err.exit_code()
                     }
                 }
             })
         }
         Err(err) => {
-            err.pretty_print(&env, PrettyPrintTarget::Stderr);
+            err.pretty_print(&env);
             err.exit_code()
         }
     }
