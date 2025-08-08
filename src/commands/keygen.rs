@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
-use clap::builder::ValueParser;
+use clap::builder::{TypedValueParser, ValueParser};
 use clap::ValueEnum;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::Name;
@@ -22,6 +22,8 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
+
+use clap_complete::engine::CompletionCandidate;
 
 #[derive(Clone, Debug, PartialEq, Eq, clap::Args)]
 pub struct Keygen {
@@ -44,7 +46,15 @@ pub struct Keygen {
         long = "algorithm",
         value_name = "algorithm",
         value_parser = ValueParser::new(Keygen::parse_algorithm),
+        // value_parser = clap::builder::PossibleValuesParser::new([
+            // "RSASHA256", "ECDSAP256SHA256", "ECDSAP384SHA384", "ED25519", "ED448", "8", "13", "14", "15", "16"
+        // ]).map(|s| Keygen::parse_algorithm(&s).unwrap()),
+        hide_possible_values = true,
         verbatim_doc_comment,
+        // add = clap_complete::ArgValueCandidates::new(|| { vec![
+        //     CompletionCandidate::new("RSASHA256"),
+        //     CompletionCandidate::new("ECDSAP256SHA256"),
+        //     CompletionCandidate::new("ED25519")]})
     )]
     algorithm: GenerateParams,
 
