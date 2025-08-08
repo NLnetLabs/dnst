@@ -1259,7 +1259,6 @@ impl SignZone {
                     // the apex, as the ordering issue doesn't appear at
                     // other locations than the apex.
                         || (self.invoked_as_ldns
-                            && !self.use_nsec3
                             && rrset.rtype() == Rtype::NSEC
                             && rrset.owner() == apex))
                 }) {
@@ -1313,30 +1312,23 @@ impl SignZone {
                 // This doesn't apply, if we're using NSEC3. Additionally, the NSEC RRs at other
                 // places than the apex do not have the ordering issue.
                 if self.invoked_as_ldns && !self.use_nsec3 && owner_rrs.owner() == apex {
-                    for covering_nsec in owner_rrs
+                    if let Some(nsec_rrset) = owner_rrs
                         .rrsets()
-                        .filter(|this_rrset| this_rrset.rtype() == Rtype::NSEC)
-                        .map(|this_rrset| this_rrset.iter())
+                        .find(|this_rrset| this_rrset.rtype() == Rtype::NSEC)
                     {
-                        for covering_nsec_rr in covering_nsec {
-                            self.writeln_rr(&mut writer, covering_nsec_rr)?;
-                        }
+                        self.writeln_rr(&mut writer, nsec_rrset.first())?;
                     }
 
-                    for covering_rrsigs in owner_rrs
+                    if let Some(rrsig_rrset) = owner_rrs
                         .rrsets()
-                        .filter(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
-                        .map(|this_rrset| {
-                            this_rrset.iter().filter(|rr| {
-                                matches!(
-                                    rr.data(), ZoneRecordData::Rrsig(rrsig)
-                                        if rrsig.type_covered() == Rtype::NSEC && rr.owner() == apex
-                                )
-                            })
-                        })
+                        .find(|this_rrset| this_rrset.rtype() == Rtype::RRSIG)
                     {
-                        for covering_rrsig_rr in covering_rrsigs {
-                            self.writeln_rr(&mut writer, covering_rrsig_rr)?;
+                        for rr in rrsig_rrset.iter() {
+                            if matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == Rtype::NSEC)
+                            {
+                                self.writeln_rr(&mut writer, rr)?;
+                                break;
+                            }
                         }
                     }
                 }
