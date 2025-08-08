@@ -13,6 +13,7 @@ use domain::base::zonefile_fmt::DisplayKind;
 use env::Env;
 use error::Error;
 use log::LogFormatter;
+use tracing::level_filters::LevelFilter;
 
 pub use self::args::Args;
 
@@ -99,31 +100,23 @@ fn parse_args(env: impl Env) -> Result<Args, Error> {
 
 pub fn run(env: impl Env) -> u8 {
     let stderr = env.stderr();
-    match parse_args(&env) {
-        Ok(args) => {
-            let subscriber = tracing_subscriber::FmtSubscriber::builder()
-                .with_ansi(stderr.is_terminal())
-                .with_writer(stderr)
-                .with_max_level(args.verbosity)
-                .event_format(LogFormatter {
-                    program: env.args_os().next().unwrap().to_string_lossy().to_string(),
-                })
-                .finish();
-
-            tracing::subscriber::with_default(subscriber, || {
-                let res = args.execute(&env);
-                match res {
-                    Ok(()) => 0,
-                    Err(err) => {
-                        err.pretty_print(&env);
-                        err.exit_code()
-                    }
-                }
-            })
-        }
-        Err(err) => {
-            err.pretty_print(&env);
-            err.exit_code()
-        }
+    let mut subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_ansi(stderr.is_terminal())
+        .with_writer(stderr)
+        .with_max_level(LevelFilter::WARN)
+        .event_format(LogFormatter {
+            program: env.args_os().next().unwrap().to_string_lossy().to_string(),
+        });
+    let res = parse_args(&env);
+    if let Ok(args) = &res {
+        subscriber = subscriber.with_max_level(args.verbosity);
     }
+    tracing::subscriber::with_default(subscriber.finish(), || {
+        res.and_then(|args| args.execute(&env))
+            .map(|()| 0)
+            .unwrap_or_else(|err| {
+                err.pretty_print(&env);
+                err.exit_code()
+            })
+    })
 }
