@@ -7,7 +7,7 @@ use commands::keygen::Keygen;
 use commands::notify::Notify;
 use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
-use commands::update::Update;
+use commands::update::{LdnsUpdate, Update};
 use commands::LdnsCommand;
 use domain::base::zonefile_fmt::DisplayKind;
 use env::Env;
@@ -49,7 +49,7 @@ pub fn try_ldns_compatibility<I: IntoIterator<Item = OsString>>(
         "keygen" => Keygen::parse_ldns_args(args_iter),
         "nsec3-hash" => Nsec3Hash::parse_ldns_args(args_iter),
         "signzone" => SignZone::parse_ldns_args(args_iter),
-        "update" => Update::parse_ldns_args(args_iter),
+        "update" => LdnsUpdate::parse_ldns_args(args_iter),
         _ => Err(format!("Unrecognized ldns command 'ldns-{binary_name}'").into()),
     }?;
 

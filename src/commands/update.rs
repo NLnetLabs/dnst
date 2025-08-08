@@ -55,6 +55,22 @@ fn optional_ip(s: &str) -> Result<Option<IpAddr>, Error> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LdnsUpdate {
+    /// Domain name to update
+    domain: Name<Vec<u8>>,
+
+    /// IP address to associate with the given domain name.
+    /// Use `none` to delete the records for the domain name.
+    ip: OptionIpAddr,
+
+    /// Zone to update
+    zone: Option<Name<Vec<u8>>>,
+
+    /// TSIG credentials for the UPDATE packet
+    tsig: Option<TSigInfo>,
+}
+
 const LDNS_HELP: &str = "\
 ldns-update domain [zone] ip tsig_name tsig_alg tsig_hmac
     send a dynamic update packet to <ip>
@@ -67,7 +83,7 @@ This command exists for compatibility purposes.
 For a more modern version of this command try `dnst update`\
 ";
 
-impl LdnsCommand for Update {
+impl LdnsCommand for LdnsUpdate {
     const NAME: &'static str = "update";
     const HELP: &'static str = LDNS_HELP;
     const COMPATIBLE_VERSION: &'static str = "1.8.4";
@@ -118,7 +134,7 @@ impl LdnsCommand for Update {
             None => None,
         };
 
-        Ok(Args::from(Command::Update(Self {
+        Ok(Args::from(Command::LdnsUpdate(Self {
             domain,
             ip,
             zone,
@@ -134,7 +150,7 @@ impl LdnsCommand for Update {
     }
 }
 
-impl Update {
+impl LdnsUpdate {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(self.run(&env))
@@ -405,13 +421,31 @@ impl Update {
     }
 }
 
+impl Update {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        // let runtime = tokio::runtime::Runtime::new().unwrap();
+        // runtime.block_on(self.run(&env))
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use domain::{tsig::Algorithm, utils::base64};
 
+    use crate::commands::update::LdnsUpdate;
     use crate::{commands::Command, env::fake::FakeCmd};
 
     use super::{TSigInfo, Update};
+
+    #[track_caller]
+    fn parse_ldns(cmd: FakeCmd) -> LdnsUpdate {
+        let res = cmd.parse().unwrap();
+        let Command::LdnsUpdate(x) = res.command else {
+            panic!("Not an Update!");
+        };
+        x
+    }
 
     #[track_caller]
     fn parse(cmd: FakeCmd) -> Update {
@@ -483,7 +517,7 @@ mod test {
     fn ldns_parse() {
         let cmd = FakeCmd::new(["ldns-update"]);
 
-        let base = Update {
+        let base = LdnsUpdate {
             domain: "foo.test".parse().unwrap(),
             ip: None,
             zone: None,
@@ -492,22 +526,22 @@ mod test {
 
         cmd.args(["foo.test"]).parse().unwrap_err();
 
-        let res = parse(cmd.args(["foo.test", "none"]));
+        let res = parse_ldns(cmd.args(["foo.test", "none"]));
         assert_eq!(res, base.clone());
 
-        let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
+        let res = parse_ldns(cmd.args(["foo.test", "1.1.1.1"]));
         assert_eq!(
             res,
-            Update {
+            LdnsUpdate {
                 ip: Some("1.1.1.1".parse().unwrap()),
                 ..base.clone()
             }
         );
 
-        let res = parse(cmd.args(["foo.test", "base.test", "1.1.1.1"]));
+        let res = parse_ldns(cmd.args(["foo.test", "base.test", "1.1.1.1"]));
         assert_eq!(
             res,
-            Update {
+            LdnsUpdate {
                 ip: Some("1.1.1.1".parse().unwrap()),
                 zone: Some("base.test".parse().unwrap()),
                 ..base.clone()
