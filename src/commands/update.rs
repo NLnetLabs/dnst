@@ -600,12 +600,10 @@ mod test {
         ";
 
         let cmd = FakeCmd::new([
-            "dnst",
-            "update",
+            "ldns-update",
             "foo.test",
-            "none",
-            "--zone",
             "zone.foo.test",
+            "none",
         ])
         .stelline(rpl.as_bytes(), "update.rpl");
 
@@ -617,7 +615,7 @@ mod test {
         );
         assert_eq!(res.stderr, "");
 
-        let cmd = FakeCmd::new(["dnst", "update", "foo.test", "none"])
+        let cmd = FakeCmd::new(["ldns-update", "foo.test", "none"])
             .stelline(rpl.as_bytes(), "update.rpl");
 
         let res = cmd.run();
