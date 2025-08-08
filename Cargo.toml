@@ -31,6 +31,7 @@ static-openssl = ["openssl/vendored"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive"] }
+clap_complete = { version = "4.5.55", features = ["unstable-dynamic"] }
 # Until a release of domain is made that includes the features we need, pin
 # to a specific commit of the domain main branch to ensure that the dnst main
 # branch does not get broken if domain main is not stable.

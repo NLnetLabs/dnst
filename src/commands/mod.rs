@@ -1,4 +1,5 @@
 //! The command of _dnst_.
+pub mod completion;
 pub mod help;
 pub mod key2ds;
 pub mod keygen;
@@ -19,6 +20,9 @@ use super::error::Error;
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
+    /// Generate shell completion scripts
+    Completion(self::completion::Completion),
+
     /// Generate a new key pair for a given domain name
     ///
     /// The following files will be created:
@@ -88,6 +92,7 @@ pub enum Command {
 impl Command {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         match self {
+            Self::Completion(completion) => completion.execute(env),
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Keygen(keygen) => keygen.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
