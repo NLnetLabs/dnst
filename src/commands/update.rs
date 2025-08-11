@@ -1,7 +1,24 @@
-use std::ffi::OsString;
-use std::net::{IpAddr, SocketAddr};
+// Relevant RFCs:
+//
+// - [RFC2136]: Dynamic Updates in the Domain Name System (DNS UPDATE)
+// - [RFC3007]: Secure Domain Name System (DNS) Dynamic Update
+//
+// [RFC2136]: https://www.rfc-editor.org/rfc/rfc2136.html
+// [RFC3007]: https://www.rfc-editor.org/rfc/rfc3007.html
+//
+// Important notes:
+//
+// - No duplicate protection through update ordering with marker RRs
 
+use std::ffi::OsString;
+use std::io::BufReader;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
+
+use bytes::Bytes;
+use clap::Subcommand;
 use domain::base::iana::{Class, Opcode, Rcode};
+use domain::base::name::UncertainName;
 use domain::base::{
     Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
 };
@@ -11,6 +28,7 @@ use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
 use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
 use domain::tsig::Key;
 use domain::utils::base64;
+use domain::zonefile::inplace::{Entry, ScannedRecord};
 
 use crate::env::Env;
 use crate::error::Error;
@@ -19,12 +37,28 @@ use crate::Args;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
-// Clap gives `Option<T>` special handling by making the argument optional.
-// This is not what we want because we require an explicit "none" value. So,
-// we create an alias, so that clap doesn't recognize that we are using an
-// option and pray that Ed Page doesn't make clap smart enough to figure
-// this out.
-type OptionIpAddr = Option<IpAddr>;
+// UI:
+// Synopsis:
+// - `dnst update [options] add <domain name> <RRTYPE> <RRs>...`
+// - `dnst update [options] delete <domain name> <RRTYPE> [<RRs>...]`
+// - `dnst update [options] clear <domain name>` (distinction to avoid accidental deletion of whole domain names)
+
+// Examples:
+// - `dnst update add <domain name> AAAA "::1" "::2"` - Add multiple AAAA records
+// - `dnst update add <domain name> TXT "challenge"` - Add multiple TXT records
+// - `dnst update delete <domain name> AAAA ::1 ::2` - Delete exact AAAA RRs on domain name (`::1` and `::2` in this case)
+// - `dnst update delete <domain name> AAAA` - Delete all AAAA RRs on domain name
+// - `dnst update clear <domain name>` - Delete all RRSETs on domain name, aka delete the whole domain name
+
+type SomeRecord = ScannedRecord;
+type NameTypeTuple = (Name<Bytes>, Rtype);
+
+// pub type ScannedDname = Chain<RelativeName<Bytes>, Name<Bytes>>;
+// pub type ScannedRecordData = ZoneRecordData<Bytes, ScannedDname>;
+// pub type ScannedRecord = Record<ScannedDname, ScannedRecordData>;
+// pub type ScannedString = Str<Bytes>;
+
+//------------ Update --------------------------------------------------------
 
 #[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct Update {
@@ -32,28 +66,245 @@ pub struct Update {
     #[arg(value_name = "DOMAIN NAME")]
     domain: Name<Vec<u8>>,
 
-    /// IP address to associate with the given domain name.
-    /// Use `none` to delete the records for the domain name.
-    #[arg(value_name = "IP", value_parser = optional_ip)]
-    ip: OptionIpAddr,
+    /// Update action
+    #[command(subcommand)]
+    action: UpdateAction,
 
-    /// Zone to update
-    #[arg(long = "zone")]
+    /// Class
+    #[arg(short = 'c', long = "class", default_value_t = Class::IN)]
+    class: Class,
+
+    /// TTL in seconds or with unit suffix (s, m, h, d, w, M, y).
+    #[arg(short = 't', long = "ttl", value_parser = Update::parse_ttl, default_value = "3600")]
+    ttl: Ttl,
+
+    /// Nameserver to send the update to
+    #[arg(short = 's', long = "server", value_name = "IP")]
+    nameserver: Option<IpAddr>,
+
+    /// Zone the domain name belongs to (to skip SOA query)
+    #[arg(short = 'z', long = "zone")]
     zone: Option<Name<Vec<u8>>>,
 
     /// TSIG credentials for the UPDATE packet
     #[arg(short = 'y', long = "tsig", value_name = "name:key[:algo]")]
     tsig: Option<TSigInfo>,
+
+    /// RRset exists (value independent). (Optionally) provide this option
+    /// multiple times, with format "<DOMAIN_NAME> <TYPE>" each, to
+    /// build up a list of RR(set)s.
+    ///
+    /// This specifies the prerequisite that at least one RR with a specified
+    /// NAME and TYPE must exist.
+    #[arg(long = "rrset-exists", visible_alias = "rrset")]
+    rrset_exists: Option<Vec<String>>,
+
+    /// RRset exists (value dependent). (Optionally) provide this option
+    /// multiple times, each with one RR in zonefile format, to build up one
+    /// or more RRsets that is required to exist. CLASS and TTL can be
+    /// omitted.
+    ///
+    /// This specifies the prerequisite that a set of RRs with a specified
+    /// NAME and TYPE exists and has the same members with the same RDATAs as
+    /// the RRset specified.
+    #[arg(long = "rrset-exists-exact", visible_alias = "rrset-exact")]
+    rrset_exists_exact: Option<Vec<String>>,
+
+    /// RRset does not exist. (Optionally) provide this option multiple times,
+    /// with format "<DOMAIN_NAME> <TYPE>" each, to build up a list of RRs
+    /// that specify that no RRs with a specified NAME and TYPE can exist.
+    #[arg(long = "rrset-empty")]
+    rrset_empty: Option<Vec<String>>,
+
+    /// Name is in use. (Optionally) provide this option multiple times,
+    /// with format "<DOMAIN_NAME>" each, to collect a list of NAMEs that must
+    /// own at least one RR.
+    ///
+    /// Note that this prerequisite is NOT satisfied by empty nonterminals.
+    #[arg(long = "name-in-use", visible_alias = "name-used")]
+    name_in_use: Option<Vec<String>>,
+
+    /// Name is not in use. (Optionally) provide this option multiple times,
+    /// with format "<DOMAIN_NAME>" each, to collect a list of NAMEs that must
+    /// NOT own any RRs.
+    ///
+    /// Note that this prerequisite IS satisfied by empty nonterminals.
+    #[arg(
+        long = "name-not-in-use",
+        visible_alias = "name-unused",
+        // value_parser = Update::parse_prerequisite,
+    )]
+    name_not_in_use: Option<Vec<String>>,
 }
 
-fn optional_ip(s: &str) -> Result<Option<IpAddr>, Error> {
-    if s == "none" {
-        Ok(None)
-    } else {
-        let ip = s.parse().map_err(|_| format!("Invalid IP address: {s}"))?;
-        Ok(Some(ip))
+impl Update {
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        // let runtime = tokio::runtime::Runtime::new().unwrap();
+        // runtime.block_on(self.run(&env))
+        let origin = Name::<Bytes>::from_str("example.com.").expect("hardcoded");
+        let mut prerequisites = UpdatePrerequisites {
+            rrset_exists: None,
+            rrset_exists_exact: None,
+            rrset_empty: None,
+            name_in_use: None,
+            name_not_in_use: None,
+        };
+        if let Some(ref v) = self.rrset_exists {
+            prerequisites.rrset_exists = Some(Self::parse_prerequisite_name_type(v, &origin)?)
+        }
+        if let Some(ref v) = self.rrset_exists_exact {
+            prerequisites.rrset_exists_exact = Some(Self::parse_prerequisite_rrset_exists_exact(
+                v, &origin, self.class,
+            )?)
+        }
+        if let Some(ref v) = self.rrset_empty {
+            prerequisites.rrset_empty = Some(Self::parse_prerequisite_name_type(v, &origin)?)
+        }
+        if let Some(ref v) = self.name_in_use {
+            prerequisites.name_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
+        }
+        if let Some(ref v) = self.name_not_in_use {
+            prerequisites.name_not_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
+        }
+
+        dbg!(self);
+        dbg!(&prerequisites);
+        Ok(())
+    }
+
+    fn parse_prerequisite_name_type(
+        args: &Vec<String>,
+        origin: &Name<Bytes>,
+    ) -> Result<Vec<(Name<Bytes>, Rtype)>, Error> {
+        let mut records = Vec::new();
+        for arg in args {
+            if let Some((name, typ)) = arg.split_once(' ') {
+                let typ = Rtype::from_str(typ).map_err(|e| -> Error {
+                    format!("Invalid resource record type '{typ}': {e}").into()
+                })?;
+                let uncertain = UncertainName::from_str(name).map_err(|e| -> Error {
+                    format!("Invalid domain name '{name}': {e}").into()
+                })?;
+                let name = match uncertain.as_absolute() {
+                    Some(name) => name.clone(),
+                    None => uncertain
+                        .chain(origin)
+                        .expect("we just checked that its not absolute")
+                        .to_name(),
+                };
+                records.push((name, typ))
+            }
+        }
+        Ok(records)
+    }
+
+    fn parse_prerequisite_name(
+        args: &Vec<String>,
+        origin: &Name<Bytes>,
+    ) -> Result<Vec<Name<Bytes>>, Error> {
+        let mut names = Vec::new();
+        for name in args {
+            let uncertain = UncertainName::from_str(name)
+                .map_err(|e| -> Error { format!("Invalid domain name '{name}': {e}").into() })?;
+            let name = match uncertain.as_absolute() {
+                Some(name) => name.clone(),
+                None => uncertain
+                    .chain(origin)
+                    .expect("we just checked that its not absolute")
+                    .to_name(),
+            };
+            names.push(name)
+        }
+        Ok(names)
+    }
+
+    fn parse_prerequisite_rrset_exists_exact(
+        args: &Vec<String>,
+        origin: &Name<Bytes>,
+        class: Class,
+    ) -> Result<Vec<SomeRecord>, Error> {
+        let mut records = Vec::new();
+        for arg in args {
+            let record = format!("{}\n", arg);
+            let mut buf = BufReader::new(record.as_bytes());
+            let mut zonefile = domain::zonefile::inplace::Zonefile::load(&mut buf).unwrap();
+            zonefile.set_default_class(class);
+            zonefile.set_origin(origin.clone());
+
+            let entry = zonefile.into_iter().next().ok_or(format!(
+                "Argument does not contain a resource record: {arg}"
+            ))?;
+            let entry = entry.map_err(|e| format!("Could not parse resource record: {e}"))?;
+
+            // We only care about records in a zonefile
+            let Entry::Record(mut record) = entry else {
+                return Err(format!("Provided argument is not a resource record: {arg}").into());
+            };
+
+            record.set_ttl(Ttl::from_secs(0));
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    fn parse_ttl(arg: &str) -> Result<Ttl, Error> {
+        Ok(Ttl::from_secs(
+            if let Some(ttl) = arg.strip_suffix('s') {
+                ttl.parse()
+            } else if let Some(ttl) = arg.strip_suffix('m') {
+                ttl.parse::<u32>().map(|t| t / 60)
+            } else if let Some(ttl) = arg.strip_suffix('h') {
+                ttl.parse::<u32>().map(|t| t / 3600)
+            } else if let Some(ttl) = arg.strip_suffix('d') {
+                ttl.parse::<u32>().map(|t| t / 86400)
+            } else if let Some(ttl) = arg.strip_suffix('w') {
+                ttl.parse::<u32>().map(|t| t / 604800)
+            } else if let Some(ttl) = arg.strip_suffix('M') {
+                ttl.parse::<u32>().map(|t| t / 2629746) // 30.436875 days
+            } else if let Some(ttl) = arg.strip_suffix('y') {
+                ttl.parse::<u32>().map(|t| t / 31556952) // 365.2425 days
+            } else {
+                arg.parse()
+            }
+            .map_err(|err| Error::from(format!("Invalid TTL: {err}")))?,
+        ))
     }
 }
+
+//------------ UpdateAction --------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
+enum UpdateAction {
+    // Add RRs to domain
+    Add {
+        /// RRtype
+        #[arg(value_name = "RRTYPE")]
+        rtype: Rtype,
+    },
+
+    // Delete specific RRs or complete RRset from domain
+    Delete {
+        /// RRtype
+        #[arg(value_name = "RRTYPE")]
+        rtype: Rtype,
+    },
+
+    // Clear domain, aka delete all RRsets on the domain
+    Clear,
+}
+
+//------------ UpdatePrerequisites -------------------------------------------
+
+#[derive(Clone, Debug)]
+struct UpdatePrerequisites {
+    rrset_exists: Option<Vec<NameTypeTuple>>,
+    rrset_exists_exact: Option<Vec<SomeRecord>>,
+    rrset_empty: Option<Vec<NameTypeTuple>>,
+    name_in_use: Option<Vec<Name<Bytes>>>,
+    name_not_in_use: Option<Vec<Name<Bytes>>>,
+}
+
+//------------ LdnsUpdate ----------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LdnsUpdate {
@@ -62,7 +313,7 @@ pub struct LdnsUpdate {
 
     /// IP address to associate with the given domain name.
     /// Use `none` to delete the records for the domain name.
-    ip: OptionIpAddr,
+    ip: Option<IpAddr>,
 
     /// Zone to update
     zone: Option<Name<Vec<u8>>>,
@@ -335,14 +586,13 @@ impl LdnsUpdate {
                 ))
                 .unwrap();
         } else {
-            update_section
-                .push(Record::new(
-                    &self.domain,
-                    Class::ANY,
-                    Ttl::from_secs(0),
-                    UnknownRecordData::from_octets(Rtype::A, &[]).unwrap(),
-                ))
-                .unwrap();
+            let tmp = Record::new(
+                &self.domain,
+                Class::ANY,
+                Ttl::from_secs(0),
+                UnknownRecordData::from_octets(Rtype::A, &[]).unwrap(),
+            );
+            update_section.push(tmp).unwrap();
 
             update_section
                 .push(Record::new(
@@ -421,14 +671,6 @@ impl LdnsUpdate {
     }
 }
 
-impl Update {
-    pub fn execute(self, env: impl Env) -> Result<(), Error> {
-        // let runtime = tokio::runtime::Runtime::new().unwrap();
-        // runtime.block_on(self.run(&env))
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod test {
     use domain::{tsig::Algorithm, utils::base64};
@@ -456,62 +698,62 @@ mod test {
         x
     }
 
-    #[test]
-    fn dnst_parse() {
-        let cmd = FakeCmd::new(["dnst", "update"]);
+    // #[test]
+    // fn dnst_parse() {
+    //     let cmd = FakeCmd::new(["dnst", "update"]);
 
-        cmd.parse().unwrap_err();
-        cmd.args(["example.test"]).parse().unwrap_err();
-        cmd.args(["--zone", "example.test"]).parse().unwrap_err();
-        cmd.args(["--zone", "example.test", "ns.example.test"])
-            .parse()
-            .unwrap_err();
-        cmd.args(["foo.test", "bar.test", "none"])
-            .parse()
-            .unwrap_err();
+    //     cmd.parse().unwrap_err();
+    //     cmd.args(["example.test"]).parse().unwrap_err();
+    //     cmd.args(["--zone", "example.test"]).parse().unwrap_err();
+    //     cmd.args(["--zone", "example.test", "ns.example.test"])
+    //         .parse()
+    //         .unwrap_err();
+    //     cmd.args(["foo.test", "bar.test", "none"])
+    //         .parse()
+    //         .unwrap_err();
 
-        let base = Update {
-            domain: "foo.test".parse().unwrap(),
-            ip: None,
-            zone: None,
-            tsig: None,
-        };
+    //     let base = Update {
+    //         domain: "foo.test".parse().unwrap(),
+    //         ip: None,
+    //         zone: None,
+    //         tsig: None,
+    //     };
 
-        let res = parse(cmd.args(["foo.test", "none"]));
-        assert_eq!(res, base);
+    //     let res = parse(cmd.args(["foo.test", "none"]));
+    //     assert_eq!(res, base);
 
-        let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
-        assert_eq!(
-            res,
-            Update {
-                ip: Some("1.1.1.1".parse().unwrap()),
-                ..base.clone()
-            }
-        );
+    //     let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
+    //     assert_eq!(
+    //         res,
+    //         Update {
+    //             ip: Some("1.1.1.1".parse().unwrap()),
+    //             ..base.clone()
+    //         }
+    //     );
 
-        let res = parse(cmd.args(["foo.test", "1.1.1.1", "--zone", "bar.test"]));
-        assert_eq!(
-            res,
-            Update {
-                ip: Some("1.1.1.1".parse().unwrap()),
-                zone: Some("bar.test".parse().unwrap()),
-                ..base.clone()
-            }
-        );
+    //     let res = parse(cmd.args(["foo.test", "1.1.1.1", "--zone", "bar.test"]));
+    //     assert_eq!(
+    //         res,
+    //         Update {
+    //             ip: Some("1.1.1.1".parse().unwrap()),
+    //             zone: Some("bar.test".parse().unwrap()),
+    //             ..base.clone()
+    //         }
+    //     );
 
-        let res = parse(cmd.args(["foo.test", "none", "--tsig", "somekey:1234"]));
-        assert_eq!(
-            res,
-            Update {
-                tsig: Some(TSigInfo {
-                    name: "somekey".parse().unwrap(),
-                    key: base64::decode("1234").unwrap(),
-                    algorithm: Algorithm::Sha256,
-                }),
-                ..base.clone()
-            }
-        );
-    }
+    //     let res = parse(cmd.args(["foo.test", "none", "--tsig", "somekey:1234"]));
+    //     assert_eq!(
+    //         res,
+    //         Update {
+    //             tsig: Some(TSigInfo {
+    //                 name: "somekey".parse().unwrap(),
+    //                 key: base64::decode("1234").unwrap(),
+    //                 algorithm: Algorithm::Sha256,
+    //             }),
+    //             ..base.clone()
+    //         }
+    //     );
+    // }
 
     #[test]
     fn ldns_parse() {
@@ -633,13 +875,8 @@ mod test {
             SCENARIO_END
         ";
 
-        let cmd = FakeCmd::new([
-            "ldns-update",
-            "foo.test",
-            "zone.foo.test",
-            "none",
-        ])
-        .stelline(rpl.as_bytes(), "update.rpl");
+        let cmd = FakeCmd::new(["ldns-update", "foo.test", "zone.foo.test", "none"])
+            .stelline(rpl.as_bytes(), "update.rpl");
 
         let res = cmd.run();
         assert_eq!(res.exit_code, 0);

@@ -7,7 +7,7 @@ use commands::keygen::Keygen;
 use commands::notify::Notify;
 use commands::nsec3hash::Nsec3Hash;
 use commands::signzone::SignZone;
-use commands::update::{LdnsUpdate, Update};
+use commands::update::LdnsUpdate;
 use commands::LdnsCommand;
 use domain::base::zonefile_fmt::DisplayKind;
 use env::Env;
