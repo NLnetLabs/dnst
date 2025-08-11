@@ -20,6 +20,11 @@ information.
 Options
 -------
 
+.. option:: -v, --verbosity <LEVEL>
+
+      Set the verbosity to 0-5 or a level name (``off``, ``error``, ``warn``,
+      ``info``, ``debug`` or ``trace``). Defaults to ``warn``.
+
 .. option:: -h, --help
 
       Print the help text (short summary with ``-h``, long help with
