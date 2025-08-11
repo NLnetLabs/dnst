@@ -99,7 +99,7 @@ pub struct SignZone {
     ///
     /// Using this flag enables -O and -R automatically.
     #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
+        help_heading = Some("Output Formatting"),
         short = 'b',
         default_value_t = false
     )]
@@ -245,7 +245,7 @@ pub struct SignZone {
     ///
     /// Requires -n.
     #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
+        help_heading = Some("Output Formatting"),
         short = 'L',
         default_value_t = false,
         requires = "nsec3"
@@ -256,7 +256,7 @@ pub struct SignZone {
     ///
     /// Enabled automatically by -b.
     #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
+        help_heading = Some("Output Formatting"),
         short = 'O',
         default_value_t = false,
         default_value_if("extra_comments", "true", Some("true")),
@@ -268,7 +268,7 @@ pub struct SignZone {
     ///
     /// Enabled automatically by -b.
     #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
+        help_heading = Some("Output Formatting"),
         short = 'R',
         default_value_t = false,
         default_value_if("extra_comments", "true", Some("true")),
@@ -279,7 +279,7 @@ pub struct SignZone {
     ///
     /// Cannot be used with -Z or -H.
     #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
+        help_heading = Some("Output Formatting"),
         short = 'T',
         default_value_t = false,
         conflicts_with_all = ["allow_zonemd_without_signing", "hash_only"],
