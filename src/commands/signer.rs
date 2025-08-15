@@ -4,6 +4,8 @@ use crate::env::{Env, Stream};
 use crate::error::{Context, Error};
 use crate::DISPLAY_KIND;
 use bytes::{BufMut, Bytes};
+use clap::builder::ValueParser;
+use clap::Subcommand;
 use core::clone::Clone;
 use core::cmp::Ordering;
 use core::fmt::Write;
@@ -35,6 +37,9 @@ use domain::utils::base64;
 use domain::zonefile::inplace::{self, Entry};
 use domain::zonetree::types::StoredRecordData;
 use domain::zonetree::{StoredName, StoredRecord};
+use jiff::tz::TimeZone;
+use jiff::Timestamp as JiffTimestamp;
+use jiff::Zoned;
 use octseq::builder::with_infallible;
 use rayon::slice::ParallelSliceMut;
 use ring::digest;
@@ -58,7 +63,7 @@ const TWO_WEEKS: u64 = 1209600;
 
 //------------ Signer --------------------------------------------------------
 
-#[derive(Clone, Debug, clap::Args, PartialEq)]
+#[derive(Clone, Debug, clap::Args)]
 #[clap(
     after_help = "Keys must be specified by their base name (usually K<name>+<alg>+<id>), i.e. WITHOUT the .private or .key extension.
 If the public part of the key is not present in the zone, the DNSKEY RR will be read from the file called <base name>.key.
@@ -66,112 +71,140 @@ A date can be a timestamp (seconds since the epoch), or of the form <YYYYMMdd[hh
 "
 )]
 pub struct Signer {
-    /// Use layout in signed zone and print comments on DNSSEC records
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'b',
-        default_value_t = false
-    )]
-    extra_comments: bool,
-
     /// Signer config
     #[arg(short = 'c')]
     signer_config: PathBuf,
 
-    /// Signer state
-    #[arg(long = "state")]
-    signer_state: Option<PathBuf>,
-
-    /// Input zone file
-    #[arg(long = "zonefile-in")]
-    zonefile_in: Option<PathBuf>,
-
-    /// Output zone file
-    #[arg(long = "zonefile-out")]
-    zonefile_out: Option<PathBuf>,
-
-    /// Keyset state
-    #[arg(long = "keyset-state")]
-    keyset_state: Option<PathBuf>,
-
-    /// Output zone to file [default: <zonefile>.signed]
-    ///
-    /// Use '-f -' to output to stdout.
-    #[arg(short = 'f', value_name = "file")]
-    out_file: Option<PathBuf>,
-
-    /// Set SOA serial to the number of seconds since Jan 1st 1970
-    ///
-    /// If this would NOT result in the SOA serial increasing it will be
-    /// incremented instead.
-    //
-    // Currently, there is no way signing can work without this. In the
-    // future with incremental signing we could just increment the
-    // version in the signed zone.
-    #[arg(short = 'u', default_value_t = true)]
-    set_soa_serial_to_epoch_time: bool,
-
-    // SKIPPED: -v
-    // This should be handled at the dnst top level, not per subcommand.
-    /// Allow ZONEMDs to be added without signing
-    #[arg(short = 'Z',
-	//requires = "zonemd"
-    )]
-    allow_zonemd_without_signing: bool,
-
-    // -----------------------------------------------------------------------
-    // Extra options not supported by the original ldns-signzone:
-    // -----------------------------------------------------------------------
-    /// Hash only, don't sign
-    #[arg(short = 'H', default_value_t = false)]
-    hash_only: bool,
-
-    /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'T',
-        default_value_t = false
-    )]
-    use_yyyymmddhhmmss_rrsig_format: bool,
-
-    /// Preceed the zone output by a list that contains the NSEC3 hashes of the
-    /// original ownernames.
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'L',
-        default_value_t = false,
-        //requires = "nsec3"
-    )]
-    preceed_zone_with_hash_list: bool,
-
-    /// Order RRSIG RRs by the record type that they cover.
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'R',
-        default_value_t = false,
-        default_value_if("extra_comments", "true", Some("true")),
-    )]
-    order_rrsigs_after_the_rtype_they_cover: bool,
-
-    /// Order NSEC5 RRs by unhashed owner name.
-    /// The zonefile to sign
-    //    #[arg(value_name = "zonefile")]
-    //    zonefile_path: PathBuf,
-
-    #[arg(
-        help_heading = Some("OUTPUT FORMATTING"),
-        short = 'O',
-        default_value_t = false,
-        default_value_if("extra_comments", "true", Some("true")),
-        //requires = "nsec3",
-    )]
-    order_nsec3_rrs_by_unhashed_owner_name: bool,
-
     /// Subcommand
-    #[arg()]
-    cmd: String,
+    #[command(subcommand)]
+    cmd: Commands,
+}
 
-    value: Option<String>,
+#[derive(Clone, Debug, Subcommand)]
+enum Commands {
+    Create {
+        /// State file
+        #[arg(short = 's')]
+        signer_state: PathBuf,
+
+        /// State file
+        #[arg(short = 'k')]
+        keyset_state: PathBuf,
+
+        /// Unsigned zone file (input)
+        #[arg(short = 'i')]
+        zonefile_in: PathBuf,
+
+        /// Signed zone file (output)
+        #[arg(short = 'o')]
+        zonefile_out: Option<PathBuf>,
+    },
+    Sign {
+        /// Hash only, don't sign.
+        #[arg(long, action)]
+        hash_only: bool,
+
+        /// Use layout in signed zone and print comments on DNSSEC records
+        #[arg(long, action)]
+        extra_comments: bool,
+
+        /// Preceed the zone output by a list that contains the NSEC3 hashes
+        /// of the original ownernames.
+        #[arg(long, action)]
+        preceed_zone_with_hash_list: bool,
+
+        /// Order NSEC3 RRs by unhashed owner name.
+        #[arg(long, action)]
+        order_nsec3_rrs_by_unhashed_owner_name: bool,
+
+        /// Order RRSIG RRs by the record type that they cover.
+        #[arg(long, action, default_value_if("extra_comments", "true", Some("true")))]
+        order_rrsigs_after_the_rtype_they_cover: bool,
+
+        /// Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since
+        /// epoch.
+        #[arg(long, action)]
+        use_yyyymmddhhmmss_rrsig_format: bool,
+    },
+    Show,
+    Cron,
+
+    Set {
+        #[command(subcommand)]
+        subcommand: SetCommands,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum SetCommands {
+    UseNsec3 {
+        #[arg(action = clap::ArgAction::Set)]
+        boolean: bool,
+    },
+    Algorithm {
+        #[arg(
+	    value_parser = ValueParser::new(Nsec3Hash::parse_nsec3_alg),
+	)]
+        algorithm: Nsec3HashAlgorithm,
+    },
+    Iterations {
+        iterations: u16,
+    },
+    Salt {
+        salt: Nsec3Salt<Bytes>,
+    },
+    OptOut {
+        #[arg(action = clap::ArgAction::Set)]
+        boolean: bool,
+    },
+    ZoneMD {
+        /// Add a ZONEMD resource record.
+        ///
+        /// <hash> currently supports "SHA384" (1) or "SHA512" (2).
+        /// <scheme> currently only supports "SIMPLE" (1).
+        ///
+        /// Can occur more than once, but only one per unique scheme and hash
+        /// tuple will be added.
+        #[arg(
+	    value_parser = Signer::parse_zonemd_set,
+	)]
+        // Clap doesn't support HashSet (without complex workarounds), therefore
+        // the uniqueness of the tuples need to be checked at runtime.
+        zonemd: HashSet<ZonemdTuple>,
+    },
+    SerialPolicy {
+        serial_policy: SerialPolicy,
+    },
+}
+
+#[derive(Default)]
+struct SigningOptions {
+    hash_only: bool,
+    extra_comments: bool,
+    preceed_zone_with_hash_list: bool,
+    order_nsec3_rrs_by_unhashed_owner_name: bool,
+    order_rrsigs_after_the_rtype_they_cover: bool,
+    use_yyyymmddhhmmss_rrsig_format: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, clap::ValueEnum)]
+enum SerialPolicy {
+    /// Keep the original SOA serial from the unsigned zone file. Only
+    /// resign when the zone changes. Should be used only for zones that
+    /// get frequent updates.
+    Keep,
+
+    /// Keep incrementing the SOA serial but track the serial in the unsigned
+    /// zone file.
+    Increment,
+
+    /// Use the current time in Unix seconds as the SOA serial. Increment
+    /// in case the time is less than or equal to the last serial.
+    UnixSeconds,
+
+    /// Use the current date plus a two digit counter (YYYYMMDDxx) as the
+    /// SOA serial. Increment the last serial if it is still the same day.
+    Date,
 }
 
 impl Signer {
@@ -264,23 +297,20 @@ impl Signer {
         // Post-process arguments.
         // TODO: Can Clap do this for us?
 
-        if self.cmd == "create" {
-            let signer_state_file = self
-                .signer_state
-                .ok_or::<Error>("state file option expected\n".into())?;
-            let zonefile_in = self
-                .zonefile_in
-                .ok_or::<Error>("zonefile option expected\n".into())?;
-            let zonefile_out = if let Some(zonefile_out) = &self.zonefile_out {
+        if let Commands::Create {
+            signer_state: signer_state_file,
+            zonefile_in,
+            zonefile_out,
+            keyset_state,
+        } = self.cmd
+        {
+            let zonefile_out = if let Some(zonefile_out) = zonefile_out {
                 zonefile_out.clone()
             } else {
                 let zonefile_out = format!("{}.signed", zonefile_in.display());
                 PathBuf::from_str(&zonefile_out)
                     .map_err(|err| format!("Cannot write to {zonefile_out}: {err}"))?
             };
-            let keyset_state = self
-                .keyset_state
-                .ok_or::<Error>("keyset-state option expected\n".into())?;
             const ONE_DAY: u64 = 86400;
             let sc = SignerConfig {
                 signer_state: signer_state_file.clone(),
@@ -296,6 +326,7 @@ impl Signer {
                 salt: Nsec3Salt::empty(),
                 opt_out: false,
                 zonemd: HashSet::new(),
+                serial_policy: SerialPolicy::Keep,
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
             let mut file = File::create(self.signer_config)?;
@@ -306,6 +337,7 @@ impl Signer {
                 keyset_state_modified: UNIX_EPOCH.try_into().expect("should not fail"),
                 zonefile_modified: UNIX_EPOCH.try_into().expect("should not fail"),
                 minimum_expiration: UNIX_EPOCH.try_into().expect("should not fail"),
+                previous_serial: None,
             };
             let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
             let mut file = File::create(signer_state_file)?;
@@ -326,105 +358,87 @@ impl Signer {
         let file = File::open(sc.signer_state.clone())?;
         let mut signer_state: SignerState =
             serde_json::from_reader(file).map_err::<Error, _>(|e| {
-                format!("error loading {:?}: {e}\n", self.keyset_state).into()
+                format!("error loading {:?}: {e}\n", sc.signer_state).into()
             })?;
 
         let keyset_state_modified = Self::file_modified(sc.keyset_state.clone())?;
         let file = File::open(sc.keyset_state.clone())?;
         let kss: KeySetState = serde_json::from_reader(file).map_err::<Error, _>(|e| {
-            format!("error loading {:?}: {e}\n", self.keyset_state).into()
+            format!("error loading {:?}: {e}\n", sc.keyset_state).into()
         })?;
 
         let mut config_changed = false;
         let mut state_changed = false;
         let mut res = Ok(());
 
-        if self.cmd == "sign" {
-            // Copy modified times to the state file. Do we need to be clever
-            // and avoid updating the state file if modified times do not
-            // change?
-            signer_state.config_modified = signer_config_modified;
-            signer_state.keyset_state_modified = keyset_state_modified;
-            let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
-            signer_state.zonefile_modified = zonefile_modified;
-            state_changed = true;
-            res = self.go_further(env, &sc, &mut signer_state, &kss)
-        } else if self.cmd == "show" {
-            todo!();
-        } else if self.cmd == "cron" {
-            // Simple automatic signer. Re-sign the zone when needed.
-            // The zone needs to be signed when one or more of the three
-            // input files has changed (signer config, keyset state or the
-            // unsigned zone file.
-            // The zone also needs to be signed when the remaining signature
-            // lifetime is not long enough anymore.
+        match self.cmd {
+            Commands::Create { .. } => unreachable!(),
+            Commands::Sign {
+                hash_only,
+                extra_comments,
+                preceed_zone_with_hash_list,
+                order_nsec3_rrs_by_unhashed_owner_name,
+                order_rrsigs_after_the_rtype_they_cover,
+                use_yyyymmddhhmmss_rrsig_format,
+            } => {
+                let options = SigningOptions {
+                    hash_only,
+                    extra_comments,
+                    preceed_zone_with_hash_list,
+                    order_nsec3_rrs_by_unhashed_owner_name,
+                    order_rrsigs_after_the_rtype_they_cover,
+                    use_yyyymmddhhmmss_rrsig_format,
+                };
 
-            let mut need_resign = false;
-            if signer_config_modified != signer_state.config_modified {
-                need_resign = true;
-            }
-            if keyset_state_modified != signer_state.keyset_state_modified {
-                need_resign = true;
-            }
-            let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
-            if zonefile_modified != signer_state.zonefile_modified {
-                need_resign = true;
-            }
-            let now = UnixTime::now();
-            if now + sc.minimal_remaining_validity > signer_state.minimum_expiration {
-                todo!();
-            }
-            if need_resign {
-                println!("Signing zone");
+                // Copy modified times to the state file. Do we need to be clever
+                // and avoid updating the state file if modified times do not
+                // change?
                 signer_state.config_modified = signer_config_modified;
                 signer_state.keyset_state_modified = keyset_state_modified;
                 let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
                 signer_state.zonefile_modified = zonefile_modified;
                 state_changed = true;
-                res = self.go_further(env, &sc, &mut signer_state, &kss)
+                res = self.go_further(env, &sc, &mut signer_state, &kss, options)
             }
-        } else if self.cmd == "set-use-nsec3" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.use_nsec3 = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
-            config_changed = true;
-        } else if self.cmd == "set-algorithm" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.algorithm = Nsec3Hash::parse_nsec3_alg(&arg).map_err::<Error, _>(|_| {
-                format!("unable to parse as NSEC3 hash algorithm: {arg}\n").into()
-            })?;
-            config_changed = true;
-        } else if self.cmd == "set-iterations" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.iterations = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as u16: {arg}\n").into())?;
-            config_changed = true;
-            match sc.iterations {
-                500.. => Self::write_extreme_iterations_warning(&env),
-                1.. => Self::write_non_zero_iterations_warning(&env),
-                _ => { /* Good, nothing to warn about */ }
+            Commands::Show => {
+                todo!();
             }
-        } else if self.cmd == "set-salt" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.salt = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as salt: {arg}\n").into())?;
-            config_changed = true;
-        } else if self.cmd == "set-opt-out" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.opt_out = arg
-                .parse()
-                .map_err::<Error, _>(|_| format!("unable to parse as boolean: {arg}\n").into())?;
-            config_changed = true;
-        } else if self.cmd == "set-zonemd" {
-            let arg = self.value.ok_or::<Error>("argument expected\n".into())?;
-            sc.zonemd = Self::parse_zonemd_set(&arg)
-                .map_err::<Error, _>(|_| format!("unable to parse as zonemd: {arg}\n").into())?;
-            config_changed = true;
-        } else {
-            return Err(format!("unknown subcommand {}\n", self.cmd).into());
+            Commands::Cron => {
+                // Simple automatic signer. Re-sign the zone when needed.
+                // The zone needs to be signed when one or more of the three
+                // input files has changed (signer config, keyset state or the
+                // unsigned zone file.
+                // The zone also needs to be signed when the remaining signature
+                // lifetime is not long enough anymore.
+
+                let mut need_resign = false;
+                if signer_config_modified != signer_state.config_modified {
+                    need_resign = true;
+                }
+                if keyset_state_modified != signer_state.keyset_state_modified {
+                    need_resign = true;
+                }
+                let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
+                if zonefile_modified != signer_state.zonefile_modified {
+                    need_resign = true;
+                }
+                let now = UnixTime::now();
+                if now + sc.minimal_remaining_validity > signer_state.minimum_expiration {
+                    todo!();
+                }
+                if need_resign {
+                    println!("Signing zone");
+                    signer_state.config_modified = signer_config_modified;
+                    signer_state.keyset_state_modified = keyset_state_modified;
+                    let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
+                    signer_state.zonefile_modified = zonefile_modified;
+                    state_changed = true;
+                    res = self.go_further(env, &sc, &mut signer_state, &kss, Default::default())
+                }
+            }
+            Commands::Set { subcommand } => {
+                set_command(subcommand, &mut sc, &mut config_changed, &env)?
+            }
         }
 
         if config_changed {
@@ -447,8 +461,9 @@ impl Signer {
         sc: &SignerConfig,
         signer_state: &mut SignerState,
         kss: &KeySetState,
+        options: SigningOptions,
     ) -> Result<(), Error> {
-        let signing_mode = if self.hash_only {
+        let signing_mode = if options.hash_only {
             SigningMode::HashOnly
         } else {
             SigningMode::HashAndSign
@@ -558,9 +573,105 @@ impl Signer {
         // Make sure, zonemd arguments are unique
         let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(sc.zonemd.clone());
 
-        // Change the SOA serial.
-        if self.set_soa_serial_to_epoch_time {
-            Self::bump_soa_serial(&mut records)?;
+        // implement SOA serial policies. There are four policies:
+        // 1) Keep. Copy the serial from the unsigned zone. Refuse to sign
+        //    if the serial did not change.
+        // 2) Increment. Copy the serial from the unsigned zone but increment
+        //    the serial if the zone needs to be signed an the serial in
+        //    the unsigned zone did not change.
+        // 3) Unix timestamp. The current time in Unix seconds. Increment if
+        //    that does not result in a higher serial.
+        // 4) Broken down time (YYYYMMDDnn). The current day plus a serial
+        //    number. Implies increment to generate different serial numbers
+        //    over a day.
+
+        // SAFETY: Already checked before this point.
+        let zone_soa_rr = records.find_soa().unwrap();
+        let ZoneRecordData::Soa(zone_soa) = zone_soa_rr.first().data() else {
+            unreachable!();
+        };
+
+        match sc.serial_policy {
+            SerialPolicy::Keep => {
+                if let Some(previous_serial) = signer_state.previous_serial {
+                    if zone_soa.serial() <= previous_serial {
+                        return Err(
+                            "Serial policy is Keep but upstream serial did not increase".into()
+                        );
+                    }
+                }
+
+                signer_state.previous_serial = Some(zone_soa.serial());
+            }
+            SerialPolicy::Increment => {
+                let mut serial = zone_soa.serial();
+                if let Some(previous_serial) = signer_state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+
+                        let new_soa = ZoneRecordData::Soa(Soa::new(
+                            zone_soa.mname().clone(),
+                            zone_soa.rname().clone(),
+                            serial,
+                            zone_soa.refresh(),
+                            zone_soa.retry(),
+                            zone_soa.expire(),
+                            zone_soa.minimum(),
+                        ));
+
+                        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
+                    }
+                }
+                signer_state.previous_serial = Some(serial);
+            }
+            SerialPolicy::UnixSeconds => {
+                let mut serial = Serial::now();
+                if let Some(previous_serial) = signer_state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+                    }
+                }
+
+                let new_soa = ZoneRecordData::Soa(Soa::new(
+                    zone_soa.mname().clone(),
+                    zone_soa.rname().clone(),
+                    serial,
+                    zone_soa.refresh(),
+                    zone_soa.retry(),
+                    zone_soa.expire(),
+                    zone_soa.minimum(),
+                ));
+
+                records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
+                signer_state.previous_serial = Some(serial);
+            }
+            SerialPolicy::Date => {
+                let ts = JiffTimestamp::now();
+                let zone = Zoned::new(ts, TimeZone::UTC);
+                let serial = ((zone.year() as u32 * 100 + zone.month() as u32) * 100
+                    + zone.day() as u32)
+                    * 100;
+                let mut serial: Serial = serial.into();
+
+                if let Some(previous_serial) = signer_state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+                    }
+                }
+
+                let new_soa = ZoneRecordData::Soa(Soa::new(
+                    zone_soa.mname().clone(),
+                    zone_soa.rname().clone(),
+                    serial,
+                    zone_soa.refresh(),
+                    zone_soa.retry(),
+                    zone_soa.expire(),
+                    zone_soa.minimum(),
+                ));
+
+                records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
+                signer_state.previous_serial = Some(serial);
+            }
         }
 
         // Find the apex.
@@ -601,7 +712,7 @@ impl Signer {
 
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
-        if sc.use_nsec3 && (self.extra_comments || self.preceed_zone_with_hash_list) {
+        if sc.use_nsec3 && (options.extra_comments || options.preceed_zone_with_hash_list) {
             // Create a collection of NSEC3 hashes that can later be used for
             // debug output.
             let mut hash_provider = Nsec3HashMap::new();
@@ -814,7 +925,7 @@ impl Signer {
         // ordering if `-b` is specified.
         let mut owner_rrs;
         let owner_rrs_iter: AnyOwnerRrsIter =
-            if self.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
+            if options.order_nsec3_rrs_by_unhashed_owner_name && nsec3_hashes.is_some() {
                 owner_rrs = records.owner_rrs().collect::<Vec<_>>();
                 let Some(hashes) = nsec3_hashes.as_ref() else {
                     unreachable!();
@@ -852,11 +963,11 @@ impl Signer {
             };
 
         // Output the resulting zone, with comments if enabled.
-        if self.extra_comments {
+        if options.extra_comments {
             writer.write_fmt(format_args!(";; Zone: {}\n;\n", apex.fmt_with_dot()))?;
         }
 
-        if self.preceed_zone_with_hash_list {
+        if options.preceed_zone_with_hash_list {
             if let Some(hashes) = &nsec3_hashes {
                 let mut owner_sorted_hashes = hashes.iter().collect::<Vec<_>>();
                 owner_sorted_hashes.par_sort_by(|(_, a), (_, b)| a.name().canonical_cmp(b.name()));
@@ -867,8 +978,8 @@ impl Signer {
         }
 
         if let Some(record) = records.iter().find(|r| r.rtype() == Rtype::SOA) {
-            self.writeln_rr(&mut writer, record)?;
-            if self.order_rrsigs_after_the_rtype_they_cover {
+            self.writeln_rr(&mut writer, record, options.use_yyyymmddhhmmss_rrsig_format)?;
+            if options.order_rrsigs_after_the_rtype_they_cover {
                 for r in records.iter().filter(|r| {
                     if let ZoneRecordData::Rrsig(rrsig) = r.data() {
                         rrsig.type_covered() == Rtype::SOA
@@ -876,9 +987,9 @@ impl Signer {
                         false
                     }
                 }) {
-                    self.writeln_rr(&mut writer, r)?;
+                    self.writeln_rr(&mut writer, r, options.use_yyyymmddhhmmss_rrsig_format)?;
                 }
-                if self.extra_comments {
+                if options.extra_comments {
                     writer.write_str(";\n")?;
                 }
             }
@@ -890,7 +1001,7 @@ impl Signer {
         };
 
         for owner_rrs in owner_rrs_iter {
-            if self.extra_comments {
+            if options.extra_comments {
                 if let Some(hashes) = nsec3_hashes.as_ref() {
                     if let Some(unhashed_owner_name) = hashes.get_if_ent(owner_rrs.owner()) {
                         writer.write_fmt(format_args!(
@@ -903,15 +1014,15 @@ impl Signer {
             // The SOA is output separately above as the very first RRset so
             // we skip that, and we skip RRSIGs as they are output only after
             // the RRset that they cover.
-            if self.order_rrsigs_after_the_rtype_they_cover {
+            if options.order_rrsigs_after_the_rtype_they_cover {
                 for rrset in owner_rrs
                     .rrsets()
                     .filter(|rrset| !matches!(rrset.rtype(), Rtype::SOA | Rtype::RRSIG))
                 {
                     for rr in rrset.iter() {
-                        self.write_rr(&mut writer, rr)?;
+                        self.write_rr(&mut writer, rr, options.use_yyyymmddhhmmss_rrsig_format)?;
                         match rr.data() {
-                            ZoneRecordData::Nsec3(nsec3) if self.extra_comments => {
+                            ZoneRecordData::Nsec3(nsec3) if options.extra_comments => {
                                 nsec3.comment(&mut writer, rr, nsec3_cs)?
                             }
                             ZoneRecordData::Dnskey(dnskey) => {
@@ -935,11 +1046,11 @@ impl Signer {
                         .map(|this_rrset| this_rrset.iter().filter(|rr| matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rrsig.type_covered() == rrset.rtype())))
                     {
                         for covering_rrsig_rr in covering_rrsigs {
-                            self.writeln_rr(&mut writer, covering_rrsig_rr)?;
+                            self.writeln_rr(&mut writer, covering_rrsig_rr, options.use_yyyymmddhhmmss_rrsig_format)?;
                         }
                     }
                 }
-                if self.extra_comments {
+                if options.extra_comments {
                     writer.write_str(";\n")?;
                 }
             } else {
@@ -951,7 +1062,7 @@ impl Signer {
                         // Only output the key tag comment if running as LDNS.
                         // When running as DNST we assume without `-b` that speed
                         // is wanted, not human readable comments.
-                        self.write_rr(&mut writer, rr)?;
+                        self.write_rr(&mut writer, rr, options.use_yyyymmddhhmmss_rrsig_format)?;
                         writer.write_char('\n')?;
                     }
                 }
@@ -965,13 +1076,14 @@ impl Signer {
         &self,
         writer: &mut W,
         rr: &Record<N, ZoneRecordData<O, N>>,
+        use_yyyymmddhhmmss_rrsig_format: bool,
     ) -> std::fmt::Result
     where
         N: ToName,
         W: Write,
         ZoneRecordData<O, N>: ZonefileFmt,
     {
-        if self.use_yyyymmddhhmmss_rrsig_format {
+        if use_yyyymmddhhmmss_rrsig_format {
             if let ZoneRecordData::Rrsig(rrsig) = rr.data() {
                 let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
                 return writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)));
@@ -985,13 +1097,14 @@ impl Signer {
         &self,
         writer: &mut W,
         rr: &Record<N, ZoneRecordData<O, N>>,
+        use_yyyymmddhhmmss_rrsig_format: bool,
     ) -> std::fmt::Result
     where
         N: ToName,
         W: Write,
         ZoneRecordData<O, N>: ZonefileFmt,
     {
-        self.write_rr(writer, rr)?;
+        self.write_rr(writer, rr, use_yyyymmddhhmmss_rrsig_format)?;
         writer.write_char('\n')
     }
 
@@ -1083,50 +1196,6 @@ impl Signer {
         };
 
         Ok((soa.owner().clone(), soa.class(), ttl, serial))
-    }
-
-    fn bump_soa_serial(
-        records: &mut SortedRecords<
-            StoredName,
-            ZoneRecordData<Bytes, StoredName>,
-            MultiThreadedSorter,
-        >,
-    ) -> Result<(), Error> {
-        // SAFETY: Already checked before this point.
-        let old_soa_rr = records.find_soa().unwrap();
-        let ZoneRecordData::Soa(old_soa) = old_soa_rr.first().data() else {
-            unreachable!();
-        };
-
-        // Undocumented behaviour in ldns-signzone: it doesn't just set the
-        // SOA serial to the current unix timestamp as is documented for '-u'
-        // but rather only does that if the resulting value would be larger
-        // than the current unix timestamp, otherwise it increments it. I
-        // assume it does that to ensure that the SOA serial advances on zone
-        // change per expectations defined in RFC 1034, though it is assuming
-        // that the SOA serial can be interpreted as a unix timestamp which
-        // may not be the intention of the zone owner.
-
-        let now = Serial::now();
-        let new_serial = if now > old_soa.serial() {
-            now
-        } else {
-            old_soa.serial().add(1)
-        };
-
-        let new_soa = ZoneRecordData::Soa(Soa::new(
-            old_soa.mname().clone(),
-            old_soa.rname().clone(),
-            new_serial,
-            old_soa.refresh(),
-            old_soa.retry(),
-            old_soa.expire(),
-            old_soa.minimum(),
-        ));
-
-        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-
-        Ok(())
     }
 
     fn write_extreme_iterations_warning(env: &impl Env) {
@@ -1346,6 +1415,44 @@ impl Signer {
     }
 }
 
+fn set_command(
+    cmd: SetCommands,
+    sc: &mut SignerConfig,
+    config_changed: &mut bool,
+    env: &impl Env,
+) -> Result<(), Error> {
+    match cmd {
+        SetCommands::UseNsec3 { boolean } => {
+            sc.use_nsec3 = boolean;
+        }
+        SetCommands::Algorithm { algorithm } => {
+            sc.algorithm = algorithm;
+        }
+        SetCommands::Iterations { iterations } => {
+            sc.iterations = iterations;
+            match sc.iterations {
+                500.. => Signer::write_extreme_iterations_warning(&env),
+                1.. => Signer::write_non_zero_iterations_warning(&env),
+                _ => { /* Good, nothing to warn about */ }
+            }
+        }
+        SetCommands::Salt { salt } => {
+            sc.salt = salt;
+        }
+        SetCommands::OptOut { boolean } => {
+            sc.opt_out = boolean;
+        }
+        SetCommands::ZoneMD { zonemd } => {
+            sc.zonemd = zonemd;
+        }
+        SetCommands::SerialPolicy { serial_policy } => {
+            sc.serial_policy = serial_policy;
+        }
+    }
+    *config_changed = true;
+    Ok(())
+}
+
 fn next_owner_hash_to_name(next_owner_hash_hex: &str, apex: &StoredName) -> Result<StoredName, ()> {
     let mut builder = NameBuilder::new_bytes();
     builder
@@ -1371,6 +1478,7 @@ struct SignerConfig {
     salt: Nsec3Salt<Bytes>,
     opt_out: bool,
     zonemd: HashSet<ZonemdTuple>,
+    serial_policy: SerialPolicy,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1379,6 +1487,7 @@ struct SignerState {
     keyset_state_modified: UnixTime,
     zonefile_modified: UnixTime,
     minimum_expiration: UnixTime,
+    previous_serial: Option<Serial>,
 }
 
 //------------ SigningMode ---------------------------------------------------
