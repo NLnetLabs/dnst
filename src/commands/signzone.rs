@@ -861,9 +861,7 @@ impl SignZone {
 
                 // Make sure that the DNSKEY RRset contains all keys.
                 for k in &signing_keys {
-                    let pubkey = k.dnskey().map_err(|err| {
-                        Error::from(format!("Unable to determine DNSKEY for signing key: {err}"))
-                    })?;
+                    let pubkey = k.dnskey();
                     if !dnskey_rrset
                         .as_ref()
                         .map_or(empty_records.iter(), |r| r.iter())

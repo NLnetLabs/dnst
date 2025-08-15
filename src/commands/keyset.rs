@@ -16,10 +16,9 @@ use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{Name, Record, ToName, Ttl};
-use domain::crypto::kmip::sign::KeyUrl;
-use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings};
+use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings, KeyUrl};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
-use domain::dep::kmip::client::pool::{ConnectionManager, SyncConnPool};
+use domain::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{Action, Key, KeySet, KeyType, RollType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
@@ -355,8 +354,9 @@ impl Keyset {
         let mut config_changed = false;
         let mut state_changed = false;
 
-        // Determine the KMIP connection pool to use, if configured.
-        let kmip_conn_pool = get_kmip_pool(&ksc)?;
+        // Determine the KMIP connection pool to use for creating new keys,
+        // if configured.
+        let mut kmip_pool_mgr = KmipPoolManager::new(&ksc);
 
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
@@ -377,7 +377,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     kss.keyset
                         .add_key_csk(
@@ -401,7 +401,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     kss.keyset
                         .add_key_ksk(
@@ -420,7 +420,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     kss.keyset
                         .add_key_zsk(
@@ -439,7 +439,7 @@ impl Keyset {
                         .expect("should not happen")
                 };
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -494,7 +494,7 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_conn_pool,
+                    &mut kmip_pool_mgr,
                 )?;
                 kss.keyset
                     .add_key_ksk(
@@ -520,12 +520,12 @@ impl Keyset {
                     Ok(actions) => actions,
                     Err(e) => {
                         // Remove the key files we just created.
-                        remove_key(&ksc, ksk_priv_url)?;
-                        remove_key(&ksc, ksk_pub_url)?;
+                        remove_key(&mut kmip_pool_mgr, ksk_priv_url)?;
+                        remove_key(&mut kmip_pool_mgr, ksk_pub_url)?;
                         return Err(e);
                     }
                 };
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -577,7 +577,7 @@ impl Keyset {
                     kss.keyset.keys(),
                     &ksc.keys_dir,
                     env,
-                    &kmip_conn_pool,
+                    &mut kmip_pool_mgr,
                 )?;
                 kss.keyset
                     .add_key_zsk(
@@ -603,12 +603,12 @@ impl Keyset {
                     Ok(actions) => actions,
                     Err(e) => {
                         // Remove the key files we just created.
-                        remove_key(&ksc, zsk_priv_url)?;
-                        remove_key(&ksc, zsk_pub_url)?;
+                        remove_key(&mut kmip_pool_mgr, zsk_priv_url)?;
+                        remove_key(&mut kmip_pool_mgr, zsk_pub_url)?;
                         return Err(e);
                     }
                 };
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -651,7 +651,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(csk_priv_url.clone());
                     new_urls.push(csk_pub_url.clone());
@@ -681,7 +681,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(ksk_priv_url.clone());
                     new_urls.push(ksk_pub_url.clone());
@@ -706,7 +706,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(zsk_priv_url.clone());
                     new_urls.push(zsk_pub_url.clone());
@@ -739,13 +739,13 @@ impl Keyset {
                     Err(e) => {
                         // Remove the key files we just created.
                         for u in new_urls {
-                            remove_key(&ksc, u)?;
+                            remove_key(&mut kmip_pool_mgr, u)?;
                         }
                         return Err(e);
                     }
                 };
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -786,7 +786,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(csk_priv_url.clone());
                     new_urls.push(csk_pub_url.clone());
@@ -816,7 +816,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(ksk_priv_url.clone());
                     new_urls.push(ksk_pub_url.clone());
@@ -841,7 +841,7 @@ impl Keyset {
                         kss.keyset.keys(),
                         &ksc.keys_dir,
                         env,
-                        &kmip_conn_pool,
+                        &mut kmip_pool_mgr,
                     )?;
                     new_urls.push(zsk_priv_url.clone());
                     new_urls.push(zsk_pub_url.clone());
@@ -874,13 +874,13 @@ impl Keyset {
                     Err(e) => {
                         // Remove the key files we just created.
                         for u in new_urls {
-                            remove_key(&ksc, u)?;
+                            remove_key(&mut kmip_pool_mgr, u)?;
                         }
                         return Err(e);
                     }
                 };
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -930,7 +930,7 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 // Report actions
                 print_actions(&actions);
@@ -969,7 +969,7 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kmip_pool_mgr, &mut kss, env)?;
 
                 // Report actions
                 print_actions(&actions);
@@ -1028,13 +1028,13 @@ impl Keyset {
                                 let priv_url = Url::parse(privkey).map_err::<Error, _>(|e| {
                                     format!("unable to parse {privkey} as URL: {e}").into()
                                 })?;
-                                remove_key(&ksc, priv_url)?;
+                                remove_key(&mut kmip_pool_mgr, priv_url)?;
                             }
 
                             let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
                                 format!("unable to parse {pubref} as URL: {e}").into()
                             })?;
-                            remove_key(&ksc, pub_url)?;
+                            remove_key(&mut kmip_pool_mgr, pub_url)?;
                         }
                         println!();
                     }
@@ -1156,12 +1156,18 @@ impl Keyset {
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
-                    update_dnskey_rrset(&mut kss, &ksc, env)?;
+                    update_dnskey_rrset(&mut kss, &ksc, &mut kmip_pool_mgr, env)?;
                     state_changed = true;
                 }
                 if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
                     println!("CDS/CDNSKEY RRSIGs need to be renewed");
-                    create_cds_rrset(&mut kss, &ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?;
+                    create_cds_rrset(
+                        &mut kss,
+                        &ksc,
+                        &mut &mut kmip_pool_mgr,
+                        ksc.ds_algorithm.to_digest_algorithm(),
+                        env,
+                    )?;
                     state_changed = true;
                 }
             }
@@ -1211,21 +1217,7 @@ impl Keyset {
     }
 }
 
-fn get_kmip_pool(ksc: &KeySetConfig) -> Result<Option<SyncConnPool>, Error> {
-    let Some(id) = &ksc.default_kmip_server else {
-        return Ok(None);
-    };
-
-    let Some(kmip_conn_settings) = ksc.kmip_servers.get(id) else {
-        return Err(format!("No KMIP server config exists for id '{id}").into());
-    };
-
-    let conn_settings = Arc::new(ConnectionSettings::try_from(kmip_conn_settings.clone())?);
-    let kmip_conn_pool = Some(kmip_create_conn_pool(id.clone(), conn_settings)?);
-    Ok(kmip_conn_pool)
-}
-
-fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
+fn remove_key(kmip_pool_mgr: &mut KmipPoolManager, url: Url) -> Result<(), Error> {
     match url.scheme() {
         "file" => {
             remove_file(url.path()).map_err::<Error, _>(|e| {
@@ -1234,13 +1226,9 @@ fn remove_key(ksc: &KeySetConfig, url: Url) -> Result<(), Error> {
         }
 
         "kmip" => {
-            let (server_id, key_id, _algorithm, _flags, conn_settings) =
-                parse_kmip_key_url(ksc, url)?;
-            let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
-            let conn = kmip_conn_pool
-                .get()
-                .map_err(|err| format!("Failed to acquire connection from KMIP pool: {err}"))?;
-
+            let key_url = KeyUrl::try_from(url)?;
+            let key_id = key_url.key_id();
+            let conn = kmip_pool_mgr.get_pool(key_url.server_id())?.get()?;
             // TODO: Batch these together?
             conn.revoke_key(&key_id)
                 .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
@@ -1730,7 +1718,7 @@ fn new_keys(
     keys: &HashMap<String, Key>,
     keys_dir: &Path,
     env: &impl Env,
-    kmip_conn_pool: &Option<SyncConnPool>,
+    kmip_conn: &mut KmipPoolManager,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
     // TODO: Attempt repeated generation to avoid key tag collisions.
@@ -1738,7 +1726,7 @@ fn new_keys(
     let flags = if make_ksk { 257 } else { 256 };
     let mut retries = MAX_KEY_TAG_TRIES;
 
-    if let Some(kmip_conn_pool) = kmip_conn_pool {
+    if let Some(kmip_conn_pool) = kmip_conn.get_default_pool()? {
         let (key_pair, dnskey) = loop {
             // TODO: Fortanix DSM rejects attempts to create keys by names
             // that are already taken. Should we be able to detect that case
@@ -1759,11 +1747,7 @@ fn new_keys(
             )
             .map_err::<Error, _>(|e| format!("KMIP key generation failed: {e}\n").into())?;
 
-            let dnskey = key_pair.dnskey().map_err(|err| {
-                Error::new(&format!(
-                    "Unable to determine DNSKEY for newly generated signing key: {err}"
-                ))
-            })?;
+            let dnskey = key_pair.dnskey();
 
             if !keys.iter().any(|(_, k)| k.key_tag() == dnskey.key_tag()) {
                 break (key_pair, dnskey);
@@ -1774,16 +1758,9 @@ fn new_keys(
             retries -= 1;
         };
 
-        let public_key_url = key_pair
-            .public_key_url()
-            .map_err(|err| format!("Failed to generate public key URL: {err}"))?;
-        let private_key_url = key_pair
-            .private_key_url()
-            .map_err(|err| format!("Failed to generate private key URL: {err}"))?;
-
         Ok((
-            public_key_url,
-            private_key_url,
+            key_pair.public_key_url(),
+            key_pair.private_key_url(),
             key_pair.algorithm(),
             dnskey.key_tag(),
         ))
@@ -1856,6 +1833,7 @@ fn new_keys(
 fn update_dnskey_rrset(
     kss: &mut KeySetState,
     ksc: &KeySetConfig,
+    kmip_pool_mgr: &mut KmipPoolManager,
     env: &impl Env,
 ) -> Result<(), Error> {
     let mut dnskeys = Vec::new();
@@ -1912,13 +1890,22 @@ fn update_dnskey_rrset(
                     dnskeys.push(record);
                 }
             } else if pub_url.scheme() == "kmip" {
-                let (server_id, public_key_id, algorithm, flags, conn_settings) =
-                    parse_kmip_key_url(ksc, pub_url)?;
-                let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
-                let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                // let (server_id, public_key_id, algorithm, flags, conn_settings) =
+                //     parse_kmip_key_url(ksc, pub_url)?;
+                let kmip_key_url = KeyUrl::try_from(pub_url)?;
+                let kmip_conn_pool = kmip_create_conn_pool(ksc, kmip_key_url.server_id())?;
+                // TODO: Store flags in Public Key?
+                let flags = kmip_key_url.flags();
+                let key = kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
+                    .map_err(|err| format!("Failed to fetch public key for KMIP key URL: {err}"))?;
                 let owner = kss.keyset.name().clone().flatten_into();
                 // TODO: Where does this TTL come from?
-                let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey.convert());
+                let record = Record::new(
+                    owner,
+                    Class::IN,
+                    Ttl::from_days(1),
+                    key.dnskey(flags).convert(),
+                );
                 dnskeys.push(record);
             } else {
                 panic!("unsupported scheme in {pub_url}");
@@ -1980,7 +1967,15 @@ fn update_dnskey_rrset(
 
                 ("kmip", "kmip") => {
                     let owner = kss.keyset.name().clone().flatten_into();
-                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
+                    let priv_key_url = KeyUrl::try_from(priv_url)?;
+                    let pub_key_url = KeyUrl::try_from(pub_url)?;
+                    let flags = priv_key_url.flags();
+                    let kmip_conn_pool = kmip_pool_mgr.get_pool(priv_key_url.server_id())?;
+                    let key_pair =
+                        kmip::sign::KeyPair::from_urls(priv_key_url, pub_key_url, kmip_conn_pool)
+                            .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
+                    let key_pair = KeyPair::Kmip(key_pair);
+                    SigningKey::new(owner, flags, key_pair)
                 }
 
                 (priv_scheme, pub_scheme) => {
@@ -2010,74 +2005,32 @@ fn update_dnskey_rrset(
     Ok(())
 }
 
-fn kmip_signing_key_from_urls(
-    ksc: &KeySetConfig,
-    owner: Name<Bytes>,
-    priv_url: Url,
-    pub_url: Url,
-) -> Result<SigningKey<Bytes, KeyPair>, Error> {
-    let (server_id1, private_key_id, algorithm1, flags1, conn_settings1) =
-        parse_kmip_key_url(ksc, priv_url)?;
-    let (server_id2, public_key_id, algorithm2, flags2, conn_settings2) =
-        parse_kmip_key_url(ksc, pub_url)?;
+fn kmip_create_conn_pool(ksc: &KeySetConfig, server_id: &str) -> Result<SyncConnPool, Error> {
+    let srv = ksc
+        .kmip_servers
+        .get(server_id)
+        .ok_or(format!("No KMIP server configured with id {server_id}"))?;
 
-    assert_eq!(server_id1, server_id2);
-    assert_eq!(algorithm1, algorithm2);
-    assert_eq!(flags1, flags2);
-    assert_eq!(conn_settings1, conn_settings2);
+    let conn_settings = Arc::new(ConnectionSettings::try_from(srv.clone())?);
 
-    let kmip_conn_pool = kmip_create_conn_pool(server_id1, conn_settings1.into())?;
-
-    let key_pair = KeyPair::Kmip(
-        kmip::sign::KeyPair::new(
-            algorithm1,
-            flags1,
-            &private_key_id,
-            &public_key_id,
-            kmip_conn_pool,
-        )
-        .map_err(|err| format!("{err}"))?,
-    );
-
-    Ok(SigningKey::new(owner, flags1, key_pair))
-}
-
-fn kmip_create_conn_pool(
-    server_id: String,
-    conn_settings: Arc<ConnectionSettings>,
-) -> Result<SyncConnPool, Error> {
     // TODO: Should the timeouts used here be configurable and/or set to some
     // other value?
     let kmip_conn_pool = ConnectionManager::create_connection_pool(
-        server_id,
+        server_id.to_owned(),
         conn_settings,
         1,
         Some(Duration::from_secs(60)),
         Some(Duration::from_secs(60)),
     )
     .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
-    Ok(kmip_conn_pool)
-}
 
-/// Obtain the DNSKEY RR for a given KMIP key.
-///
-/// Retries up to 3 times on error, with a hard-coded sleep between tries, to
-/// handle the case where the key has been very recently created and for some
-/// reason cannot be queried yet (seen with Fortanix DSM).
-fn kmip_get_dnskey(
-    public_key_id: String,
-    algorithm: SecurityAlgorithm,
-    flags: u16,
-    kmip_conn_pool: SyncConnPool,
-) -> Result<Dnskey<Vec<u8>>, Error> {
-    let public_key = kmip::PublicKey::new(public_key_id, algorithm, kmip_conn_pool)
-        .map_err::<Error, _>(|err| format!("unable to fetch KMIP public key: {err}").into())?;
-    Ok(public_key.dnskey(flags))
+    Ok(kmip_conn_pool)
 }
 
 fn create_cds_rrset(
     kss: &mut KeySetState,
     ksc: &KeySetConfig,
+    kmip_pool_mgr: &mut KmipPoolManager,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
 ) -> Result<(), Error> {
@@ -2125,10 +2078,12 @@ fn create_cds_rrset(
                 }
 
                 "kmip" => {
-                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(ksc, pub_url)?;
-                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
-                    let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                    let key_url = KeyUrl::try_from(pub_url)?;
+                    let flags = key_url.flags();
+                    let conn_pool = kmip_pool_mgr.get_pool(key_url.server_id())?;
+                    let public_key = kmip::PublicKey::for_key_url(key_url, conn_pool)
+                        .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
+                    let dnskey = public_key.dnskey(flags);
                     let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
                     let owner = kss.keyset.name().clone().flatten_into();
                     let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey);
@@ -2213,7 +2168,15 @@ fn create_cds_rrset(
 
                 ("kmip", "kmip") => {
                     let owner = kss.keyset.name().clone().flatten_into();
-                    kmip_signing_key_from_urls(ksc, owner, priv_url, pub_url)?
+                    let priv_key_url = KeyUrl::try_from(priv_url)?;
+                    let pub_key_url = KeyUrl::try_from(pub_url)?;
+                    let flags = priv_key_url.flags();
+                    let kmip_conn_pool = kmip_pool_mgr.get_pool(priv_key_url.server_id())?;
+                    let key_pair =
+                        kmip::sign::KeyPair::from_urls(priv_key_url, pub_key_url, kmip_conn_pool)
+                            .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
+                    let key_pair = KeyPair::Kmip(key_pair);
+                    SigningKey::new(owner, flags, key_pair)
                 }
 
                 (priv_scheme, pub_scheme) => {
@@ -2256,39 +2219,6 @@ fn create_cds_rrset(
     Ok(())
 }
 
-fn parse_kmip_key_url(
-    ksc: &KeySetConfig,
-    kmip_key_url: Url,
-) -> Result<(String, String, SecurityAlgorithm, u16, ConnectionSettings), Error> {
-    let key_url =
-        KeyUrl::try_from(kmip_key_url).map_err(|err| format!("Invalid KMIP key URL: {err}"))?;
-
-    let server_id = key_url.server_id();
-
-    // Lookup KMIP server connection details
-    let srv = ksc
-        .kmip_servers
-        .get(server_id)
-        .ok_or(format!("No KMIP server configured with id {server_id}"))?;
-
-    let mut conn_settings = ConnectionSettings::try_from(srv.clone())?;
-
-    if srv.server_username.is_some() {
-        conn_settings.username = srv.server_username.clone();
-    }
-    if srv.server_password.is_some() {
-        conn_settings.password = srv.server_password.clone();
-    }
-
-    Ok((
-        server_id.to_string(),
-        key_url.key_id().to_string(),
-        key_url.algorithm(),
-        key_url.flags(),
-        conn_settings,
-    ))
-}
-
 fn create_cds_rrset_helper(
     digest_alg: DigestAlgorithm,
     cds_list: &mut Vec<Record<Name<Bytes>, Cds<Vec<u8>>>>,
@@ -2326,8 +2256,8 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
 }
 
 fn update_ds_rrset(
-    ksc: &KeySetConfig,
     kss: &mut KeySetState,
+    kmip_pool_mgr: &mut KmipPoolManager,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
 ) -> Result<(), Error> {
@@ -2395,10 +2325,12 @@ fn update_ds_rrset(
                 }
 
                 "kmip" => {
-                    let (server_id, public_key_id, algorithm, flags, conn_settings) =
-                        parse_kmip_key_url(ksc, pub_url)?;
-                    let kmip_conn_pool = kmip_create_conn_pool(server_id, conn_settings.into())?;
-                    let dnskey = kmip_get_dnskey(public_key_id, algorithm, flags, kmip_conn_pool)?;
+                    let key_url = KeyUrl::try_from(pub_url)?;
+                    let flags = key_url.flags();
+                    let conn_pool = kmip_pool_mgr.get_pool(key_url.server_id())?;
+                    let public_key = kmip::PublicKey::for_key_url(key_url, conn_pool)
+                        .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
+                    let dnskey = public_key.dnskey(flags);
                     let owner: Name<Bytes> = kss.keyset.name().clone().flatten_into();
                     let record =
                         Record::new(owner.clone(), Class::IN, Ttl::from_days(1), dnskey.clone());
@@ -2442,19 +2374,27 @@ fn update_ds_rrset(
 fn handle_actions(
     actions: &[Action],
     ksc: &KeySetConfig,
+    kmip_pool_mgr: &mut KmipPoolManager,
     kss: &mut KeySetState,
     env: &impl Env,
 ) -> Result<(), Error> {
     for action in actions {
         match action {
-            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env)?,
-            Action::CreateCdsRrset => {
-                create_cds_rrset(kss, ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?
-            }
+            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, kmip_pool_mgr, env)?,
+            Action::CreateCdsRrset => create_cds_rrset(
+                kss,
+                ksc,
+                kmip_pool_mgr,
+                ksc.ds_algorithm.to_digest_algorithm(),
+                env,
+            )?,
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
-            Action::UpdateDsRrset => {
-                update_ds_rrset(ksc, kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
-            }
+            Action::UpdateDsRrset => update_ds_rrset(
+                kss,
+                kmip_pool_mgr,
+                ksc.ds_algorithm.to_digest_algorithm(),
+                env,
+            )?,
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
             Action::ReportDsPropagated => (),
@@ -2573,4 +2513,69 @@ fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTim
         .min();
 
     min_expiration.map(|t| (t - *remain_time).try_into().unwrap())
+}
+
+impl From<KmipConnError> for Error {
+    fn from(err: KmipConnError) -> Self {
+        Error::new(&format!("KMIP connection error: {err}"))
+    }
+}
+
+struct KmipPoolManager<'a> {
+    ksc: &'a KeySetConfig,
+    pools: HashMap<String, SyncConnPool>,
+}
+
+impl<'a> KmipPoolManager<'a> {
+    pub fn new(ksc: &'a KeySetConfig) -> Self {
+        Self {
+            ksc,
+            pools: Default::default(),
+        }
+    }
+
+    pub fn get_default_pool(&mut self) -> Result<Option<SyncConnPool>, Error> {
+        self.ksc
+            .default_kmip_server
+            .as_ref()
+            .map(|id| self.get_pool(&id))
+            .transpose()
+            .map_err(|err| err.into())
+    }
+
+    pub fn get_pool(&mut self, id: &str) -> Result<SyncConnPool, Error> {
+        match self.pools.get(id) {
+            Some(pool) => Ok(pool.clone()),
+            None => {
+                let Some(srv_conn_settings) = self.ksc.kmip_servers.get(id) else {
+                    return Err(format!("No KMIP server config exists for server '{id}").into());
+                };
+                let mut conn_settings = ConnectionSettings::try_from(srv_conn_settings.clone())
+                    .map_err(|err| {
+                        format!(
+                            "Unable to prepare KMIP connection settings for server '{id}': {err}"
+                        )
+                    })?;
+                if srv_conn_settings.server_username.is_some() {
+                    conn_settings.username = srv_conn_settings.server_username.clone();
+                }
+                if srv_conn_settings.server_password.is_some() {
+                    conn_settings.password = srv_conn_settings.server_password.clone();
+                }
+                // TODO: Should the timeouts used here be configurable and/or set to some
+                // other value?
+                let pool = ConnectionManager::create_connection_pool(
+                    id.to_string(),
+                    conn_settings.into(),
+                    1,
+                    Some(Duration::from_secs(60)),
+                    Some(Duration::from_secs(60)),
+                )
+                .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
+
+                self.pools.insert(id.to_string(), pool.clone());
+                Ok(pool)
+            }
+        }
+    }
 }
