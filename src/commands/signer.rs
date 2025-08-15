@@ -51,6 +51,7 @@ use std::fs::{metadata, File};
 use std::io::Write as IoWrite;
 use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::UNIX_EPOCH;
 use tokio::time::Duration;
 use tracing::warn;
@@ -174,6 +175,9 @@ enum SetCommands {
     },
     SerialPolicy {
         serial_policy: SerialPolicy,
+    },
+    NotifyCommand {
+        args: Vec<String>,
     },
 }
 
@@ -327,6 +331,7 @@ impl Signer {
                 opt_out: false,
                 zonemd: HashSet::new(),
                 serial_policy: SerialPolicy::Keep,
+                notify_command: Vec::new(),
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
             let mut file = File::create(self.signer_config)?;
@@ -1069,6 +1074,17 @@ impl Signer {
             }
         }
 
+        if !sc.notify_command.is_empty() {
+            let output = Command::new(&sc.notify_command[0])
+                .args(&sc.notify_command[1..])
+                .output()?;
+            if !output.status.success() {
+                println!("notify command failed with: {}", output.status);
+                io::stdout().write_all(&output.stdout)?;
+                io::stderr().write_all(&output.stderr)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1448,6 +1464,9 @@ fn set_command(
         SetCommands::SerialPolicy { serial_policy } => {
             sc.serial_policy = serial_policy;
         }
+        SetCommands::NotifyCommand { args } => {
+            sc.notify_command = args;
+        }
     }
     *config_changed = true;
     Ok(())
@@ -1479,6 +1498,7 @@ struct SignerConfig {
     opt_out: bool,
     zonemd: HashSet<ZonemdTuple>,
     serial_policy: SerialPolicy,
+    notify_command: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
