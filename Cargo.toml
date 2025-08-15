@@ -44,7 +44,6 @@ rayon = "1.10.0"
 octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
-kmip = { git = "https://github.com/NLnetLabs/kmip-protocol", branch = "next", package = "kmip-protocol", version = "0.5.0", features = ["tls-with-openssl-vendored"] } # TLS features should match those used by domain.
 
 # LDNS-xxx mode specific dependencies.
 # TODO: put these behind a feature gate?

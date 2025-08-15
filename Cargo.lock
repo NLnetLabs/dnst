@@ -343,7 +343,6 @@ dependencies = [
  "const_format",
  "domain",
  "jiff",
- "kmip-protocol",
  "lazy_static",
  "lexopt",
  "octseq",
@@ -364,7 +363,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#48b9b6b1f0b4278fb92c9b6f840bdba10eab134a"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#9d95a7297b4281db90a901f0d6b4be6c882a488e"
 dependencies = [
  "arc-swap",
  "bcder",
@@ -381,7 +380,6 @@ dependencies = [
  "octseq",
  "openssl",
  "parking_lot",
- "r2d2",
  "rand",
  "ring",
  "rustversion",
@@ -401,7 +399,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1-dev"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#48b9b6b1f0b4278fb92c9b6f840bdba10eab134a"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=patches-for-nameshed-prototype#9d95a7297b4281db90a901f0d6b4be6c882a488e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -789,7 +787,7 @@ dependencies = [
 [[package]]
 name = "kmip-protocol"
 version = "0.5.0"
-source = "git+https://github.com/NLnetLabs/kmip-protocol?branch=next#d3c323caf199c982218a573ee7f5ab43075d0c27"
+source = "git+https://github.com/NLnetLabs/kmip-protocol?branch=next#36960114c4e4170c219add8c861c69610219c60d"
 dependencies = [
  "cfg-if",
  "enum-display-derive",
@@ -799,6 +797,7 @@ dependencies = [
  "log",
  "maybe-async",
  "openssl",
+ "r2d2",
  "rustc_version",
  "serde",
  "serde_bytes",
