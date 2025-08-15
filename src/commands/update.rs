@@ -11,24 +11,23 @@
 // - No duplicate protection through update ordering with marker RRs
 
 use std::ffi::OsString;
-use std::io::BufReader;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use bytes::Bytes;
 use clap::Subcommand;
 use domain::base::iana::{Class, Opcode, Rcode};
-use domain::base::name::UncertainName;
+use domain::base::name::{FlattenInto, UncertainName};
 use domain::base::{
     Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
 };
 use domain::net::client::request::{RequestMessage, SendRequest};
 use domain::net::client::{dgram, tsig};
-use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, A};
+use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, ZoneRecordData, A};
 use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
 use domain::tsig::Key;
 use domain::utils::base64;
-use domain::zonefile::inplace::{Entry, ScannedRecord};
+use domain::zonefile::inplace::{Entry, ScannedRecord, Zonefile};
 
 use crate::env::Env;
 use crate::error::Error;
@@ -36,6 +35,8 @@ use crate::parse::TSigInfo;
 use crate::Args;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
+
+// TODO: add .context() to errors?
 
 // UI:
 // Synopsis:
@@ -50,7 +51,10 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 // - `dnst update delete <domain name> AAAA` - Delete all AAAA RRs on domain name
 // - `dnst update clear <domain name>` - Delete all RRSETs on domain name, aka delete the whole domain name
 
-type SomeRecord = ScannedRecord;
+// type SomeRecord = Record<NameVecU8, ZoneRecordData<Vec<u8>, NameVecU8>>;
+// type SomeRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
+type SomeRecord = Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+// type SomeRecord = ScannedRecord;
 type NameTypeTuple = (Name<Bytes>, Rtype);
 
 // pub type ScannedDname = Chain<RelativeName<Bytes>, Name<Bytes>>;
@@ -138,7 +142,7 @@ pub struct Update {
 }
 
 impl Update {
-    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+    pub fn execute(self, _env: impl Env) -> Result<(), Error> {
         // let runtime = tokio::runtime::Runtime::new().unwrap();
         // runtime.block_on(self.run(&env))
         let origin = Name::<Bytes>::from_str("example.com.").expect("hardcoded");
@@ -225,24 +229,20 @@ impl Update {
     ) -> Result<Vec<SomeRecord>, Error> {
         let mut records = Vec::new();
         for arg in args {
-            let record = format!("{}\n", arg);
-            let mut buf = BufReader::new(record.as_bytes());
-            let mut zonefile = domain::zonefile::inplace::Zonefile::load(&mut buf).unwrap();
+            let mut zonefile = Zonefile::new();
+            zonefile.extend_from_slice(arg.as_bytes());
+            zonefile.extend_from_slice(b"\n");
             zonefile.set_default_class(class);
             zonefile.set_origin(origin.clone());
-
-            let entry = zonefile.into_iter().next().ok_or(format!(
-                "Argument does not contain a resource record: {arg}"
-            ))?;
-            let entry = entry.map_err(|e| format!("Could not parse resource record: {e}"))?;
-
-            // We only care about records in a zonefile
-            let Entry::Record(mut record) = entry else {
-                return Err(format!("Provided argument is not a resource record: {arg}").into());
-            };
-
-            record.set_ttl(Ttl::from_secs(0));
-            records.push(record);
+            if let Ok(Some(Entry::Record(mut record))) = zonefile.next_entry() {
+                record.set_ttl(Ttl::from_secs(0));
+                records.push(record.flatten_into());
+            } else {
+                return Err(
+                    format!("Provided argument is not a valid resource record: {arg}").into(),
+                );
+            }
+            // .context("TODO")?;
         }
         Ok(records)
     }
