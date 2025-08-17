@@ -1164,7 +1164,7 @@ impl Keyset {
                     create_cds_rrset(
                         &mut kss,
                         &ksc,
-                        &mut &mut kmip_pool_mgr,
+                        &mut kmip_pool_mgr,
                         ksc.ds_algorithm.to_digest_algorithm(),
                         env,
                     )?;
@@ -1230,9 +1230,9 @@ fn remove_key(kmip_pool_mgr: &mut KmipPoolManager, url: Url) -> Result<(), Error
             let key_id = key_url.key_id();
             let conn = kmip_pool_mgr.get_pool(key_url.server_id())?.get()?;
             // TODO: Batch these together?
-            conn.revoke_key(&key_id)
+            conn.revoke_key(key_id)
                 .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
-            conn.destroy_key(&key_id)
+            conn.destroy_key(key_id)
                 .map_err(|err| format!("Failed to destroy KMIP key {key_id}: {err}"))?;
         }
 
@@ -2538,9 +2538,8 @@ impl<'a> KmipPoolManager<'a> {
         self.ksc
             .default_kmip_server
             .as_ref()
-            .map(|id| self.get_pool(&id))
+            .map(|id| self.get_pool(id))
             .transpose()
-            .map_err(|err| err.into())
     }
 
     pub fn get_pool(&mut self, id: &str) -> Result<SyncConnPool, Error> {
