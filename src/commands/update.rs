@@ -14,9 +14,9 @@ use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-use bytes::Bytes;
 use clap::Subcommand;
 use domain::base::iana::{Class, Opcode, Rcode};
+use domain::base::message_builder::AnswerBuilder;
 use domain::base::name::{FlattenInto, UncertainName};
 use domain::base::{
     Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
@@ -27,10 +27,10 @@ use domain::rdata::{Aaaa, AllRecordData, Ns, Soa, ZoneRecordData, A};
 use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
 use domain::tsig::Key;
 use domain::utils::base64;
-use domain::zonefile::inplace::{Entry, ScannedRecord, Zonefile};
+use domain::zonefile::inplace::{Entry, Zonefile};
 
 use crate::env::Env;
-use crate::error::Error;
+use crate::error::{Context, Error};
 use crate::parse::TSigInfo;
 use crate::Args;
 
@@ -53,9 +53,9 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 // type SomeRecord = Record<NameVecU8, ZoneRecordData<Vec<u8>, NameVecU8>>;
 // type SomeRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
-type SomeRecord = Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+type ParsedRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
 // type SomeRecord = ScannedRecord;
-type NameTypeTuple = (Name<Bytes>, Rtype);
+type NameTypeTuple = (Name<Vec<u8>>, Rtype);
 
 // pub type ScannedDname = Chain<RelativeName<Bytes>, Name<Bytes>>;
 // pub type ScannedRecordData = ZoneRecordData<Bytes, ScannedDname>;
@@ -82,16 +82,16 @@ pub struct Update {
     #[arg(short = 't', long = "ttl", value_parser = Update::parse_ttl, default_value = "3600")]
     ttl: Ttl,
 
-    /// Nameserver to send the update to
+    /// Name server to send the update to (can be provided multiple times)
     #[arg(short = 's', long = "server", value_name = "IP")]
-    nameserver: Option<IpAddr>,
+    nameservers: Vec<IpAddr>,
 
     /// Zone the domain name belongs to (to skip SOA query)
-    #[arg(short = 'z', long = "zone")]
+    #[arg(short = 'z', long = "ZONE")]
     zone: Option<Name<Vec<u8>>>,
 
     /// TSIG credentials for the UPDATE packet
-    #[arg(short = 'y', long = "tsig", value_name = "name:key[:algo]")]
+    #[arg(short = 'y', long = "tsig", value_name = "NAME:KEY[:ALGO]")]
     tsig: Option<TSigInfo>,
 
     /// RRset exists (value independent). (Optionally) provide this option
@@ -100,7 +100,11 @@ pub struct Update {
     ///
     /// This specifies the prerequisite that at least one RR with a specified
     /// NAME and TYPE must exist.
-    #[arg(long = "rrset-exists", visible_alias = "rrset")]
+    #[arg(
+        long = "rrset-exists",
+        visible_alias = "rrset",
+        value_name = "DOMAIN_NAME_AND_TYPE"
+    )]
     rrset_exists: Option<Vec<String>>,
 
     /// RRset exists (value dependent). (Optionally) provide this option
@@ -111,13 +115,17 @@ pub struct Update {
     /// This specifies the prerequisite that a set of RRs with a specified
     /// NAME and TYPE exists and has the same members with the same RDATAs as
     /// the RRset specified.
-    #[arg(long = "rrset-exists-exact", visible_alias = "rrset-exact")]
+    #[arg(
+        long = "rrset-exists-exact",
+        visible_alias = "rrset-exact",
+        value_name = "RESOURCE_RECORD"
+    )]
     rrset_exists_exact: Option<Vec<String>>,
 
     /// RRset does not exist. (Optionally) provide this option multiple times,
     /// with format "<DOMAIN_NAME> <TYPE>" each, to build up a list of RRs
     /// that specify that no RRs with a specified NAME and TYPE can exist.
-    #[arg(long = "rrset-empty")]
+    #[arg(long = "rrset-empty", value_name = "DOMAIN_NAME_AND_TYPE")]
     rrset_empty: Option<Vec<String>>,
 
     /// Name is in use. (Optionally) provide this option multiple times,
@@ -125,7 +133,11 @@ pub struct Update {
     /// own at least one RR.
     ///
     /// Note that this prerequisite is NOT satisfied by empty nonterminals.
-    #[arg(long = "name-in-use", visible_alias = "name-used")]
+    #[arg(
+        long = "name-in-use",
+        visible_alias = "name-used",
+        value_name = "DOMAIN_NAME"
+    )]
     name_in_use: Option<Vec<String>>,
 
     /// Name is not in use. (Optionally) provide this option multiple times,
@@ -136,50 +148,89 @@ pub struct Update {
     #[arg(
         long = "name-not-in-use",
         visible_alias = "name-unused",
-        // value_parser = Update::parse_prerequisite,
+        value_name = "DOMAIN_NAME"
     )]
     name_not_in_use: Option<Vec<String>>,
 }
 
 impl Update {
-    pub fn execute(self, _env: impl Env) -> Result<(), Error> {
-        // let runtime = tokio::runtime::Runtime::new().unwrap();
-        // runtime.block_on(self.run(&env))
-        let origin = Name::<Bytes>::from_str("example.com.").expect("hardcoded");
-        let mut prerequisites = UpdatePrerequisites {
-            rrset_exists: None,
-            rrset_exists_exact: None,
-            rrset_empty: None,
-            name_in_use: None,
-            name_not_in_use: None,
-        };
-        if let Some(ref v) = self.rrset_exists {
-            prerequisites.rrset_exists = Some(Self::parse_prerequisite_name_type(v, &origin)?)
-        }
-        if let Some(ref v) = self.rrset_exists_exact {
-            prerequisites.rrset_exists_exact = Some(Self::parse_prerequisite_rrset_exists_exact(
-                v, &origin, self.class,
-            )?)
-        }
-        if let Some(ref v) = self.rrset_empty {
-            prerequisites.rrset_empty = Some(Self::parse_prerequisite_name_type(v, &origin)?)
-        }
-        if let Some(ref v) = self.name_in_use {
-            prerequisites.name_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
-        }
-        if let Some(ref v) = self.name_not_in_use {
-            prerequisites.name_not_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
-        }
+    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(self.run(&env))
+    }
 
-        dbg!(self);
-        dbg!(&prerequisites);
+    /// Run the command as an async function
+    pub async fn run(self, env: &impl Env) -> Result<(), Error> {
+        // 1. Know apex and name servers for zone
+        // 2. If update ordering desired, fetch existing SOA RR from primary
+        //      - If updating SOA, must update in serial in positive direction and preserve other
+        //      fields, unless intent to change them; serial must never be 0
+        // 3. Order nameserver list, listing primary first
+        // 4. Create UPDATE and send to first server in list
+        // 5. If response != SERVFAIL | NOTIMP, then return success
+        // 6. If response == SERVFAIL | NOTIMP, OR no response in software
+        //    dependent timeout, OR ICMP error, THEN delete unusable server
+        //    from list and try the next one. Repeat 4,5,6 until success, or
+        //    list empty; return.
+
+        // 1. If not provided, determine zone apex and fetch name servers
+        let (apex, mname, _soa) = match &self.zone {
+            Some(zone) => {
+                let tmp = UpdateHelpers::find_mname_and_soa(env, &zone)
+                    .await
+                    .context("fetching the SOA record")?;
+                (zone.clone(), tmp.0, tmp.1)
+            }
+            None => UpdateHelpers::find_mname_and_zone_and_soa(env, &self.domain)
+                .await
+                .context("fetching the SOA record and determining the zone apex")?,
+        };
+
+        // // mname is only used to put the primary first in the later fetched
+        // // list of name servers, therefore, if we have IP addresses to sent
+        // // the update to, we don't need to put the primary first and can let
+        // // the user determine the ordering, and therefore can skip the SOA
+        // // query.
+        // let (apex, mname) = match (&self.zone, self.nameservers.is_empty()) {
+        //     (Some(zone), true) => (
+        //         zone.clone(),
+        //         Some(UpdateHelpers::find_mname(env, &zone).await?),
+        //     ),
+        //     (Some(zone), false) => (zone.clone(), None),
+        //     (None, _) => {
+        //         let (a, b) = UpdateHelpers::find_mname_and_zone(env, &self.domain).await?;
+        //         (a, Some(b))
+        //     }
+        // };
+
+        // Parse prerequisites before fetching nameservers, in case parsing fails
+        let prerequisites = self.parse_prerequisites(apex.clone().flatten_into())?;
+
+        // 1. (Cont.) If not provided, determine zone apex and fetch name servers
+        let nsnames = if self.nameservers.is_empty() {
+            Some(
+                UpdateHelpers::determine_nsnames(env, &apex, &mname)
+                    .await
+                    .context("while fetching the authoritative nameservers for the zone")?,
+            )
+        } else {
+            None
+        };
+
+        // TODO: pass SOA record fetched above to make sure changes to the SOA
+        // record by the user adhere to the RFC specifications of e.g. only
+        // increasing serial
+        let msg = self.create_update_message(&apex, prerequisites)?;
+
+        self.send_update(env, msg, nsnames).await?;
+
         Ok(())
     }
 
     fn parse_prerequisite_name_type(
         args: &Vec<String>,
-        origin: &Name<Bytes>,
-    ) -> Result<Vec<(Name<Bytes>, Rtype)>, Error> {
+        origin: &Name<Vec<u8>>,
+    ) -> Result<Vec<(Name<Vec<u8>>, Rtype)>, Error> {
         let mut records = Vec::new();
         for arg in args {
             if let Some((name, typ)) = arg.split_once(' ') {
@@ -204,8 +255,8 @@ impl Update {
 
     fn parse_prerequisite_name(
         args: &Vec<String>,
-        origin: &Name<Bytes>,
-    ) -> Result<Vec<Name<Bytes>>, Error> {
+        origin: &Name<Vec<u8>>,
+    ) -> Result<Vec<Name<Vec<u8>>>, Error> {
         let mut names = Vec::new();
         for name in args {
             let uncertain = UncertainName::from_str(name)
@@ -224,16 +275,16 @@ impl Update {
 
     fn parse_prerequisite_rrset_exists_exact(
         args: &Vec<String>,
-        origin: &Name<Bytes>,
+        origin: &Name<Vec<u8>>,
         class: Class,
-    ) -> Result<Vec<SomeRecord>, Error> {
+    ) -> Result<Vec<ParsedRecord>, Error> {
         let mut records = Vec::new();
         for arg in args {
             let mut zonefile = Zonefile::new();
             zonefile.extend_from_slice(arg.as_bytes());
             zonefile.extend_from_slice(b"\n");
             zonefile.set_default_class(class);
-            zonefile.set_origin(origin.clone());
+            zonefile.set_origin(origin.clone().flatten_into());
             if let Ok(Some(Entry::Record(mut record))) = zonefile.next_entry() {
                 record.set_ttl(Ttl::from_secs(0));
                 records.push(record.flatten_into());
@@ -242,7 +293,6 @@ impl Update {
                     format!("Provided argument is not a valid resource record: {arg}").into(),
                 );
             }
-            // .context("TODO")?;
         }
         Ok(records)
     }
@@ -269,6 +319,410 @@ impl Update {
             .map_err(|err| Error::from(format!("Invalid TTL: {err}")))?,
         ))
     }
+
+    /// Create the packet of the update message to send to the name servers
+    fn create_update_message(
+        &self,
+        zone: &Name<Vec<u8>>,
+        prerequisites: UpdatePrerequisites,
+    ) -> Result<Vec<u8>, Error> {
+        // UPDATE message sections:
+        // Zone Section (= Question),
+        // Prerequisite Section (= Answer)
+        // Update Section (= Authority)
+        // Additional (= Additional)
+
+        let mut message = MessageBuilder::new_vec();
+
+        let header = message.header_mut();
+        header.set_opcode(Opcode::UPDATE);
+        header.set_qr(false);
+
+        let mut zone_section = message.question();
+        zone_section
+            .push(Question::new(zone, Rtype::SOA, Class::IN))
+            .unwrap();
+
+        let mut prereq_section = zone_section.answer();
+        Self::insert_prerequisites(prerequisites, &mut prereq_section)?;
+
+        let mut update_section = prereq_section.authority();
+
+        match self.action {
+            UpdateAction::Add { rtype, ref rdata } => {
+                if rdata.is_empty() {
+                    return Err("Provide at least one RDATA item to add".into());
+                }
+                for r in rdata {
+                    let rdata = Self::parse_rdata(rtype, &r)?;
+                    update_section
+                        .push(Self::create_rr_addition(
+                            self.domain.clone(),
+                            self.class,
+                            self.ttl,
+                            rdata,
+                        ))
+                        .map_err(|e| -> Error {
+                            format!("Failed to add RR to UPDATE message: {e}").into()
+                        })?
+                }
+            }
+            UpdateAction::Delete { rtype, ref rdata } => {
+                if rdata.is_empty() {
+                    update_section
+                        .push(Self::create_rrset_deletion(self.domain.clone(), rtype))
+                        .map_err(|e| -> Error {
+                            format!("Failed to add RRset deletion RR to UPDATE message: {e}").into()
+                        })?
+                } else {
+                    for r in rdata {
+                        let rdata = Self::parse_rdata(rtype, &r)?;
+                        update_section
+                            .push(Self::create_rr_deletion(self.domain.clone(), rdata))
+                            .map_err(|e| -> Error {
+                                format!("Failed to add RR deletion RR to UPDATE message: {e}")
+                                    .into()
+                            })?
+                    }
+                }
+            }
+            UpdateAction::Clear => update_section
+                .push(Self::create_all_rrset_deletion(self.domain.clone()))
+                .map_err(|e| -> Error {
+                    format!("Failed to add RRset deletion RR to UPDATE message: {e}").into()
+                })?,
+        }
+
+        // Providing additional data is not yet implemented
+        // let mut additional_section = update_section.additional();
+
+        Ok(update_section.finish())
+    }
+
+    fn parse_rdata(
+        rtype: Rtype,
+        rdata: &str,
+    ) -> Result<ZoneRecordData<Vec<u8>, Name<Vec<u8>>>, Error> {
+        // TODO: add from_rtype_and_str to ZoneRecordData to skip this
+        // workaround with zonefile?
+        let mut zonefile = Zonefile::new();
+        // The origin, ttl and class are irrelevant here and only needed to
+        // parse the rdata
+        let rr = format!(". 1 IN {} {}\n", rtype, rdata);
+        zonefile.extend_from_slice(rr.as_bytes());
+        if let Ok(Some(Entry::Record(record))) = zonefile.next_entry() {
+            return Ok(record.data().clone().flatten_into());
+        } else {
+            return Err(format!("Failed to parse rdata for {rtype}: {rdata}").into());
+        }
+    }
+
+    fn create_rr_addition(
+        domain: Name<Vec<u8>>,
+        class: Class,
+        ttl: Ttl,
+        rdata: ZoneRecordData<Vec<u8>, Name<Vec<u8>>>,
+    ) -> ParsedRecord {
+        // From [RFC2136] Section 2.5.1:
+        // RRs are added to the Update Section whose NAME, TYPE, TTL, RDLENGTH
+        // and RDATA are those being added, and CLASS is the same as the zone
+        // class.
+        ParsedRecord::new(domain, class, ttl, rdata)
+    }
+
+    fn create_rr_deletion(
+        domain: Name<Vec<u8>>,
+        rdata: ZoneRecordData<Vec<u8>, Name<Vec<u8>>>,
+    ) -> ParsedRecord {
+        // From [RFC2136] Section 2.5.4:
+        // The NAME, TYPE, RDLENGTH and RDATA must match the RR being deleted.
+        // TTL must be specified as zero (0) [...].
+        // CLASS must be specified as NONE to distinguish this from an addition.
+        ParsedRecord::new(domain, Class::NONE, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_rrset_deletion(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
+        // From [RFC2136] Section 2.5.2:
+        // - One RR is added to the Update Section whose NAME and TYPE are those
+        //   of the RRset to be deleted.
+        // - TTL must be specified as zero (0) [...].
+        // - CLASS must be specified as ANY.
+        // - RDLENGTH must be zero (0) and RDATA must therefore be empty.
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(rtype, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::ANY, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_all_rrset_deletion(domain: Name<Vec<u8>>) -> ParsedRecord {
+        // From [RFC2136] Section 2.5.3:
+        // - One RR is added to the Update Section whose NAME is that of the
+        // name to be cleansed of RRsets.
+        // - TYPE must be specified as ANY.
+        // - TTL must be specified as zero (0) [...]
+        // - CLASS must be specified as ANY.
+        // - RDLENGTH must be zero (0) and RDATA must therefore be empty.
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(Rtype::ANY, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::ANY, Ttl::from_secs(0), rdata)
+    }
+
+    fn parse_prerequisites(&self, origin: Name<Vec<u8>>) -> Result<UpdatePrerequisites, Error> {
+        let mut prerequisites = UpdatePrerequisites {
+            rrset_exists: None,
+            rrset_exists_exact: None,
+            rrset_empty: None,
+            name_in_use: None,
+            name_not_in_use: None,
+        };
+        if let Some(ref v) = self.rrset_exists {
+            prerequisites.rrset_exists = Some(Self::parse_prerequisite_name_type(v, &origin)?)
+        }
+        if let Some(ref v) = self.rrset_exists_exact {
+            prerequisites.rrset_exists_exact = Some(Self::parse_prerequisite_rrset_exists_exact(
+                v, &origin, self.class,
+            )?)
+        }
+        if let Some(ref v) = self.rrset_empty {
+            prerequisites.rrset_empty = Some(Self::parse_prerequisite_name_type(v, &origin)?)
+        }
+        if let Some(ref v) = self.name_in_use {
+            prerequisites.name_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
+        }
+        if let Some(ref v) = self.name_not_in_use {
+            prerequisites.name_not_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
+        }
+        Ok(prerequisites)
+    }
+
+    fn insert_prerequisites(
+        prerequisites: UpdatePrerequisites,
+        prereq_section: &mut AnswerBuilder<Vec<u8>>,
+    ) -> Result<(), Error> {
+        if let Some(rrset_exists) = prerequisites.rrset_exists {
+            for (domain, rtype) in rrset_exists {
+                prereq_section
+                    .push(Self::create_prereq_rrset_exists(domain, rtype))
+                    .map_err(|e| -> Error {
+                        format!("Failed to add RR to UPDATE message: {e}").into()
+                    })?
+            }
+        }
+        if let Some(rrset_exists_exact) = prerequisites.rrset_exists_exact {
+            for rr in rrset_exists_exact {
+                // This is done while parsing the record, but in case that
+                // changes, here an extra check.
+                debug_assert!(rr.ttl() == Ttl::from_secs(0));
+                prereq_section.push(rr).map_err(|e| -> Error {
+                    format!("Failed to add RR to UPDATE message: {e}").into()
+                })?
+            }
+        }
+        if let Some(rrset_empty) = prerequisites.rrset_empty {
+            for (domain, rtype) in rrset_empty {
+                prereq_section
+                    .push(Self::create_prereq_rrset_empty(domain, rtype))
+                    .map_err(|e| -> Error {
+                        format!("Failed to add RR to UPDATE message: {e}").into()
+                    })?
+            }
+        }
+        if let Some(name_in_use) = prerequisites.name_in_use {
+            for domain in name_in_use {
+                prereq_section
+                    .push(Self::create_prereq_name_in_use(domain))
+                    .map_err(|e| -> Error {
+                        format!("Failed to add RR to UPDATE message: {e}").into()
+                    })?
+            }
+        }
+        if let Some(name_not_in_use) = prerequisites.name_not_in_use {
+            for domain in name_not_in_use {
+                prereq_section
+                    .push(Self::create_prereq_name_not_in_use(domain))
+                    .map_err(|e| -> Error {
+                        format!("Failed to add RR to UPDATE message: {e}").into()
+                    })?
+            }
+        }
+        Ok(())
+    }
+
+    fn create_prereq_rrset_exists(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
+        // From [RFC2136] Section 2.4.1 - RRset Exists (Value Independent):
+        // - [...] a single RR whose NAME and TYPE are equal to that of the zone
+        // RRset whose existence is required.
+        // - RDLENGTH is zero and RDATA is therefore empty.
+        // - CLASS must be specified as ANY [...]
+        // - TTL is specified as zero (0).
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(rtype, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::ANY, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_prereq_rrset_exists_exact(
+        domain: Name<Vec<u8>>,
+        class: Class,
+        rdata: ZoneRecordData<Vec<u8>, Name<Vec<u8>>>,
+    ) -> ParsedRecord {
+        // From [RFC2136] Section 2.4.2 - RRset Exists (Value Dependent)
+        // - [...] an entire RRset whose preexistence is required.
+        // - NAME and TYPE are that of the RRset being denoted.
+        // - CLASS is that of the zone.
+        // - TTL must be specified as zero (0) [...]
+        ParsedRecord::new(domain, class, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_prereq_rrset_empty(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
+        // From [RFC2136] Section 2.4.3 - RRset Does Not Exist
+        // - [...] a single RR whose NAME and TYPE are equal to that of the
+        // RRset whose nonexistence is required.
+        // - The RDLENGTH of this record is zero (0), and RDATA field is
+        // therefore empty.
+        // - CLASS must be specified as NONE [...]
+        // - TTL must be specified as zero (0).
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(rtype, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::NONE, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_prereq_name_in_use(domain: Name<Vec<u8>>) -> ParsedRecord {
+        // From [RFC2136] Section 2.4.4 - Name Is In Use
+        // - [...] a single RR whose NAME is equal to that of the name whose
+        // ownership of an RR is required.
+        // - RDLENGTH is zero and RDATA is therefore empty.
+        // - CLASS must be specified as ANY [...]
+        // - TYPE must be specified as ANY [...]
+        // - TTL is specified as zero (0).
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(Rtype::ANY, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::ANY, Ttl::from_secs(0), rdata)
+    }
+
+    fn create_prereq_name_not_in_use(domain: Name<Vec<u8>>) -> ParsedRecord {
+        // From [RFC2136] Section 2.4.5 - Name Is Not In Use
+        // - [...] a single RR whose NAME is equal to that of the name whose
+        // nonownership of any RRs is required.
+        // - RDLENGTH is zero and RDATA is therefore empty.
+        // - CLASS must be specified as NONE.
+        // - TYPE must be specified as ANY.
+        // - TTL must be specified as zero (0).
+        let rdata = ZoneRecordData::Unknown(
+            UnknownRecordData::from_octets(Rtype::ANY, Vec::new())
+                .expect("Failed to create empty rdata"),
+        );
+        ParsedRecord::new(domain, Class::NONE, Ttl::from_secs(0), rdata)
+    }
+
+    /// Send the update packet to the names in nsnames in order until one responds
+    async fn send_update(
+        &self,
+        env: impl Env,
+        msg: Vec<u8>,
+        nsnames: Option<Vec<Name<Vec<u8>>>>,
+    ) -> Result<(), Error> {
+        let msg = Message::from_octets(msg).unwrap();
+        let resolver = env.stub_resolver().await;
+
+        let tsig_key = self
+            .tsig
+            .as_ref()
+            .map(|tsig| {
+                Key::new(tsig.algorithm, &tsig.key, tsig.name.clone(), None, None)
+                    .map_err(|e| format!("TSIG key is invalid: {e}"))
+            })
+            .transpose()?;
+
+        async fn connect_and_send_request(
+            env: &impl Env,
+            socket: SocketAddr,
+            msg: &Message<Vec<u8>>,
+            tsig_key: &Option<Key>,
+        ) -> Result<Message<bytes::Bytes>, domain::net::client::request::Error> {
+            // // Using TCP directly to skip check whether the request fits
+            // // in a UDP packet.
+            // let tcp_connect = TcpConnect::new(socket);
+            // let (tcp_connection, transport) = multi_stream::Connection::new(tcp_connect);
+            // tokio::spawn(transport.run());
+
+            // let connection: Box<dyn SendRequest<_>> = if let Some(k) = &tsig_key {
+            //     Box::new(tsig::Connection::new(k.clone(), tcp_connection))
+            // } else {
+            //     Box::new(tcp_connection)
+            // };
+
+            let local: SocketAddr = if socket.is_ipv4() {
+                ([0u8; 4], 0).into()
+            } else {
+                ([0u16; 8], 0).into()
+            };
+            let dgram_connection = dgram::Connection::new(env.dgram(local, socket));
+
+            let connection: Box<dyn SendRequest<_>> = if let Some(k) = tsig_key {
+                Box::new(tsig::Connection::new(k.clone(), dgram_connection))
+            } else {
+                Box::new(dgram_connection)
+            };
+
+            connection
+                .send_request(RequestMessage::new(msg.clone()).unwrap())
+                .get_response()
+                .await
+        }
+
+        if let Some(nsnames) = nsnames {
+            for name in nsnames {
+                let found_ips = resolver.lookup_host(&name).await?;
+                for socket in found_ips.port_iter(53) {
+                    let resp = match connect_and_send_request(&env, socket, &msg, &tsig_key).await {
+                        Ok(resp) => resp,
+                        Err(err) => {
+                            writeln!(env.stderr(), "{name} @ {socket}: {err}");
+                            continue;
+                        }
+                    };
+
+                    let rcode = resp.header().rcode();
+                    if rcode != Rcode::NOERROR {
+                        writeln!(env.stdout(), ";; UPDATE response was {rcode}");
+                    }
+                    return Ok(());
+                }
+            }
+        } else {
+            for ip in &self.nameservers {
+                let socket = SocketAddr::new(ip.clone(), 53);
+                let resp = match connect_and_send_request(&env, socket, &msg, &tsig_key).await {
+                    Ok(resp) => resp,
+                    Err(err) => {
+                        writeln!(env.stderr(), "_ @ {socket}: {err}");
+                        continue;
+                    }
+                };
+
+                let rcode = resp.header().rcode();
+                if rcode != Rcode::NOERROR {
+                    writeln!(env.stdout(), ";; UPDATE response was {rcode}");
+                }
+                return Ok(());
+            }
+        }
+
+        // Our list of nsnames has been exhausted, we can only report that
+        // we couldn't find anything.
+        writeln!(env.stdout(), ";; No responses");
+
+        Ok(())
+    }
 }
 
 //------------ UpdateAction --------------------------------------------------
@@ -280,13 +734,21 @@ enum UpdateAction {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
         rtype: Rtype,
+
+        /// RDATA (One or more)
+        #[arg(value_name = "RDATA")]
+        rdata: Vec<String>,
     },
 
-    // Delete specific RRs or complete RRset from domain
+    // Delete specific RRs or a complete RRset from domain
     Delete {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
         rtype: Rtype,
+
+        /// RDATA (Optional. Delete whole RRset, if none provided.)
+        #[arg(value_name = "RDATA")]
+        rdata: Vec<String>,
     },
 
     // Clear domain, aka delete all RRsets on the domain
@@ -298,10 +760,10 @@ enum UpdateAction {
 #[derive(Clone, Debug)]
 struct UpdatePrerequisites {
     rrset_exists: Option<Vec<NameTypeTuple>>,
-    rrset_exists_exact: Option<Vec<SomeRecord>>,
+    rrset_exists_exact: Option<Vec<ParsedRecord>>,
     rrset_empty: Option<Vec<NameTypeTuple>>,
-    name_in_use: Option<Vec<Name<Bytes>>>,
-    name_not_in_use: Option<Vec<Name<Bytes>>>,
+    name_in_use: Option<Vec<Name<Vec<u8>>>>,
+    name_not_in_use: Option<Vec<Name<Vec<u8>>>>,
 }
 
 //------------ LdnsUpdate ----------------------------------------------------
@@ -419,140 +881,18 @@ impl LdnsUpdate {
         let soa_zone;
         let soa_mname;
         if let Some(zone) = &self.zone {
-            soa_mname = self.find_mname(env, zone).await?;
+            (soa_mname, _) = UpdateHelpers::find_mname_and_soa(env, zone).await?;
             soa_zone = zone.clone();
         } else {
             let name = self.domain.clone();
-            (soa_zone, soa_mname) = self.find_mname_and_zone(env, &name).await?;
+            (soa_zone, soa_mname, _) =
+                UpdateHelpers::find_mname_and_zone_and_soa(env, &name).await?;
         };
 
-        let nsnames = self.determine_nsnames(env, &soa_zone, &soa_mname).await?;
+        let nsnames = UpdateHelpers::determine_nsnames(env, &soa_zone, &soa_mname).await?;
         let msg = self.create_update_message(&soa_zone);
 
         self.send_update(env, msg, nsnames).await
-    }
-
-    /// Find the MNAME by sending a SOA query for the zone
-    async fn find_mname(
-        &self,
-        env: &impl Env,
-        zone: &Name<Vec<u8>>,
-    ) -> Result<Name<Vec<u8>>, Error> {
-        let resolver = env.stub_resolver().await;
-
-        let response = resolver
-            .query(Question::new(&zone, Rtype::SOA, Class::IN))
-            .await?;
-
-        let mut answer = response.answer()?.limit_to::<Soa<_>>();
-        if let Some(soa) = answer.next() {
-            Ok(soa?.data().mname().to_name())
-        } else {
-            Err("no SOA record found".into())
-        }
-    }
-
-    /// Find the MNAME and zone
-    ///
-    /// This is achieved in 3 steps:
-    ///  1. Get the MNAME with a SOA query for the domain name
-    ///  2. Get the A record for the MNAME
-    ///  3. Send a SOA query to that IP address and use the owner as zone
-    ///     and the MNAME from that response.
-    async fn find_mname_and_zone(
-        &self,
-        env: &impl Env,
-        name: &Name<Vec<u8>>,
-    ) -> Result<(Name<Vec<u8>>, Name<Vec<u8>>), Error> {
-        let resolver = env.stub_resolver().await;
-
-        // Step 1 - first find a nameserver that should know *something*
-        let response = resolver
-            .query(Question::new(&name, Rtype::SOA, Class::IN))
-            .await?;
-
-        // We look in both the answer and authority sections.
-        // The answer section is used if the domain name is the zone apex,
-        // otherwise the SOA is in the authority section.
-        let mut sections = response
-            .answer()?
-            .limit_to_in::<Soa<_>>()
-            .chain(response.authority()?.limit_to_in::<Soa<_>>());
-
-        let Some(soa) = sections.next() else {
-            return Err("no SOA found".into());
-        };
-
-        let soa_mname: Name<Vec<u8>> = soa?.data().mname().to_name();
-
-        // Step 2 - find SOA MNAME IP address, add to resolver
-        let response = resolver.lookup_host(&soa_mname).await?;
-
-        let Some(ipaddr) = response.iter().next() else {
-            return Err("no A record found".into());
-        };
-
-        // Step 3 - Redo SOA query, sending to SOA MNAME directly.
-        let mut conf = ResolvConf::new();
-        conf.servers = vec![ServerConf::new(
-            SocketAddr::new(ipaddr, 53),
-            Transport::UdpTcp,
-        )];
-        // TODO: Add the standard servers? Is that necessary or just a quirk
-        // of ldns.
-        let resolver = env.stub_resolver_from_conf(conf).await;
-
-        let response = resolver
-            .query(Question::new(&name, Rtype::SOA, Class::IN))
-            .await?;
-
-        // We look in both the answer and authority sections.
-        // The answer section is used if the domain name is the zone apex,
-        // otherwise the SOA is in the authority section.
-        let mut sections = response
-            .answer()?
-            .limit_to_in::<Soa<_>>()
-            .chain(response.authority()?.limit_to_in::<Soa<_>>());
-
-        let Some(soa) = sections.next() else {
-            return Err("no SOA found".into());
-        };
-
-        let soa = soa?;
-
-        let zone = soa.owner().to_name();
-        let mname = soa.data().mname().to_name();
-        Ok((zone, mname))
-    }
-
-    /// Send an NS query to find all nameservers for the given zone
-    ///
-    /// The name server with the given MNAME is put at the start of the list.
-    async fn determine_nsnames(
-        &self,
-        env: &impl Env,
-        zone: &Name<Vec<u8>>,
-        mname: &Name<Vec<u8>>,
-    ) -> Result<Vec<Name<Vec<u8>>>, Error> {
-        let response = env
-            .stub_resolver()
-            .await
-            .query(Question::new(&zone, Rtype::NS, Class::IN))
-            .await?;
-
-        let mut nsnames = response
-            .answer()?
-            .limit_to_in::<Ns<_>>()
-            .map(|ns| Ok(ns?.data().nsdname().to_name::<Vec<u8>>()))
-            .collect::<Result<Vec<_>, Error>>()?;
-
-        // The MNAME should be tried first according to RFC2136 4.3
-        // so we put that NSNAME first in the list.
-        if let Some(mname_idx) = nsnames.iter().position(|name| name == mname) {
-            nsnames.swap(0, mname_idx);
-        }
-
-        Ok(nsnames)
     }
 
     /// Create the packet of the update message to send to the name servers
@@ -670,6 +1010,183 @@ impl LdnsUpdate {
         Ok(())
     }
 }
+
+//------------ UpdateHelpers -------------------------------------------------
+
+// 4 - Requestor Behaviour
+
+//    4.1. Requestors are expected to know the name of the
+//    zone they intend to update and to know or be able to determine the
+//    name servers for that zone.
+
+//    4.2. If update ordering is desired, the requestor will need to know
+//    the value of the existing SOA RR.  Requestors who update the SOA RR
+//    must update the SOA SERIAL field in a positive direction (as defined
+//    by [RFC1982]) and also preserve the other SOA fields unless the
+//    requestor's explicit intent is to change them.  The SOA SERIAL field
+//    must never be set to zero (0).
+
+//    4.3. [...], then it should arrange to try the primary master server (as
+//    given by the SOA MNAME field if matched by some NS NSDNAME) first to
+//    avoid unnecessary forwarding
+
+//    4.4. [...], the requestor composes an UPDATE message of the following
+//    form and sends it to the first name server on its list:
+
+//       ID:                        (new)
+//       Opcode:                    UPDATE
+//       Zone zcount:               1
+//       Zone zname:                (zone name)
+//       Zone zclass:               (zone class)
+//       Zone ztype:                T_SOA
+//       Prerequisite Section:      (see previous text)
+//       Update Section:            (see previous text)
+//       Additional Data Section:   (empty)
+
+//    4.5. If the requestor receives a response, and the response has an
+//    RCODE other than SERVFAIL or NOTIMP, then the requestor returns an
+//    appropriate response to its caller.
+
+//    4.6. If a response is received whose RCODE is SERVFAIL or NOTIMP, or
+//    if no response is received within an implementation dependent timeout
+//    period, or if an ICMP error is received indicating that the server's
+//    port is unreachable, then the requestor will delete the unusable
+//    server from its internal name server list and try the next one,
+//    repeating until the name server list is empty.  If the requestor runs
+//    out of servers to try, an appropriate error will be returned to the
+//    requestor's caller.
+
+struct UpdateHelpers;
+
+impl UpdateHelpers {
+    /// Find the MNAME by sending a SOA query for the zone
+    async fn find_mname_and_soa(
+        env: &impl Env,
+        zone: &Name<Vec<u8>>,
+    ) -> Result<(Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
+        let resolver = env.stub_resolver().await;
+
+        let response = resolver
+            .query(Question::new(&zone, Rtype::SOA, Class::IN))
+            .await?;
+
+        let mut answer = response.answer()?.limit_to::<Soa<_>>();
+        if let Some(Ok(soa)) = answer.next() {
+            Ok((
+                soa.data().mname().to_name(),
+                soa.data().clone().flatten_into(),
+            ))
+        } else {
+            Err(format!("No SOA record found for {zone}").into())
+        }
+    }
+
+    /// Find the MNAME and zone
+    ///
+    /// This is achieved in 3 steps:
+    ///  1. Get the MNAME with a SOA query for the domain name
+    ///  2. Get the A record for the MNAME
+    ///  3. Send a SOA query to that IP address and use the owner as zone
+    ///     and the MNAME from that response.
+    async fn find_mname_and_zone_and_soa(
+        env: &impl Env,
+        name: &Name<Vec<u8>>,
+    ) -> Result<(Name<Vec<u8>>, Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
+        let resolver = env.stub_resolver().await;
+
+        // Step 1 - first find a name server that should know *something*
+        let response = resolver
+            .query(Question::new(&name, Rtype::SOA, Class::IN))
+            .await?;
+
+        // We look in both the answer and authority sections.
+        // The answer section is used if the domain name is the zone apex,
+        // otherwise the SOA is in the authority section.
+        let mut sections = response
+            .answer()?
+            .limit_to_in::<Soa<_>>()
+            .chain(response.authority()?.limit_to_in::<Soa<_>>());
+
+        let Some(soa) = sections.next() else {
+            return Err("no SOA found".into());
+        };
+
+        let soa_mname: Name<Vec<u8>> = soa?.data().mname().to_name();
+
+        // Step 2 - find SOA MNAME IP address, add to resolver
+        let response = resolver.lookup_host(&soa_mname).await?;
+
+        let Some(ipaddr) = response.iter().next() else {
+            return Err(format!("No A or AAAA record found for {soa_mname}").into());
+        };
+
+        // Step 3 - Redo SOA query, sending to SOA MNAME directly.
+        let mut conf = ResolvConf::new();
+        conf.servers = vec![ServerConf::new(
+            SocketAddr::new(ipaddr, 53),
+            Transport::UdpTcp,
+        )];
+        // Querying the SOA RR again, but from the primary directly, makes
+        // sure that we have an up-to-date SOA record and not a cached
+        // version. This would be relevant if we'd want to implement update
+        // ordering, or want to update the SOA serial.
+        let resolver = env.stub_resolver_from_conf(conf).await;
+
+        let response = resolver
+            .query(Question::new(&name, Rtype::SOA, Class::IN))
+            .await?;
+
+        // We look in both the answer and authority sections.
+        // The answer section is used if the domain name is the zone apex,
+        // otherwise the SOA is in the authority section.
+        let mut sections = response
+            .answer()?
+            .limit_to_in::<Soa<_>>()
+            .chain(response.authority()?.limit_to_in::<Soa<_>>());
+
+        let Some(soa) = sections.next() else {
+            return Err("no SOA found".into());
+        };
+
+        let soa = soa?;
+
+        let zone = soa.owner().to_name();
+        let mname = soa.data().mname().to_name();
+        Ok((zone, mname, soa.data().clone().flatten_into()))
+    }
+
+    /// Send an NS query to find all name servers for the given zone
+    ///
+    /// The name server with the given MNAME is put at the start of the list.
+    // async fn determine_nsnames(
+    async fn determine_nsnames(
+        env: &impl Env,
+        zone: &Name<Vec<u8>>,
+        mname: &Name<Vec<u8>>,
+    ) -> Result<Vec<Name<Vec<u8>>>, Error> {
+        let response = env
+            .stub_resolver()
+            .await
+            .query(Question::new(&zone, Rtype::NS, Class::IN))
+            .await?;
+
+        let mut nsnames = response
+            .answer()?
+            .limit_to_in::<Ns<_>>()
+            .map(|ns| Ok(ns?.data().nsdname().to_name::<Vec<u8>>()))
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        // The MNAME should be tried first according to RFC2136 4.3
+        // so we put that NSNAME first in the list.
+        if let Some(mname_idx) = nsnames.iter().position(|name| name == mname) {
+            nsnames.swap(0, mname_idx);
+        }
+
+        Ok(nsnames)
+    }
+}
+
+//------------ test ----------------------------------------------------------
 
 #[cfg(test)]
 mod test {
