@@ -39,6 +39,8 @@ use crate::util;
 
 const MAX_KEY_TAG_TRIES: u8 = 10;
 
+/// The default TCP port on which to connect to a KMIP server as defined by
+/// IANA.
 const DEF_KMIP_PORT: u16 = 5696;
 
 #[derive(Clone, Debug, clap::Args)]
@@ -214,16 +216,54 @@ enum SetCommands {
     },
 }
 
+/// Commands for configuring the use of KMIP compatible HSMs for key
+/// generation and signing instead of or in addition to using and Ring/OpenSSL
+/// based key generation and signing.
 #[derive(Clone, Debug, Subcommand)]
 enum KmipCommands {
-    /// Disable use of KMIP.
+    /// Disable use of KMIP for generating new keys.
+    ///
+    /// Existing KMIP keys will still work as normal, but any new keys will
+    /// be generated using Ring/OpenSSL whether or not KMIP servers are
+    /// configured.
+    ///
+    /// To re-enable KMIP use: kmip set-default-server.
     Disable,
 
     /// Add a KMIP server to use for key generation & signing.
     ///
-    /// Will be set as the default server if it is the only KMIP server.
+    /// If this is the first KMIP server to be configured it will be used to
+    /// generate new keys instead of using Ring/OpenSSL based key generation.
+    ///
+    /// If this is NOT the first KMIP server to be configured, the new server
+    /// will NOT be used to generate keys unless configured to do so by
+    /// using: kmip set-default-server.
     AddServer {
         /// An identifier to refer to the KMIP server by.
+        ///
+        /// This identifier is used in KMIP key URLs. The identifier serves
+        /// several purposes:
+        ///
+        /// 1. To make it easy at a glance to recognize which KMIP server a
+        ///    given key was created on, by allowing operators to assign a
+        ///    meaningful name to the server instead of whatever identity
+        ///    strings the server associates with itself or by using hostnames
+        ///    or IP addresses as identifiers.
+        ///
+        /// 2. To refer to additional configuration elsewhere to avoid
+        ///    including sensitive and/or verbose KMIP server credential or
+        ///    TLS client certificate/key authentication data in the URL,
+        ///    and which would be repeated in every key created on the same
+        ///    server.
+        ///
+        /// 3. To allow the actual location of the server and/or its access
+        ///    credentials to be rotated without affecting the key URLs, e.g.
+        ///    if a server is assigned a new IP address or if access
+        ///    credentials change.
+        ///
+        /// The downside of this is that consumers of the key URL must also
+        /// possess the additional configuration settings and be able to fetch
+        /// them based on the same server identifier.
         server_id: String,
 
         /// The hostname or IP address of the KMIP server.
@@ -237,23 +277,34 @@ enum KmipCommands {
         #[arg(help_heading = "Authentication settings", long = "credential-store")]
         credentials_store_path: Option<PathBuf>,
 
-        /// Optional username to authenticate to the KMIP server as. Requires credential store path.
+        /// Optional username to authenticate to the KMIP server as. Requires
+        /// credential-store.
         #[arg(help_heading = "Authentication settings", long = "username")]
         username: Option<String>,
 
-        /// Optional password to authenticate to the KMIP server with. Requires username.
+        /// Optional password to authenticate to the KMIP server with.
+        /// Requires username.
         #[arg(help_heading = "Authentication settings", long = "password")]
         password: Option<String>,
 
-        /// Whether or not to verify the KMIP server TLS certificate. Default: true.
+        /// Whether or not to verify the KMIP server TLS certificate. Default:
+        /// true.
+        ///
+        /// Set to false if using a self-signed TLS certificate, e.g. in a
+        /// test environment.
         #[arg(help_heading = "Authentication settings", long = "insecure", action = clap::ArgAction::SetTrue)]
         insecure: Option<bool>,
 
-        /// Optional path to a TLS client certificate to authenticate to the KMIP server with.
+        /// Optional path to a TLS certificate to authenticate to the KMIP
+        /// server with.
         #[arg(help_heading = "Authentication settings", long = "client-cert")]
         client_cert_path: Option<PathBuf>,
 
-        /// Optional path to a TLS client key to authenticate to the KMIP server with.
+        /// Optional path to a private key for client certificate
+        /// authentication.
+        ///
+        /// The private key is needed to be able to prove to the KMIP server
+        /// that you are the owner of the provided TLS client certificate.
         #[arg(help_heading = "Authentication settings", long = "client-key")]
         client_key_path: Option<PathBuf>,
     },
@@ -266,7 +317,7 @@ enum KmipCommands {
         server_id: String,
     },
 
-    /// Set the default KMIP server to use for key generation & signing.
+    /// Set the default KMIP server to use for key generation.
     SetDefaultServer {
         /// The identifier of the KMIP server to use as the default.
         server_id: String,
