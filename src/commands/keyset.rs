@@ -1701,324 +1701,6 @@ struct KeySetConfig {
     default_kmip_server: Option<String>,
 }
 
-/// Credentials for connecting to a KMIP server.
-///
-/// Intended to be read from a JSON file stored separately to the main
-/// configuration so that separate security policy can be applied to sensitive
-/// credentials.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct KmipServerCredentials {
-    /// KMIP username credential.
-    ///
-    /// Mandatory if the KMIP "Credential Type" is "Username and Password".
-    ///
-    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
-    username: String,
-
-    /// KMIP password credential.
-    ///
-    /// Optional when KMIP "Credential Type" is "Username and Password".
-    ///
-    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    password: Option<String>,
-}
-
-/// A set of KMIP server credentials.
-#[derive(Debug, Default, Deserialize, Serialize)]
-struct KmipServerCredentialsSet(HashMap<String, KmipServerCredentials>);
-
-/// A KMIP server credential set file.
-#[derive(Debug)]
-struct KmipServerCredentialsFile {
-    /// The file from which the credentials were loaded, and will be saved
-    /// back to.
-    file: File,
-
-    /// The path from which the file was loaded. Used for generating error
-    /// messages.
-    path: PathBuf,
-
-    /// The actual set of loaded credentials.
-    credentials: KmipServerCredentialsSet,
-}
-
-impl KmipServerCredentialsFile {
-    /// Load credentials from disk, creating an empty file if missing.
-    pub fn create_or_load(path: &Path) -> Result<Self, Error> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .map_err::<Error, _>(|e| {
-                format!(
-                    "unable to open/create KMIP credentials file {} in read-write mode: {e}",
-                    path.display()
-                )
-                .into()
-            })?;
-
-        // Determine the length of the file as JSON parsing fails if the file
-        // is completely empty.
-        let len = file.metadata().map(|m| m.len()).map_err::<Error, _>(|e| {
-            format!(
-                "unable to query metadata of KMIP credentials file {}: {e}",
-                path.display()
-            )
-            .into()
-        })?;
-
-        // Buffer reading as apparently JSON based file reading is extremely
-        // slow without buffering, even for small files.
-        let mut reader = BufReader::new(&file);
-
-        // Load or create the credential set.
-        let credentials: KmipServerCredentialsSet = if len > 0 {
-            serde_json::from_reader(&mut reader).map_err::<Error, _>(|e| {
-                format!(
-                    "error loading KMIP credentials file {:?}: {e}\n",
-                    path.display()
-                )
-                .into()
-            })?
-        } else {
-            KmipServerCredentialsSet::default()
-        };
-
-        // Save the path for use in generating error messages.
-        let path = path.to_path_buf();
-
-        Ok(KmipServerCredentialsFile {
-            file,
-            path,
-            credentials,
-        })
-    }
-
-    /// Write the credential set back to the file it was loaded from.
-    pub fn save(&mut self) -> Result<(), Error> {
-        // Ensure that writing happens at the start of the file.
-        self.file.seek(SeekFrom::Start(0)).unwrap();
-
-        // Use a buffered writer as writing JSON to a file directly is
-        // apparently very slow, even for small files.
-        //
-        // Enclose the use of the BufWriter in a block so that it is
-        // definitely no longer using the file when we next act on it.
-        {
-            let mut writer = BufWriter::new(&self.file);
-            serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err::<Error, _>(
-                |e| {
-                    format!(
-                        "error writing KMIP credentials file {}: {e}",
-                        self.path.display()
-                    )
-                    .into()
-                },
-            )?;
-
-            // Ensure that the BufWriter is flushed as advised by the
-            // BufWriter docs.
-            writer.flush().unwrap();
-        }
-
-        // Truncate the file to the length of data we just wrote..
-        let pos = self.file.stream_position().unwrap();
-        self.file.set_len(pos).unwrap();
-
-        // Ensure that any write buffers are flushed.
-        self.file.flush().unwrap();
-
-        Ok(())
-    }
-
-    /// Does this credential set include credentials for the specified KMIP
-    /// server.
-    pub fn contains_server(&self, server_id: &str) -> bool {
-        self.credentials.0.contains_key(server_id)
-    }
-
-    /// Add credentials for the specified KMIP server, replacing any that
-    /// previously existed for the same server.
-    ///
-    /// Returns any previous configuration if found.
-    pub fn insert(
-        &mut self,
-        server_id: String,
-        credentials: KmipServerCredentials,
-    ) -> Option<KmipServerCredentials> {
-        self.credentials.0.insert(server_id, credentials)
-    }
-
-    /// Remove any existing configuration for the specified KMIP server.
-    ///
-    /// Returns any previous configuration if found.
-    pub fn remove(&mut self, server_id: &str) -> Option<KmipServerCredentials> {
-        self.credentials.0.remove(server_id)
-    }
-}
-
-/// Settings for connecting to a KMIP HSM server.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct KmipServerConnectionSettings {
-    /// Path to the client certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_cert_path: Option<PathBuf>,
-
-    /// Path to the client certificate key file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_key_path: Option<PathBuf>,
-
-    /// Path to the client certificate and key file in PKCS#12 format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_pkcs12_path: Option<PathBuf>,
-
-    /// Disable secure checks (e.g. verification of the server certificate).
-    #[serde(default)]
-    server_insecure: bool,
-
-    /// Path to the server certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    server_cert_path: Option<PathBuf>,
-
-    /// Path to the server CA certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    ca_cert_path: Option<PathBuf>,
-
-    /// IP address, hostname or FQDN of the KMIP server.
-    server_addr: String,
-
-    /// The TCP port number on which the KMIP server listens.
-    server_port: u16,
-
-    /// The credentials to authenticate with the KMIP server.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    server_credentials_path: Option<PathBuf>,
-}
-
-impl Default for KmipServerConnectionSettings {
-    fn default() -> Self {
-        Self {
-            server_addr: "localhost".into(),
-            server_port: DEF_KMIP_PORT,
-            server_insecure: false,
-            client_cert_path: None,
-            client_key_path: None,
-            client_pkcs12_path: None,
-            server_cert_path: None,
-            ca_cert_path: None,
-            server_credentials_path: None,
-        }
-    }
-}
-
-impl KmipServerConnectionSettings {
-    pub fn load(&self, server_id: &str) -> Result<ConnectionSettings, Error> {
-        let client_cert = self.load_client_cert()?;
-        let server_cert = self.load_server_cert()?;
-        let ca_cert = self.load_ca_cert()?;
-        let (username, password) = self.load_credentials(server_id)?;
-        Ok(ConnectionSettings {
-            host: self.server_addr.clone(),
-            port: self.server_port,
-            username,
-            password,
-            insecure: self.server_insecure,
-            client_cert,
-            server_cert,
-            ca_cert,
-            connect_timeout: None,    // TODO
-            read_timeout: None,       // TODO
-            write_timeout: None,      // TODO
-            max_response_bytes: None, // TODO
-        })
-    }
-
-    fn load_client_cert(&self) -> Result<Option<ClientCertificate>, Error> {
-        Ok(
-            match (
-                &self.client_cert_path,
-                &self.client_key_path,
-                &self.client_pkcs12_path,
-            ) {
-                (None, None, None) => None,
-                (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
-                    cert_bytes: Self::load_binary_file(path)?,
-                }),
-                (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
-                    cert_bytes: Self::load_binary_file(path)?,
-                    key_bytes: None,
-                }),
-                (None, Some(_), None) => {
-                    return Err(
-                        "Client certificate key path requires a client certificate path".into(),
-                    );
-                }
-                (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
-                    return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
-                }
-                (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
-                    cert_bytes: Self::load_binary_file(cert_path)?,
-                    key_bytes: Some(Self::load_binary_file(key_path)?),
-                }),
-            },
-        )
-    }
-
-    fn load_server_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.server_cert_path {
-            Some(p) => Some(Self::load_binary_file(p)?),
-            None => None,
-        })
-    }
-
-    fn load_ca_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.ca_cert_path {
-            Some(p) => Some(Self::load_binary_file(p)?),
-            None => None,
-        })
-    }
-
-    fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
-        Ok(match &self.server_credentials_path {
-            Some(p) => {
-                let file = File::open(p).map_err::<Error, _>(|e| {
-                    format!("error opening credentials file {} for reading for KMIP server '{server_id}': {e}", p.display()).into()
-                })?;
-                let mut credentials_set: KmipServerCredentialsSet = serde_json::from_reader(file)
-                    .map_err::<Error, _>(|e| {
-                    format!(
-                        "error loading credentials file {} for KMIP server '{server_id}': {e}",
-                        p.display()
-                    )
-                    .into()
-                })?;
-                let credentials =
-                    credentials_set
-                        .0
-                        .remove(server_id)
-                        .ok_or(Error::new(&format!(
-                    "error loading credentials for KMIP server '{server_id}' from credentials file {}: no credentials for server '{server_id}' found",
-                    p.display()
-                )))?;
-                (Some(credentials.username), credentials.password)
-            }
-            None => (None, None),
-        })
-    }
-
-    fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
-        use std::{fs::File, io::Read};
-
-        let mut bytes = Vec::new();
-        File::open(path)?.read_to_end(&mut bytes)?;
-
-        Ok(bytes)
-    }
-}
-
 /// Persistent state for the keyset command.
 #[derive(Deserialize, Serialize)]
 struct KeySetState {
@@ -2930,6 +2612,383 @@ fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTim
         .min();
 
     min_expiration.map(|t| (t - *remain_time).try_into().unwrap())
+}
+
+//============ KMIP support ==================================================
+//
+// KMIP (OASIS Key Management Interoperability Protocol) is a specification
+// for communicating with HSMs (Hardware Security Modules) that implement
+// secure cryptographic key generation and signing of data using generated
+// keys.
+//
+// The functions and types below extend `dnst keyset` to support KMIP based
+// cryptographic keys as well as the default Ring/OpenSSL based keys.
+
+//------------ KmipServerCredentials -----------------------------------------
+
+/// Credentials for connecting to a KMIP server.
+///
+/// Intended to be read from a JSON file stored separately to the main
+/// configuration so that separate security policy can be applied to sensitive
+/// credentials.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct KmipServerCredentials {
+    /// KMIP username credential.
+    ///
+    /// Mandatory if the KMIP "Credential Type" is "Username and Password".
+    ///
+    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
+    username: String,
+
+    /// KMIP password credential.
+    ///
+    /// Optional when KMIP "Credential Type" is "Username and Password".
+    ///
+    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    password: Option<String>,
+}
+
+//------------ KmipServerCredentialSet ---------------------------------------
+
+/// A set of KMIP server credentials.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct KmipServerCredentialsSet(HashMap<String, KmipServerCredentials>);
+
+//------------ KmipServerCredentialsFile -------------------------------------
+
+/// A KMIP server credential set file.
+#[derive(Debug)]
+struct KmipServerCredentialsFile {
+    /// The file from which the credentials were loaded, and will be saved
+    /// back to.
+    file: File,
+
+    /// The path from which the file was loaded. Used for generating error
+    /// messages.
+    path: PathBuf,
+
+    /// The actual set of loaded credentials.
+    credentials: KmipServerCredentialsSet,
+}
+
+impl KmipServerCredentialsFile {
+    /// Load credentials from disk, creating an empty file if missing.
+    pub fn create_or_load(path: &Path) -> Result<Self, Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err::<Error, _>(|e| {
+                format!(
+                    "unable to open/create KMIP credentials file {} in read-write mode: {e}",
+                    path.display()
+                )
+                .into()
+            })?;
+
+        // Determine the length of the file as JSON parsing fails if the file
+        // is completely empty.
+        let len = file.metadata().map(|m| m.len()).map_err::<Error, _>(|e| {
+            format!(
+                "unable to query metadata of KMIP credentials file {}: {e}",
+                path.display()
+            )
+            .into()
+        })?;
+
+        // Buffer reading as apparently JSON based file reading is extremely
+        // slow without buffering, even for small files.
+        let mut reader = BufReader::new(&file);
+
+        // Load or create the credential set.
+        let credentials: KmipServerCredentialsSet = if len > 0 {
+            serde_json::from_reader(&mut reader).map_err::<Error, _>(|e| {
+                format!(
+                    "error loading KMIP credentials file {:?}: {e}\n",
+                    path.display()
+                )
+                .into()
+            })?
+        } else {
+            KmipServerCredentialsSet::default()
+        };
+
+        // Save the path for use in generating error messages.
+        let path = path.to_path_buf();
+
+        Ok(KmipServerCredentialsFile {
+            file,
+            path,
+            credentials,
+        })
+    }
+
+    /// Write the credential set back to the file it was loaded from.
+    pub fn save(&mut self) -> Result<(), Error> {
+        // Ensure that writing happens at the start of the file.
+        self.file.seek(SeekFrom::Start(0)).unwrap();
+
+        // Use a buffered writer as writing JSON to a file directly is
+        // apparently very slow, even for small files.
+        //
+        // Enclose the use of the BufWriter in a block so that it is
+        // definitely no longer using the file when we next act on it.
+        {
+            let mut writer = BufWriter::new(&self.file);
+            serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err::<Error, _>(
+                |e| {
+                    format!(
+                        "error writing KMIP credentials file {}: {e}",
+                        self.path.display()
+                    )
+                    .into()
+                },
+            )?;
+
+            // Ensure that the BufWriter is flushed as advised by the
+            // BufWriter docs.
+            writer.flush().unwrap();
+        }
+
+        // Truncate the file to the length of data we just wrote..
+        let pos = self.file.stream_position().unwrap();
+        self.file.set_len(pos).unwrap();
+
+        // Ensure that any write buffers are flushed.
+        self.file.flush().unwrap();
+
+        Ok(())
+    }
+
+    /// Does this credential set include credentials for the specified KMIP
+    /// server.
+    pub fn contains_server(&self, server_id: &str) -> bool {
+        self.credentials.0.contains_key(server_id)
+    }
+
+    /// Add credentials for the specified KMIP server, replacing any that
+    /// previously existed for the same server.
+    ///
+    /// Returns any previous configuration if found.
+    pub fn insert(
+        &mut self,
+        server_id: String,
+        credentials: KmipServerCredentials,
+    ) -> Option<KmipServerCredentials> {
+        self.credentials.0.insert(server_id, credentials)
+    }
+
+    /// Remove any existing configuration for the specified KMIP server.
+    ///
+    /// Returns any previous configuration if found.
+    pub fn remove(&mut self, server_id: &str) -> Option<KmipServerCredentials> {
+        self.credentials.0.remove(server_id)
+    }
+}
+
+//------------ KmipServerConnectionSettings ----------------------------------
+
+/// Settings for connecting to a KMIP HSM server.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KmipServerConnectionSettings {
+    /// Path to the client certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_cert_path: Option<PathBuf>,
+
+    /// Path to the client certificate key file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_key_path: Option<PathBuf>,
+
+    /// Path to the client certificate and key file in PKCS#12 format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_pkcs12_path: Option<PathBuf>,
+
+    /// Disable secure checks (e.g. verification of the server certificate).
+    #[serde(default)]
+    server_insecure: bool,
+
+    /// Path to the server certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    server_cert_path: Option<PathBuf>,
+
+    /// Path to the server CA certificate file in PEM format.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    ca_cert_path: Option<PathBuf>,
+
+    /// IP address, hostname or FQDN of the KMIP server.
+    server_addr: String,
+
+    /// The TCP port number on which the KMIP server listens.
+    server_port: u16,
+
+    /// The credentials to authenticate with the KMIP server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    server_credentials_path: Option<PathBuf>,
+}
+
+impl Default for KmipServerConnectionSettings {
+    /// Default to a KMIP server on localhost on the default KMIP port
+    /// using a properly signed TLS certificate.
+    fn default() -> Self {
+        Self {
+            server_addr: "localhost".into(),
+            server_port: DEF_KMIP_PORT,
+            server_insecure: false,
+            client_cert_path: None,
+            client_key_path: None,
+            client_pkcs12_path: None,
+            server_cert_path: None,
+            ca_cert_path: None,
+            server_credentials_path: None,
+        }
+    }
+}
+
+impl KmipServerConnectionSettings {
+    /// Load KMIP connection settings into memory.
+    ///
+    /// Load and parse the various credential data that can optionally
+    /// be associated with KMIP connection settings from the separate
+    /// files on disk where they are stored, and return a populated
+    /// `ConnectionSettings` object containing the resulting data.
+    ///
+    /// TODO: Currently lacks support for configuring timeouts and other
+    /// limits that the KMIP client can enforce. By default there are no such
+    /// limits.
+    pub fn load(&self, server_id: &str) -> Result<ConnectionSettings, Error> {
+        let client_cert = self.load_client_cert()?;
+        let server_cert = self.load_server_cert()?;
+        let ca_cert = self.load_ca_cert()?;
+        let (username, password) = self.load_credentials(server_id)?;
+        Ok(ConnectionSettings {
+            host: self.server_addr.clone(),
+            port: self.server_port,
+            username,
+            password,
+            insecure: self.server_insecure,
+            client_cert,
+            server_cert,
+            ca_cert,
+            connect_timeout: None,    // TODO
+            read_timeout: None,       // TODO
+            write_timeout: None,      // TODO
+            max_response_bytes: None, // TODO
+        })
+    }
+
+    /// Load and parse a TLS client certificate and key from disk.
+    ///
+    /// TLS client certificate and key files can be used to authenticate
+    /// against KMIP servers that are configured to require such
+    /// authentication.
+    ///
+    /// Supported file formats:
+    ///   - PKCS#12 combined certificate and key file format.
+    ///   - Separate PEM format certificate and key files.
+    fn load_client_cert(&self) -> Result<Option<ClientCertificate>, Error> {
+        Ok(
+            match (
+                &self.client_cert_path,
+                &self.client_key_path,
+                &self.client_pkcs12_path,
+            ) {
+                (None, None, None) => None,
+                (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
+                    cert_bytes: Self::load_binary_file(path)?,
+                }),
+                (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
+                    cert_bytes: Self::load_binary_file(path)?,
+                    key_bytes: None,
+                }),
+                (None, Some(_), None) => {
+                    return Err(
+                        "Client certificate key path requires a client certificate path".into(),
+                    );
+                }
+                (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
+                    return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
+                }
+                (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
+                    cert_bytes: Self::load_binary_file(cert_path)?,
+                    key_bytes: Some(Self::load_binary_file(key_path)?),
+                }),
+            },
+        )
+    }
+
+    /// Load and parse a PEM format TLS server certificate.
+    ///
+    /// The certificate contains a public key which can be used to verify the
+    /// identity of the remote KMIP server.
+    fn load_server_cert(&self) -> Result<Option<Vec<u8>>, Error> {
+        Ok(match &self.server_cert_path {
+            Some(p) => Some(Self::load_binary_file(p)?),
+            None => None,
+        })
+    }
+
+    /// Load and parse a PEM format TLS certificate authority certificate.
+    ///
+    /// The certificate can be used to verify the issuing authority of the
+    /// TLS server certificate, thereby verifying not just that the server is
+    /// the owner of the certificate but that the certificate was issued by a
+    /// trusted party.
+    fn load_ca_cert(&self) -> Result<Option<Vec<u8>>, Error> {
+        Ok(match &self.ca_cert_path {
+            Some(p) => Some(Self::load_binary_file(p)?),
+            None => None,
+        })
+    }
+
+    /// Load credentials from disk for authenticating with a KMIP server.
+    ///
+    /// Currently supports only one credential type:
+    ///   - Username and optional password.
+    ///
+    /// In the case of Nameshed-HSM-Relay the username is the PKCS#11 slot
+    /// label and the password is the PKCS#11 user PIN.
+    fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
+        Ok(match &self.server_credentials_path {
+            Some(p) => {
+                let file = File::open(p).map_err::<Error, _>(|e| {
+                    format!("error opening credentials file {} for reading for KMIP server '{server_id}': {e}", p.display()).into()
+                })?;
+                let mut credentials_set: KmipServerCredentialsSet = serde_json::from_reader(file)
+                    .map_err::<Error, _>(|e| {
+                    format!(
+                        "error loading credentials file {} for KMIP server '{server_id}': {e}",
+                        p.display()
+                    )
+                    .into()
+                })?;
+                let credentials =
+                    credentials_set
+                        .0
+                        .remove(server_id)
+                        .ok_or(Error::new(&format!(
+                    "error loading credentials for KMIP server '{server_id}' from credentials file {}: no credentials for server '{server_id}' found",
+                    p.display()
+                )))?;
+                (Some(credentials.username), credentials.password)
+            }
+            None => (None, None),
+        })
+    }
+
+    /// Load an arbitrary file as unparsed bytes into memory.
+    ///
+    /// TODO: Lmiit how many bytes we will read?
+    fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
+        use std::{fs::File, io::Read};
+
+        let mut bytes = Vec::new();
+        File::open(path)?.read_to_end(&mut bytes)?;
+
+        Ok(bytes)
+    }
 }
 
 impl From<KmipConnError> for Error {
