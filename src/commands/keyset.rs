@@ -2,8 +2,8 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::convert::From;
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::{remove_file, File};
-use std::io::Write;
+use std::fs::{remove_file, File, OpenOptions};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::{absolute, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +38,8 @@ use crate::error::Error;
 use crate::util;
 
 const MAX_KEY_TAG_TRIES: u8 = 10;
+
+const DEF_KMIP_PORT: u16 = 5696;
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Keyset {
@@ -221,39 +223,60 @@ enum KmipCommands {
     ///
     /// Will be set as the default server if it is the only KMIP server.
     AddServer {
+        /// An identifier to refer to the KMIP server by.
         server_id: String,
 
+        /// The hostname or IP address of the KMIP server.
         ip_host_or_fqdn: String,
 
-        #[arg(long = "port")]
+        /// Optional TCP port to connect to the KMIP server on. Default: 5696
+        #[arg(help_heading = "KMIP server details", long = "port")]
         port: Option<u16>,
 
-        #[arg(long = "username")]
+        /// Optional file to read/write username/password credentials from/to.
+        #[arg(help_heading = "Authentication settings", long = "credential-store")]
+        credentials_store_path: Option<PathBuf>,
+
+        /// Optional username to authenticate to the KMIP server as. Requires credential store path.
+        #[arg(help_heading = "Authentication settings", long = "username")]
         username: Option<String>,
 
-        #[arg(long = "password")]
+        /// Optional password to authenticate to the KMIP server with. Requires username.
+        #[arg(help_heading = "Authentication settings", long = "password")]
         password: Option<String>,
 
-        #[arg(long = "insecure", action = clap::ArgAction::SetTrue)]
+        /// Whether or not to verify the KMIP server TLS certificate. Default: true.
+        #[arg(help_heading = "Authentication settings", long = "insecure", action = clap::ArgAction::SetTrue)]
         insecure: Option<bool>,
 
-        #[arg(long = "client-cert")]
+        /// Optional path to a TLS client certificate to authenticate to the KMIP server with.
+        #[arg(help_heading = "Authentication settings", long = "client-cert")]
         client_cert_path: Option<PathBuf>,
 
-        #[arg(long = "client-key")]
+        /// Optional path to a TLS client key to authenticate to the KMIP server with.
+        #[arg(help_heading = "Authentication settings", long = "client-key")]
         client_key_path: Option<PathBuf>,
     },
 
     /// Remove an existing non-default KMIP server.
     ///
     /// To remove the default KMIP server use `kmip disable` first.
-    RemoveServer { server_id: String },
+    RemoveServer {
+        /// The identifier of the KMIP server to remove.
+        server_id: String,
+    },
 
     /// Set the default KMIP server to use for key generation & signing.
-    SetDefaultServer { server_id: String },
+    SetDefaultServer {
+        /// The identifier of the KMIP server to use as the default.
+        server_id: String,
+    },
 
     /// Get the details of an existing KMIP server.
-    GetServer { server_id: String },
+    GetServer {
+        /// The identifier of the KMIP server to get.
+        server_id: String,
+    },
 
     /// List all configured KMIP servers.
     ListServers,
@@ -1172,7 +1195,7 @@ impl Keyset {
                 }
             }
             Commands::Kmip { subcommand } => {
-                config_changed = kmip_command(subcommand, &mut ksc)?;
+                config_changed = kmip_command(subcommand, &mut ksc, &kss)?;
             }
         }
 
@@ -1352,7 +1375,11 @@ fn set_command(
     Ok(())
 }
 
-fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error> {
+fn kmip_command(
+    cmd: KmipCommands,
+    ksc: &mut KeySetConfig,
+    kss: &KeySetState,
+) -> Result<bool, Error> {
     match cmd {
         KmipCommands::Disable => {
             ksc.default_kmip_server = None;
@@ -1362,38 +1389,29 @@ fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error
             server_id,
             ip_host_or_fqdn,
             port,
+            credentials_store_path,
             username,
             password,
             insecure,
             client_cert_path,
             client_key_path,
         } => {
-            let settings = KmipServerConnectionSettings {
+            add_kmip_server(
+                ksc,
+                server_id,
+                ip_host_or_fqdn,
+                port,
+                credentials_store_path,
+                username,
+                password,
+                insecure,
                 client_cert_path,
                 client_key_path,
-                server_insecure: insecure.unwrap_or(false),
-                server_addr: ip_host_or_fqdn,
-                server_port: port.unwrap_or(5696),
-                server_username: username,
-                server_password: password,
-                ..Default::default()
-            };
-
-            ksc.kmip_servers.insert(server_id.clone(), settings);
-
-            if ksc.kmip_servers.len() == 1 {
-                ksc.default_kmip_server = Some(server_id);
-            }
+            )?;
         }
 
         KmipCommands::RemoveServer { server_id } => {
-            if ksc.default_kmip_server.as_ref() == Some(&server_id) {
-                return Err(format!(
-                    "KMIP server index {server_id} cannot be removed as it is the current default. Use kmip disable first."
-                )
-                .into());
-            }
-            let _ = ksc.kmip_servers.remove(&server_id);
+            remove_kmip_server(ksc, kss, server_id)?;
         }
 
         KmipCommands::SetDefaultServer { server_id } => {
@@ -1418,6 +1436,169 @@ fn kmip_command(cmd: KmipCommands, ksc: &mut KeySetConfig) -> Result<bool, Error
     }
 
     Ok(true)
+}
+
+/// Remove a KMIP server and its credentials.
+///
+/// Removes the specified KMIP server from the configuration, and any
+/// associated referenced credentials.
+///
+/// Returns an error if:
+///   - The KMIP server is the current default.
+///   - The KMIP server is in use by any known keys.
+///   - A referenced credentials file could not be updated to remove
+///     credentials for the server being removed.
+fn remove_kmip_server(
+    ksc: &mut KeySetConfig,
+    kss: &KeySetState,
+    server_id: String,
+) -> Result<(), Error> {
+    if ksc.default_kmip_server.as_ref() == Some(&server_id) {
+        return Err(format!(
+            "KMIP server '{server_id}' cannot be removed as it is the current default. Use kmip disable first."
+        )
+        .into());
+    }
+
+    if kss.keyset.keys().iter().any(|(key_url_str, _)| {
+        if let Ok(url) = Url::parse(key_url_str) {
+            if let Ok(key_url) = KeyUrl::try_from(url) {
+                if key_url.server_id() == server_id {
+                    return true;
+                }
+            }
+        }
+        false
+    }) {
+        return Err(format!(
+            "KMIP server '{server_id}' cannot be removed as there are still keys using it."
+        )
+        .into());
+    }
+
+    let removed = ksc.kmip_servers.remove(&server_id);
+
+    if let Some(credentials_path) = removed.and_then(|s| s.server_credentials_path) {
+        let mut credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+        credentials_file.remove(&server_id).ok_or(Error::new(&format!("unable to remove credentials for KMIP server '{server_id}' from credentials file {}: server id does not exist in the file", credentials_path.display())))?;
+        credentials_file.save()?;
+    }
+
+    Ok(())
+}
+
+/// Adds a KMIP server to the configured set.
+///
+/// Sensitive credentials must be referenced from separate files, we do not
+/// allow them to be stored directly in the main configuration.
+///
+/// To make it easier for users to store username/password credentials we
+/// support writing them to the JSON file for the user using credentials
+/// specified on the command line. We also support reading from a pre-existing
+/// JSON credentials file, assuming a user was able to create one by hand.
+///
+/// The format of the file (at the time of writing) is like so:
+///
+/// {
+///     "server_id": {
+///         "username": "xxxx",
+///         "password": "yyyy",
+///     }
+/// }
+///
+/// Note: We do not (yet?) support protection against accidental leakage of
+/// secrets in memory (e.g. via the secrecy crate) because the secrecy crate
+/// SecretBox type cannot be cloned, thus would have to be both read from disk
+/// for every request, and doing so would need to be supported all the way/
+/// down to the KMIP message wire serialization in the kmip-protocol crate,
+/// plus the crate explicitly warns against creating a Serde Serialize impl
+/// for SecretBox'd data and so requires you to manually impl that yourself.
+#[allow(clippy::too_many_arguments)]
+fn add_kmip_server(
+    ksc: &mut KeySetConfig,
+    server_id: String,
+    ip_host_or_fqdn: String,
+    port: Option<u16>,
+    credentials_store_path: Option<PathBuf>,
+    username: Option<String>,
+    password: Option<String>,
+    insecure: Option<bool>,
+    client_cert_path: Option<PathBuf>,
+    client_key_path: Option<PathBuf>,
+) -> Result<(), Error> {
+    if ksc.kmip_servers.contains_key(&server_id) {
+        return Err(Error::new(&format!(
+            "unable to add KMIP server '{server_id}': server already exists!"
+        )));
+    }
+
+    let server_credentials_path = match (credentials_store_path, &username, &password) {
+        // No credentials supplied.
+        // Use unauthenticated access to the KMIP server.
+        (None, None, None) => None,
+
+        // Error: Password supplied without required username.
+        (_, None, Some(_)) => {
+            return Err("KMIP username is mandatory if a password is supplied"
+                .to_string()
+                .into());
+        }
+
+        // Error: Username supplied without required credentials file path.
+        (None, Some(_), _) => {
+            return Err(
+                "Credentials path is mandatory if a KMIP username is specified"
+                    .to_string()
+                    .into(),
+            );
+        }
+
+        // Username, optional password, and credentials path supplied.
+        // Write the credentials to the specified file.
+        (Some(credentials_path), Some(_), _) => {
+            let credentials = KmipServerCredentials {
+                username: username.unwrap(),
+                password,
+            };
+            let mut credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+            if credentials_file
+                .insert(server_id.clone(), credentials)
+                .is_some()
+            {
+                return Err(Error::new(&format!("unable to add KMIP credentials to file {}: server '{server_id}' already exists.", credentials_path.display())));
+            }
+            credentials_file.save()?;
+            Some(credentials_path)
+        }
+
+        // Only credentials path supplied.
+        // Check that it contains credentials for the specified server.
+        (Some(credentials_path), None, None) => {
+            let credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+            if !credentials_file.contains_server(&server_id) {
+                return Err(Error::new(&format!("unable to add KMIP server '{server_id}': credentials for server not found in {}", credentials_path.display())));
+            }
+            Some(credentials_path)
+        }
+    };
+
+    let settings = KmipServerConnectionSettings {
+        client_cert_path,
+        client_key_path,
+        server_insecure: insecure.unwrap_or(false),
+        server_addr: ip_host_or_fqdn,
+        server_port: port.unwrap_or(DEF_KMIP_PORT),
+        server_credentials_path,
+        ..Default::default()
+    };
+
+    ksc.kmip_servers.insert(server_id.clone(), settings);
+
+    if ksc.kmip_servers.len() == 1 {
+        ksc.default_kmip_server = Some(server_id);
+    }
+
+    Ok(())
 }
 
 /// Config for the keyset command.
@@ -1471,6 +1652,134 @@ struct KeySetConfig {
     default_kmip_server: Option<String>,
 }
 
+/// Credentials for connecting to a KMIP server.
+///
+/// Intended to be read from a JSON file stored separately to the main
+/// configuration so that separate security policy can be applied to sensitive
+/// credentials.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct KmipServerCredentials {
+    /// KMIP username credential.
+    ///
+    /// Mandatory if the KMIP "Credential Type" is "Username and Password".
+    ///
+    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
+    username: String,
+
+    /// KMIP password credential.
+    ///
+    /// Optional when KMIP "Credential Type" is "Username and Password".
+    ///
+    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    password: Option<String>,
+}
+
+/// A set of KMIP server credentials.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct KmipServerCredentialsSet(HashMap<String, KmipServerCredentials>);
+
+/// A KMIP server credential set file.
+#[derive(Debug)]
+struct KmipServerCredentialsFile {
+    file: File,
+
+    path: PathBuf,
+
+    credentials: KmipServerCredentialsSet,
+}
+
+impl KmipServerCredentialsFile {
+    pub fn load(path: &Path) -> Result<Self, Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err::<Error, _>(|e| {
+                format!(
+                    "unable to open/create KMIP credentials file {} in read-write mode: {e}",
+                    path.display()
+                )
+                .into()
+            })?;
+
+        let len = file.metadata().map(|m| m.len()).map_err::<Error, _>(|e| {
+            format!(
+                "unable to query metadata of KMIP credentials file {}: {e}",
+                path.display()
+            )
+            .into()
+        })?;
+
+        let mut reader = BufReader::new(&file);
+
+        let credentials: KmipServerCredentialsSet = if len > 0 {
+            serde_json::from_reader(&mut reader).map_err::<Error, _>(|e| {
+                format!(
+                    "error loading KMIP credentials file {:?}: {e}\n",
+                    path.display()
+                )
+                .into()
+            })?
+        } else {
+            KmipServerCredentialsSet::default()
+        };
+
+        let path = path.to_path_buf();
+
+        Ok(KmipServerCredentialsFile {
+            file,
+            path,
+            credentials,
+        })
+    }
+
+    pub fn save(&mut self) -> Result<(), Error> {
+        self.file.seek(SeekFrom::Start(0)).unwrap();
+
+        {
+            let mut writer = BufWriter::new(&self.file);
+            serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err::<Error, _>(
+                |e| {
+                    {
+                        format!(
+                            "error writing KMIP credentials file {}: {e}",
+                            self.path.display()
+                        )
+                    }
+                    .into()
+                },
+            )?;
+            writer.flush().unwrap();
+        }
+
+        let pos = self.file.stream_position().unwrap();
+        self.file.set_len(pos).unwrap();
+        self.file.flush().unwrap();
+
+        Ok(())
+    }
+
+    pub fn contains_server(&self, server_id: &str) -> bool {
+        self.credentials.0.contains_key(server_id)
+    }
+
+    pub fn insert(
+        &mut self,
+        server_id: String,
+        credentials: KmipServerCredentials,
+    ) -> Option<KmipServerCredentials> {
+        self.credentials.0.insert(server_id, credentials)
+    }
+
+    pub fn remove(&mut self, server_id: &str) -> Option<KmipServerCredentials> {
+        self.credentials.0.remove(server_id)
+    }
+}
+
+/// Settings for connecting to a KMIP HSM server.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipServerConnectionSettings {
     /// Path to the client certificate file in PEM format.
@@ -1503,51 +1812,39 @@ pub struct KmipServerConnectionSettings {
     /// The TCP port number on which the KMIP server listens.
     server_port: u16,
 
-    /// The user name to authenticate with the KMIP server.
+    /// The credentials to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    server_username: Option<String>,
-
-    /// The password to authenticate with the KMIP server.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    server_password: Option<String>,
+    server_credentials_path: Option<PathBuf>,
 }
 
 impl Default for KmipServerConnectionSettings {
     fn default() -> Self {
         Self {
             server_addr: "localhost".into(),
-            server_port: 5696,
+            server_port: DEF_KMIP_PORT,
             server_insecure: false,
             client_cert_path: None,
             client_key_path: None,
             client_pkcs12_path: None,
             server_cert_path: None,
             ca_cert_path: None,
-            server_username: None,
-            server_password: None,
+            server_credentials_path: None,
         }
     }
 }
 
-impl TryFrom<KmipServerConnectionSettings> for ConnectionSettings {
-    type Error = Error;
-
-    fn try_from(cfg: KmipServerConnectionSettings) -> Result<Self, Self::Error> {
-        let client_cert = load_client_cert(&cfg)?;
-        let server_cert = match cfg.server_cert_path {
-            Some(p) => Some(load_binary_file(&p)?),
-            None => None,
-        };
-        let ca_cert = match cfg.ca_cert_path {
-            Some(p) => Some(load_binary_file(&p)?),
-            None => None,
-        };
+impl KmipServerConnectionSettings {
+    pub fn load(&self, server_id: &str) -> Result<ConnectionSettings, Error> {
+        let client_cert = self.load_client_cert()?;
+        let server_cert = self.load_server_cert()?;
+        let ca_cert = self.load_ca_cert()?;
+        let (username, password) = self.load_credentials(server_id)?;
         Ok(ConnectionSettings {
-            host: cfg.server_addr,
-            port: cfg.server_port,
-            username: cfg.server_username,
-            password: cfg.server_password,
-            insecure: cfg.server_insecure,
+            host: self.server_addr.clone(),
+            port: self.server_port,
+            username,
+            password,
+            insecure: self.server_insecure,
             client_cert,
             server_cert,
             ca_cert,
@@ -1557,49 +1854,88 @@ impl TryFrom<KmipServerConnectionSettings> for ConnectionSettings {
             max_response_bytes: None, // TODO
         })
     }
-}
 
-fn load_client_cert(
-    opt: &KmipServerConnectionSettings,
-) -> Result<Option<ClientCertificate>, Error> {
-    let client_cert = {
-        match (
-            &opt.client_cert_path,
-            &opt.client_key_path,
-            &opt.client_pkcs12_path,
-        ) {
-            (None, None, None) => None,
-            (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
-                cert_bytes: load_binary_file(path)?,
-            }),
-            (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
-                cert_bytes: load_binary_file(path)?,
-                key_bytes: None,
-            }),
-            (None, Some(_), None) => {
-                return Err(
-                    "Client certificate key path requires a client certificate path".into(),
-                );
+    fn load_client_cert(&self) -> Result<Option<ClientCertificate>, Error> {
+        Ok(
+            match (
+                &self.client_cert_path,
+                &self.client_key_path,
+                &self.client_pkcs12_path,
+            ) {
+                (None, None, None) => None,
+                (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
+                    cert_bytes: Self::load_binary_file(path)?,
+                }),
+                (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
+                    cert_bytes: Self::load_binary_file(path)?,
+                    key_bytes: None,
+                }),
+                (None, Some(_), None) => {
+                    return Err(
+                        "Client certificate key path requires a client certificate path".into(),
+                    );
+                }
+                (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
+                    return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
+                }
+                (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
+                    cert_bytes: Self::load_binary_file(cert_path)?,
+                    key_bytes: Some(Self::load_binary_file(key_path)?),
+                }),
+            },
+        )
+    }
+
+    fn load_server_cert(&self) -> Result<Option<Vec<u8>>, Error> {
+        Ok(match &self.server_cert_path {
+            Some(p) => Some(Self::load_binary_file(p)?),
+            None => None,
+        })
+    }
+
+    fn load_ca_cert(&self) -> Result<Option<Vec<u8>>, Error> {
+        Ok(match &self.ca_cert_path {
+            Some(p) => Some(Self::load_binary_file(p)?),
+            None => None,
+        })
+    }
+
+    fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
+        Ok(match &self.server_credentials_path {
+            Some(p) => {
+                let file = File::open(p).map_err::<Error, _>(|e| {
+                    format!("error opening credentials file {} for reading for KMIP server '{server_id}': {e}", p.display()).into()
+                })?;
+                let mut credentials_set: KmipServerCredentialsSet = serde_json::from_reader(file)
+                    .map_err::<Error, _>(|e| {
+                    format!(
+                        "error loading credentials file {} for KMIP server '{server_id}': {e}",
+                        p.display()
+                    )
+                    .into()
+                })?;
+                let credentials =
+                    credentials_set
+                        .0
+                        .remove(server_id)
+                        .ok_or(Error::new(&format!(
+                    "error loading credentials for KMIP server '{server_id}' from credentials file {}: no credentials for server '{server_id}' found",
+                    p.display()
+                )))?;
+                (Some(credentials.username), credentials.password)
             }
-            (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
-                return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
-            }
-            (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
-                cert_bytes: load_binary_file(cert_path)?,
-                key_bytes: Some(load_binary_file(key_path)?),
-            }),
-        }
-    };
-    Ok(client_cert)
-}
+            None => (None, None),
+        })
+    }
 
-pub fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
-    use std::{fs::File, io::Read};
+    fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
+        use std::{fs::File, io::Read};
 
-    let mut bytes = Vec::new();
-    File::open(path)?.read_to_end(&mut bytes)?;
+        let mut bytes = Vec::new();
+        File::open(path)?.read_to_end(&mut bytes)?;
 
-    Ok(bytes)
+        Ok(bytes)
+    }
 }
 
 /// Persistent state for the keyset command.
@@ -2011,7 +2347,7 @@ fn kmip_create_conn_pool(ksc: &KeySetConfig, server_id: &str) -> Result<SyncConn
         .get(server_id)
         .ok_or(format!("No KMIP server configured with id {server_id}"))?;
 
-    let conn_settings = Arc::new(ConnectionSettings::try_from(srv.clone())?);
+    let conn_settings = Arc::new(srv.load(server_id)?);
 
     // TODO: Should the timeouts used here be configurable and/or set to some
     // other value?
@@ -2521,6 +2857,8 @@ impl From<KmipConnError> for Error {
     }
 }
 
+// TODO: Change this to be a KmipConnectorProvider once domain takes KMIP
+// connectors as input instead of KMIP connection pools.
 struct KmipPoolManager<'a> {
     ksc: &'a KeySetConfig,
     pools: HashMap<String, SyncConnPool>,
@@ -2549,18 +2887,9 @@ impl<'a> KmipPoolManager<'a> {
                 let Some(srv_conn_settings) = self.ksc.kmip_servers.get(id) else {
                     return Err(format!("No KMIP server config exists for server '{id}").into());
                 };
-                let mut conn_settings = ConnectionSettings::try_from(srv_conn_settings.clone())
-                    .map_err(|err| {
-                        format!(
-                            "Unable to prepare KMIP connection settings for server '{id}': {err}"
-                        )
-                    })?;
-                if srv_conn_settings.server_username.is_some() {
-                    conn_settings.username = srv_conn_settings.server_username.clone();
-                }
-                if srv_conn_settings.server_password.is_some() {
-                    conn_settings.password = srv_conn_settings.server_password.clone();
-                }
+                let conn_settings = srv_conn_settings.load(id).map_err(|err| {
+                    format!("Unable to prepare KMIP connection settings for server '{id}': {err}")
+                })?;
                 // TODO: Should the timeouts used here be configurable and/or set to some
                 // other value?
                 let pool = ConnectionManager::create_connection_pool(
