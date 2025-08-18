@@ -2831,6 +2831,8 @@ pub struct KmipServerConnectionSettings {
     server_credentials_path: Option<PathBuf>,
 }
 
+//--- impl Default
+
 impl Default for KmipServerConnectionSettings {
     /// Default to a KMIP server on localhost on the default KMIP port
     /// using a properly signed TLS certificate.
@@ -2993,20 +2995,34 @@ impl KmipServerConnectionSettings {
     }
 }
 
+//--- Conversions
+
 impl From<KmipConnError> for Error {
     fn from(err: KmipConnError) -> Self {
         Error::new(&format!("KMIP connection error: {err}"))
     }
 }
 
+//------------ KmipPoolManager -----------------------------------------------
+//
 // TODO: Change this to be a KmipConnectorProvider once domain takes KMIP
 // connectors as input instead of KMIP connection pools.
+
+/// Create and expose KMIP connection pools per server ID.
+///
+/// KMIP connection pools are needed to use domain KMIP KeyPair functionality.
+/// This type manages the creation and access to KMIP connection pools one per
+/// KMIP server ID.
 struct KmipPoolManager<'a> {
+    /// Access to the KMIP server configurations.
     ksc: &'a KeySetConfig,
+
+    /// Connection pools by server ID.
     pools: HashMap<String, SyncConnPool>,
 }
 
 impl<'a> KmipPoolManager<'a> {
+    /// Create a new pool manager for the given KMIP server configurations.
     pub fn new(ksc: &'a KeySetConfig) -> Self {
         Self {
             ksc,
@@ -3014,6 +3030,12 @@ impl<'a> KmipPoolManager<'a> {
         }
     }
 
+    /// Get the default KMIP server pool, if any.
+    ///
+    /// Requires KeySetConfig::default_kmip_server to be set. The pool will be
+    /// created if needed.
+    ///
+    /// Returns Ok(None) if no default KMIP server is set.
     pub fn get_default_pool(&mut self) -> Result<Option<SyncConnPool>, Error> {
         self.ksc
             .default_kmip_server
@@ -3022,6 +3044,13 @@ impl<'a> KmipPoolManager<'a> {
             .transpose()
     }
 
+    /// Get the server pool for a specific KMIP server ID.
+    ///
+    /// Requires the server ID to exist in KeySetConfig::kmip_servers.
+    /// The pool will be created if needed.
+    ///
+    /// Returns Ok(pool) or Err if the server ID is not known or the pool
+    /// cannot be created.
     pub fn get_pool(&mut self, id: &str) -> Result<SyncConnPool, Error> {
         match self.pools.get(id) {
             Some(pool) => Ok(pool.clone()),
