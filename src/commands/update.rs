@@ -525,9 +525,14 @@ impl Update {
         }
         if let Some(rrset_exists_exact) = prerequisites.rrset_exists_exact {
             for rr in rrset_exists_exact {
-                // This is done while parsing the record, but in case that
+                // The ttl is set while parsing the record, but in case that
                 // changes, here an extra check.
                 debug_assert!(rr.ttl() == Ttl::from_secs(0));
+                // From [RFC2136] Section 2.4.2 - RRset Exists (Value Dependent)
+                // - [...] an entire RRset whose preexistence is required.
+                // - NAME and TYPE are that of the RRset being denoted.
+                // - CLASS is that of the zone.
+                // - TTL must be specified as zero (0) [...]
                 prereq_section.push(rr).map_err(|e| -> Error {
                     format!("Failed to add RR to UPDATE message: {e}").into()
                 })?
@@ -575,19 +580,6 @@ impl Update {
                 .expect("Failed to create empty rdata"),
         );
         ParsedRecord::new(domain, Class::ANY, Ttl::from_secs(0), rdata)
-    }
-
-    fn create_prereq_rrset_exists_exact(
-        domain: Name<Vec<u8>>,
-        class: Class,
-        rdata: ZoneRecordData<Vec<u8>, Name<Vec<u8>>>,
-    ) -> ParsedRecord {
-        // From [RFC2136] Section 2.4.2 - RRset Exists (Value Dependent)
-        // - [...] an entire RRset whose preexistence is required.
-        // - NAME and TYPE are that of the RRset being denoted.
-        // - CLASS is that of the zone.
-        // - TTL must be specified as zero (0) [...]
-        ParsedRecord::new(domain, class, Ttl::from_secs(0), rdata)
     }
 
     fn create_prereq_rrset_non_existent(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
