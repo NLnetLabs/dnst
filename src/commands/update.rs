@@ -100,6 +100,9 @@ pub struct Update {
     ///
     /// This specifies the prerequisite that at least one RR with a specified
     /// NAME and TYPE must exist.
+    ///
+    /// Note that, if the domain name is relative, it will be relative to the
+    /// zone's apex.
     #[arg(
         long = "rrset-exists",
         visible_alias = "rrset",
@@ -125,8 +128,12 @@ pub struct Update {
     /// RRset does not exist. (Optionally) provide this option multiple times,
     /// with format "<DOMAIN_NAME> <TYPE>" each, to build up a list of RRs
     /// that specify that no RRs with a specified NAME and TYPE can exist.
-    #[arg(long = "rrset-empty", value_name = "DOMAIN_NAME_AND_TYPE")]
-    rrset_empty: Option<Vec<String>>,
+    #[arg(
+        long = "rrset-non-existent",
+        visible_alias = "rrset-empty",
+        value_name = "DOMAIN_NAME_AND_TYPE"
+    )]
+    rrset_non_existent: Option<Vec<String>>,
 
     /// Name is in use. (Optionally) provide this option multiple times,
     /// with format "<DOMAIN_NAME>" each, to collect a list of NAMEs that must
@@ -248,6 +255,11 @@ impl Update {
                         .to_name(),
                 };
                 records.push((name, typ))
+            } else {
+                return Err(format!(
+                    "Invalid prerequisite argument format. Expected format '<DOMAIN_NAME> <TYPE>', was '{arg}'."
+                )
+                .into());
             }
         }
         Ok(records)
@@ -474,7 +486,7 @@ impl Update {
         let mut prerequisites = UpdatePrerequisites {
             rrset_exists: None,
             rrset_exists_exact: None,
-            rrset_empty: None,
+            rrset_non_existent: None,
             name_in_use: None,
             name_not_in_use: None,
         };
@@ -486,8 +498,8 @@ impl Update {
                 v, &origin, self.class,
             )?)
         }
-        if let Some(ref v) = self.rrset_empty {
-            prerequisites.rrset_empty = Some(Self::parse_prerequisite_name_type(v, &origin)?)
+        if let Some(ref v) = self.rrset_non_existent {
+            prerequisites.rrset_non_existent = Some(Self::parse_prerequisite_name_type(v, &origin)?)
         }
         if let Some(ref v) = self.name_in_use {
             prerequisites.name_in_use = Some(Self::parse_prerequisite_name(v, &origin)?)
@@ -521,10 +533,10 @@ impl Update {
                 })?
             }
         }
-        if let Some(rrset_empty) = prerequisites.rrset_empty {
-            for (domain, rtype) in rrset_empty {
+        if let Some(rrset_non_existent) = prerequisites.rrset_non_existent {
+            for (domain, rtype) in rrset_non_existent {
                 prereq_section
-                    .push(Self::create_prereq_rrset_empty(domain, rtype))
+                    .push(Self::create_prereq_rrset_non_existent(domain, rtype))
                     .map_err(|e| -> Error {
                         format!("Failed to add RR to UPDATE message: {e}").into()
                     })?
@@ -578,7 +590,7 @@ impl Update {
         ParsedRecord::new(domain, class, Ttl::from_secs(0), rdata)
     }
 
-    fn create_prereq_rrset_empty(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
+    fn create_prereq_rrset_non_existent(domain: Name<Vec<u8>>, rtype: Rtype) -> ParsedRecord {
         // From [RFC2136] Section 2.4.3 - RRset Does Not Exist
         // - [...] a single RR whose NAME and TYPE are equal to that of the
         // RRset whose nonexistence is required.
@@ -729,7 +741,7 @@ impl Update {
 
 #[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
 enum UpdateAction {
-    // Add RRs to domain
+    /// Add RRs to domain
     Add {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
@@ -740,7 +752,7 @@ enum UpdateAction {
         rdata: Vec<String>,
     },
 
-    // Delete specific RRs or a complete RRset from domain
+    /// Delete specific RRs or a complete RRset from domain
     Delete {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
@@ -751,7 +763,7 @@ enum UpdateAction {
         rdata: Vec<String>,
     },
 
-    // Clear domain, aka delete all RRsets on the domain
+    /// Clear domain, aka delete all RRsets on the domain
     Clear,
 }
 
@@ -761,7 +773,7 @@ enum UpdateAction {
 struct UpdatePrerequisites {
     rrset_exists: Option<Vec<NameTypeTuple>>,
     rrset_exists_exact: Option<Vec<ParsedRecord>>,
-    rrset_empty: Option<Vec<NameTypeTuple>>,
+    rrset_non_existent: Option<Vec<NameTypeTuple>>,
     name_in_use: Option<Vec<Name<Vec<u8>>>>,
     name_not_in_use: Option<Vec<Name<Vec<u8>>>>,
 }
