@@ -1825,6 +1825,7 @@ fn new_keys(
     let flags = if make_ksk { 257 } else { 256 };
     let mut retries = MAX_KEY_TAG_TRIES;
 
+    // If a default KMIP server is configured, use that to generate keys.
     if let Some(kmip_conn_pool) = kmip_conn.get_default_pool()? {
         let (key_pair, dnskey) = loop {
             // TODO: Fortanix DSM rejects attempts to create keys by names
@@ -1864,6 +1865,7 @@ fn new_keys(
             dnskey.key_tag(),
         ))
     } else {
+        // Otherwise use Ring/OpenSSL based key generation.
         let (secret_key, public_key, key_tag) = loop {
             let (secret_key, public_key) = domain::crypto::sign::generate(algorithm.clone(), flags)
                 .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
@@ -2729,7 +2731,7 @@ impl KmipServerCredentialsFile {
     /// Write the credential set back to the file it was loaded from.
     pub fn save(&mut self) -> Result<(), Error> {
         // Ensure that writing happens at the start of the file.
-        self.file.seek(SeekFrom::Start(0)).unwrap();
+        self.file.seek(SeekFrom::Start(0))?;
 
         // Use a buffered writer as writing JSON to a file directly is
         // apparently very slow, even for small files.
@@ -2750,15 +2752,15 @@ impl KmipServerCredentialsFile {
 
             // Ensure that the BufWriter is flushed as advised by the
             // BufWriter docs.
-            writer.flush().unwrap();
+            writer.flush()?;
         }
 
         // Truncate the file to the length of data we just wrote..
-        let pos = self.file.stream_position().unwrap();
-        self.file.set_len(pos).unwrap();
+        let pos = self.file.stream_position()?;
+        self.file.set_len(pos)?;
 
         // Ensure that any write buffers are flushed.
-        self.file.flush().unwrap();
+        self.file.flush()?;
 
         Ok(())
     }
