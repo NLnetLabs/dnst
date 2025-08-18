@@ -1527,7 +1527,7 @@ fn remove_kmip_server(
     let removed = ksc.kmip_servers.remove(&server_id);
 
     if let Some(credentials_path) = removed.and_then(|s| s.server_credentials_path) {
-        let mut credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+        let mut credentials_file = KmipServerCredentialsFile::create_or_load(&credentials_path)?;
         credentials_file.remove(&server_id).ok_or(Error::new(&format!("unable to remove credentials for KMIP server '{server_id}' from credentials file {}: server id does not exist in the file", credentials_path.display())))?;
         credentials_file.save()?;
     }
@@ -1608,7 +1608,8 @@ fn add_kmip_server(
                 username: username.unwrap(),
                 password,
             };
-            let mut credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+            let mut credentials_file =
+                KmipServerCredentialsFile::create_or_load(&credentials_path)?;
             if credentials_file
                 .insert(server_id.clone(), credentials)
                 .is_some()
@@ -1622,7 +1623,7 @@ fn add_kmip_server(
         // Only credentials path supplied.
         // Check that it contains credentials for the specified server.
         (Some(credentials_path), None, None) => {
-            let credentials_file = KmipServerCredentialsFile::load(&credentials_path)?;
+            let credentials_file = KmipServerCredentialsFile::create_or_load(&credentials_path)?;
             if !credentials_file.contains_server(&server_id) {
                 return Err(Error::new(&format!("unable to add KMIP server '{server_id}': credentials for server not found in {}", credentials_path.display())));
             }
@@ -1730,15 +1731,21 @@ struct KmipServerCredentialsSet(HashMap<String, KmipServerCredentials>);
 /// A KMIP server credential set file.
 #[derive(Debug)]
 struct KmipServerCredentialsFile {
+    /// The file from which the credentials were loaded, and will be saved
+    /// back to.
     file: File,
 
+    /// The path from which the file was loaded. Used for generating error
+    /// messages.
     path: PathBuf,
 
+    /// The actual set of loaded credentials.
     credentials: KmipServerCredentialsSet,
 }
 
 impl KmipServerCredentialsFile {
-    pub fn load(path: &Path) -> Result<Self, Error> {
+    /// Load credentials from disk, creating an empty file if missing.
+    pub fn create_or_load(path: &Path) -> Result<Self, Error> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1753,6 +1760,8 @@ impl KmipServerCredentialsFile {
                 .into()
             })?;
 
+        // Determine the length of the file as JSON parsing fails if the file
+        // is completely empty.
         let len = file.metadata().map(|m| m.len()).map_err::<Error, _>(|e| {
             format!(
                 "unable to query metadata of KMIP credentials file {}: {e}",
@@ -1761,8 +1770,11 @@ impl KmipServerCredentialsFile {
             .into()
         })?;
 
+        // Buffer reading as apparently JSON based file reading is extremely
+        // slow without buffering, even for small files.
         let mut reader = BufReader::new(&file);
 
+        // Load or create the credential set.
         let credentials: KmipServerCredentialsSet = if len > 0 {
             serde_json::from_reader(&mut reader).map_err::<Error, _>(|e| {
                 format!(
@@ -1775,6 +1787,7 @@ impl KmipServerCredentialsFile {
             KmipServerCredentialsSet::default()
         };
 
+        // Save the path for use in generating error messages.
         let path = path.to_path_buf();
 
         Ok(KmipServerCredentialsFile {
@@ -1784,36 +1797,53 @@ impl KmipServerCredentialsFile {
         })
     }
 
+    /// Write the credential set back to the file it was loaded from.
     pub fn save(&mut self) -> Result<(), Error> {
+        // Ensure that writing happens at the start of the file.
         self.file.seek(SeekFrom::Start(0)).unwrap();
 
+        // Use a buffered writer as writing JSON to a file directly is
+        // apparently very slow, even for small files.
+        //
+        // Enclose the use of the BufWriter in a block so that it is
+        // definitely no longer using the file when we next act on it.
         {
             let mut writer = BufWriter::new(&self.file);
             serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err::<Error, _>(
                 |e| {
-                    {
-                        format!(
-                            "error writing KMIP credentials file {}: {e}",
-                            self.path.display()
-                        )
-                    }
+                    format!(
+                        "error writing KMIP credentials file {}: {e}",
+                        self.path.display()
+                    )
                     .into()
                 },
             )?;
+
+            // Ensure that the BufWriter is flushed as advised by the
+            // BufWriter docs.
             writer.flush().unwrap();
         }
 
+        // Truncate the file to the length of data we just wrote..
         let pos = self.file.stream_position().unwrap();
         self.file.set_len(pos).unwrap();
+
+        // Ensure that any write buffers are flushed.
         self.file.flush().unwrap();
 
         Ok(())
     }
 
+    /// Does this credential set include credentials for the specified KMIP
+    /// server.
     pub fn contains_server(&self, server_id: &str) -> bool {
         self.credentials.0.contains_key(server_id)
     }
 
+    /// Add credentials for the specified KMIP server, replacing any that
+    /// previously existed for the same server.
+    ///
+    /// Returns any previous configuration if found.
     pub fn insert(
         &mut self,
         server_id: String,
@@ -1822,6 +1852,9 @@ impl KmipServerCredentialsFile {
         self.credentials.0.insert(server_id, credentials)
     }
 
+    /// Remove any existing configuration for the specified KMIP server.
+    ///
+    /// Returns any previous configuration if found.
     pub fn remove(&mut self, server_id: &str) -> Option<KmipServerCredentials> {
         self.credentials.0.remove(server_id)
     }
