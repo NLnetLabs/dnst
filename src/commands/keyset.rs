@@ -427,9 +427,6 @@ impl Keyset {
 
         let mut config_changed = false;
         let mut state_changed = false;
-
-        // Determine the KMIP connection pool to use for creating new keys,
-        // if configured.
         let mut kmip_pool_mgr = KmipPoolManager::new(&ksc);
 
         match self.cmd {
