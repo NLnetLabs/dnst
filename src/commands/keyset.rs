@@ -4,6 +4,7 @@ use std::convert::From;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::ops::Not;
 use std::path::{absolute, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +57,7 @@ pub struct Keyset {
 
 type OptDuration = Option<Duration>;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Subcommand)]
 enum Commands {
     Create {
@@ -219,6 +221,7 @@ enum SetCommands {
 /// Commands for configuring the use of KMIP compatible HSMs for key
 /// generation and signing instead of or in addition to using and Ring/OpenSSL
 /// based key generation and signing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Subcommand)]
 enum KmipCommands {
     /// Disable use of KMIP for generating new keys.
@@ -269,35 +272,54 @@ enum KmipCommands {
         /// The hostname or IP address of the KMIP server.
         ip_host_or_fqdn: String,
 
-        /// Optional TCP port to connect to the KMIP server on. Default: 5696
-        #[arg(help_heading = "KMIP server details", long = "port")]
-        port: Option<u16>,
+        /// TCP port to connect to the KMIP server on.
+        #[arg(help_heading = "Server", long = "port", default_value_t = DEF_KMIP_PORT)]
+        port: u16,
 
-        /// Optional file to read/write username/password credentials from/to.
-        #[arg(help_heading = "Authentication settings", long = "credential-store")]
+        /// Optional path to a JSON file to read/write username/password credentials from/to.
+        ///
+        /// The format of the file (at the time of writing) is like so:
+        ///     {
+        ///         "server_id": {
+        ///             "username": "xxxx",
+        ///             "password": "yyyy",
+        ///         }
+        ///         [, "another_server_id": { ... }]
+        ///     }
+        #[arg(help_heading = "Client Credentials", long = "credential-store")]
         credentials_store_path: Option<PathBuf>,
 
-        /// Optional username to authenticate to the KMIP server as. Requires
-        /// credential-store.
-        #[arg(help_heading = "Authentication settings", long = "username")]
+        /// Optional username to authenticate to the KMIP server as.
+        #[arg(
+            help_heading = "Client Credentials",
+            long = "username",
+            requires = "credentials_store_path"
+        )]
         username: Option<String>,
 
         /// Optional password to authenticate to the KMIP server with.
-        /// Requires username.
-        #[arg(help_heading = "Authentication settings", long = "password")]
+        #[arg(
+            help_heading = "Client Credentials",
+            long = "password",
+            requires = "username"
+        )]
         password: Option<String>,
 
-        /// Whether or not to verify the KMIP server TLS certificate. Default:
-        /// true.
+        /// Whether or not to accept the KMIP server TLS certificate without
+        /// verifying it.
         ///
         /// Set to false if using a self-signed TLS certificate, e.g. in a
         /// test environment.
-        #[arg(help_heading = "Authentication settings", long = "insecure", action = clap::ArgAction::SetTrue)]
-        insecure: Option<bool>,
+        #[arg(help_heading = "Server Certificate Verification", long = "insecure", default_value_t = false, action = clap::ArgAction::SetTrue)]
+        insecure: bool,
 
         /// Optional path to a TLS certificate to authenticate to the KMIP
         /// server with.
-        #[arg(help_heading = "Authentication settings", long = "client-cert")]
+        #[arg(
+            help_heading = "Client Certificate Authentication",
+            long = "client-cert",
+            requires = "client_key_path"
+        )]
         client_cert_path: Option<PathBuf>,
 
         /// Optional path to a private key for client certificate
@@ -305,8 +327,40 @@ enum KmipCommands {
         ///
         /// The private key is needed to be able to prove to the KMIP server
         /// that you are the owner of the provided TLS client certificate.
-        #[arg(help_heading = "Authentication settings", long = "client-key")]
+        #[arg(
+            help_heading = "Client Certificate Authentication",
+            long = "client-key",
+            requires = "client_cert_path"
+        )]
         client_key_path: Option<PathBuf>,
+
+        /// Optional path to a TLS PEM certificate for the server.
+        #[arg(help_heading = "Server Certificate Verification", long = "server-cert")]
+        server_cert_path: Option<PathBuf>,
+
+        /// Optional path to a TLS PEM certificate for a Certificate Authority.
+        #[arg(help_heading = "Server Certificate Verification", long = "ca-cert")]
+        ca_cert_path: Option<PathBuf>,
+
+        /// TCP connect timeout.
+        #[arg(help_heading = "Client Limits", long = "connect-timeout", value_parser = parse_duration, default_value = "10s")]
+        connect_timeout: Duration,
+
+        /// TCP response read timeout.
+        #[arg(help_heading = "Client Limits", long = "read-timeout", value_parser = parse_duration, default_value = "10s")]
+        read_timeout: Duration,
+
+        /// TCP request write timeout.
+        #[arg(help_heading = "Client Limits", long = "write-timeout", value_parser = parse_duration, default_value = "10s")]
+        write_timeout: Duration,
+
+        /// Maximum KMIP response size to accept (in bytes).
+        #[arg(
+            help_heading = "Client Limits",
+            long = "max-response-bytes",
+            default_value_t = 8192
+        )]
+        max_response_bytes: u32,
     },
 
     /// Remove an existing non-default KMIP server.
@@ -1242,7 +1296,7 @@ impl Keyset {
                 }
             }
             Commands::Kmip { subcommand } => {
-                config_changed = kmip_command(subcommand, &mut ksc, &kss)?;
+                config_changed = kmip_command(env, subcommand, &mut ksc, &kss)?;
             }
         }
 
@@ -1423,6 +1477,7 @@ fn set_command(
 }
 
 fn kmip_command(
+    env: &impl Env,
     cmd: KmipCommands,
     ksc: &mut KeySetConfig,
     kss: &KeySetState,
@@ -1442,6 +1497,12 @@ fn kmip_command(
             insecure,
             client_cert_path,
             client_key_path,
+            server_cert_path,
+            ca_cert_path,
+            connect_timeout,
+            read_timeout,
+            write_timeout,
+            max_response_bytes,
         } => {
             add_kmip_server(
                 ksc,
@@ -1454,6 +1515,12 @@ fn kmip_command(
                 insecure,
                 client_cert_path,
                 client_key_path,
+                server_cert_path,
+                ca_cert_path,
+                connect_timeout,
+                read_timeout,
+                write_timeout,
+                max_response_bytes,
             )?;
         }
 
@@ -1472,12 +1539,14 @@ fn kmip_command(
             let Some(server) = ksc.kmip.servers.get(&server_id) else {
                 return Err(format!("KMIP server id '{server_id}' is not known").into());
             };
-            dbg!(server);
+
+            write!(env.stdout(), "{server}");
+
             return Ok(false);
         }
 
         KmipCommands::ListServers => {
-            dbg!(&ksc.kmip.servers);
+            write!(env.stdout(), "{}", &ksc.kmip);
             return Ok(false);
         }
     }
@@ -1525,7 +1594,7 @@ fn remove_kmip_server(
 
     let removed = ksc.kmip.servers.remove(&server_id);
 
-    if let Some(credentials_path) = removed.and_then(|s| s.server_credentials_path) {
+    if let Some(credentials_path) = removed.and_then(|s| s.client_credentials_path) {
         let mut credentials_file = KmipServerCredentialsFile::create_or_load(&credentials_path)?;
         credentials_file.remove(&server_id).ok_or(Error::new(&format!("unable to remove credentials for KMIP server '{server_id}' from credentials file {}: server id does not exist in the file", credentials_path.display())))?;
         credentials_file.save()?;
@@ -1565,13 +1634,19 @@ fn add_kmip_server(
     ksc: &mut KeySetConfig,
     server_id: String,
     ip_host_or_fqdn: String,
-    port: Option<u16>,
+    port: u16,
     credentials_store_path: Option<PathBuf>,
     username: Option<String>,
     password: Option<String>,
-    insecure: Option<bool>,
+    insecure: bool,
     client_cert_path: Option<PathBuf>,
     client_key_path: Option<PathBuf>,
+    server_cert_path: Option<PathBuf>,
+    ca_cert_path: Option<PathBuf>,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    write_timeout: Duration,
+    max_response_bytes: u32,
 ) -> Result<(), Error> {
     if ksc.kmip.servers.contains_key(&server_id) {
         return Err(Error::new(&format!(
@@ -1630,14 +1705,32 @@ fn add_kmip_server(
         }
     };
 
-    let settings = KmipServerConnectionSettings {
-        client_cert_path,
-        client_key_path,
-        server_insecure: insecure.unwrap_or(false),
+    let client_cert_auth = match (client_cert_path, client_key_path) {
+        (None, None) => None,
+        (Some(cert_path), Some(private_key_path)) => Some(KmipClientTlsCertificateAuthConfig { cert_path, private_key_path }),
+        _ => return Err(Error::new(&format!("Unable eto add KMIP server '{server_id}': for client certificate authentication both the certificate and private key are required"))),
+    };
+
+    let server_cert_verification = KmipServerTlsCertificateVerificationConfig {
+        verify_certificate: insecure.not(),
+        server_cert_path,
+        ca_cert_path,
+    };
+
+    let client_limits = KmipClientLimits {
+        connect_timeout,
+        read_timeout,
+        write_timeout,
+        max_response_bytes,
+    };
+
+    let settings = KmipServerConnectionConfig {
         server_addr: ip_host_or_fqdn,
-        server_port: port.unwrap_or(DEF_KMIP_PORT),
-        server_credentials_path,
-        ..Default::default()
+        server_port: port,
+        server_cert_verification,
+        client_credentials_path: server_credentials_path,
+        client_cert_auth,
+        client_limits,
     };
 
     ksc.kmip.servers.insert(server_id.clone(), settings);
@@ -2787,26 +2880,31 @@ impl KmipServerCredentialsFile {
     }
 }
 
-//------------ KmipServerConnectionSettings ----------------------------------
+//------------ KmipClientTlsCertificateAuthConfig ----------------------------
 
-/// Settings for connecting to a KMIP HSM server.
+/// Configuration for KMIP TLS client certificate based authentication.
+///
+/// Both certificate and key file must be present and must be in PEM format.
+// Note: We only support PEM format, not PKCS#12, because the underlying
+// kmip-protocol TLS "drivers" for rustls and OpenSSL both don't actually
+// support PKCS#12 even though taking it as config input.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct KmipServerConnectionSettings {
-    /// Path to the client certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_cert_path: Option<PathBuf>,
+pub struct KmipClientTlsCertificateAuthConfig {
+    /// Path to the PEM format client certificate file.
+    cert_path: PathBuf,
 
-    /// Path to the client certificate key file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_key_path: Option<PathBuf>,
+    /// Path to the PEM format client private key file.
+    private_key_path: PathBuf,
+}
 
-    /// Path to the client certificate and key file in PKCS#12 format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    client_pkcs12_path: Option<PathBuf>,
+//------------ KmipServerTlsCertificateVerificationConfig --------------------
 
-    /// Disable secure checks (e.g. verification of the server certificate).
+/// Configuratin for KMIP TLS certificate verification.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KmipServerTlsCertificateVerificationConfig {
+    /// Whether or not to enable server certificate verification.
     #[serde(default)]
-    server_insecure: bool,
+    verify_certificate: bool,
 
     /// Path to the server certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -2815,40 +2913,127 @@ pub struct KmipServerConnectionSettings {
     /// Path to the server CA certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     ca_cert_path: Option<PathBuf>,
+}
 
+//--- impl Default
+
+impl Default for KmipServerTlsCertificateVerificationConfig {
+    fn default() -> Self {
+        Self {
+            verify_certificate: true,
+            server_cert_path: None,
+            ca_cert_path: None,
+        }
+    }
+}
+
+//------------ KmipClientLimits ----------------------------------------------
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KmipClientLimits {
+    /// TCP connect timeout
+    pub connect_timeout: Duration,
+
+    /// TCP read timeout
+    pub read_timeout: Duration,
+
+    /// TCP write timeout
+    pub write_timeout: Duration,
+
+    /// Maximum number of HSM response bytes to accept
+    pub max_response_bytes: u32,
+}
+
+//------------ KmipServerConnectionConfig ------------------------------------
+
+/// Settings for connecting to a KMIP HSM server.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KmipServerConnectionConfig {
     /// IP address, hostname or FQDN of the KMIP server.
     server_addr: String,
 
     /// The TCP port number on which the KMIP server listens.
     server_port: u16,
 
+    /// KMIP server TLS certificate verification configuration.
+    server_cert_verification: KmipServerTlsCertificateVerificationConfig,
+
     /// The credentials to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    server_credentials_path: Option<PathBuf>,
+    client_credentials_path: Option<PathBuf>,
+
+    /// KMIP client TLS certificate authentication configuration.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
+
+    /// Limits to be applied by the KMIP client
+    client_limits: KmipClientLimits,
 }
 
-//--- impl Default
+//--- impl Display
 
-impl Default for KmipServerConnectionSettings {
-    /// Default to a KMIP server on localhost on the default KMIP port
-    /// using a properly signed TLS certificate.
-    fn default() -> Self {
-        Self {
-            server_addr: "localhost".into(),
-            server_port: DEF_KMIP_PORT,
-            server_insecure: false,
-            client_cert_path: None,
-            client_key_path: None,
-            client_pkcs12_path: None,
-            server_cert_path: None,
-            ca_cert_path: None,
-            server_credentials_path: None,
+/// Displays in multi-line tabulated format like so:
+///
+/// ```
+///     Address:                           127.0.0.1:5696
+///     Server Certificate Verification:   Disabled
+///     Server Certificate:                None
+///     Certificate Authority Certificate: None
+///     Client Certificate Authentication: Disabled
+/// ```
+impl std::fmt::Display for KmipServerConnectionConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        fn displayable_cert_path(p: &Option<PathBuf>) -> String {
+            match p {
+                Some(p) => p.display().to_string(),
+                None => "None".to_string(),
+            }
         }
+
+        writeln!(
+            f,
+            "Address:                           {}:{}",
+            self.server_addr, self.server_port
+        )?;
+        let enabled = match self.server_cert_verification.verify_certificate {
+            true => "Enabled",
+            false => "Disabled",
+        };
+        writeln!(f, "Server Certificate Verification:   {enabled}")?;
+        writeln!(
+            f,
+            "Server Certificate:                {}",
+            displayable_cert_path(&self.server_cert_verification.server_cert_path)
+        )?;
+        writeln!(
+            f,
+            "Certificate Authority Certificate: {}",
+            displayable_cert_path(&self.server_cert_verification.ca_cert_path)
+        )?;
+        match &self.client_cert_auth {
+            Some(cfg) => {
+                writeln!(f, "Client Certificate Authentication: Enabled")?;
+                writeln!(
+                    f,
+                    "    Client Certificate:            {}",
+                    cfg.cert_path.display()
+                )?;
+                writeln!(
+                    f,
+                    "    Private Key:                   {}",
+                    cfg.private_key_path.display()
+                )?;
+            }
+            None => {
+                writeln!(f, "Client Certificate Authentication: Disabled")?;
+            }
+        }
+        Ok(())
     }
 }
 
-impl KmipServerConnectionSettings {
-    /// Load KMIP connection settings into memory.
+impl KmipServerConnectionConfig {
+    /// Load KMIP connection configuration data into memory.
     ///
     /// Load and parse the various credential data that can optionally
     /// be associated with KMIP connection settings from the separate
@@ -2868,7 +3053,7 @@ impl KmipServerConnectionSettings {
             port: self.server_port,
             username,
             password,
-            insecure: self.server_insecure,
+            insecure: self.server_cert_verification.verify_certificate.not(),
             client_cert,
             server_cert,
             ca_cert,
@@ -2879,44 +3064,19 @@ impl KmipServerConnectionSettings {
         })
     }
 
-    /// Load and parse a TLS client certificate and key from disk.
+    /// Load and parse PEM TLS client certificate and key files.
     ///
     /// TLS client certificate and key files can be used to authenticate
     /// against KMIP servers that are configured to require such
     /// authentication.
-    ///
-    /// Supported file formats:
-    ///   - PKCS#12 combined certificate and key file format.
-    ///   - Separate PEM format certificate and key files.
     fn load_client_cert(&self) -> Result<Option<ClientCertificate>, Error> {
-        Ok(
-            match (
-                &self.client_cert_path,
-                &self.client_key_path,
-                &self.client_pkcs12_path,
-            ) {
-                (None, None, None) => None,
-                (None, None, Some(path)) => Some(ClientCertificate::CombinedPkcs12 {
-                    cert_bytes: Self::load_binary_file(path)?,
-                }),
-                (Some(path), None, None) => Some(ClientCertificate::SeparatePem {
-                    cert_bytes: Self::load_binary_file(path)?,
-                    key_bytes: None,
-                }),
-                (None, Some(_), None) => {
-                    return Err(
-                        "Client certificate key path requires a client certificate path".into(),
-                    );
-                }
-                (_, Some(_), Some(_)) | (Some(_), _, Some(_)) => {
-                    return Err("Use either but not both of: client certificate and key PEM file paths, or a PCKS#12 certficate file path".into());
-                }
-                (Some(cert_path), Some(key_path), None) => Some(ClientCertificate::SeparatePem {
-                    cert_bytes: Self::load_binary_file(cert_path)?,
-                    key_bytes: Some(Self::load_binary_file(key_path)?),
-                }),
-            },
-        )
+        match &self.client_cert_auth {
+            Some(cfg) => Ok(Some(ClientCertificate::SeparatePem {
+                cert_bytes: Self::load_binary_file(&cfg.cert_path)?,
+                key_bytes: Some(Self::load_binary_file(&cfg.private_key_path)?),
+            })),
+            None => Ok(None),
+        }
     }
 
     /// Load and parse a PEM format TLS server certificate.
@@ -2924,7 +3084,7 @@ impl KmipServerConnectionSettings {
     /// The certificate contains a public key which can be used to verify the
     /// identity of the remote KMIP server.
     fn load_server_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.server_cert_path {
+        Ok(match &self.server_cert_verification.server_cert_path {
             Some(p) => Some(Self::load_binary_file(p)?),
             None => None,
         })
@@ -2937,7 +3097,7 @@ impl KmipServerConnectionSettings {
     /// the owner of the certificate but that the certificate was issued by a
     /// trusted party.
     fn load_ca_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.ca_cert_path {
+        Ok(match &self.server_cert_verification.ca_cert_path {
             Some(p) => Some(Self::load_binary_file(p)?),
             None => None,
         })
@@ -2951,7 +3111,7 @@ impl KmipServerConnectionSettings {
     /// In the case of Nameshed-HSM-Relay the username is the PKCS#11 slot
     /// label and the password is the PKCS#11 user PIN.
     fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
-        Ok(match &self.server_credentials_path {
+        Ok(match &self.client_credentials_path {
             Some(p) => {
                 let file = File::open(p).map_err::<Error, _>(|e| {
                     format!("error opening credentials file {} for reading for KMIP server '{server_id}': {e}", p.display()).into()
@@ -3007,11 +3167,51 @@ impl From<KmipConnError> for Error {
 #[derive(Default, Deserialize, Serialize)]
 struct KmipConfig {
     /// KMIP servers to use, keyed by user chosen HSM id.
-    servers: HashMap<String, KmipServerConnectionSettings>,
+    servers: HashMap<String, KmipServerConnectionConfig>,
 
     /// Which KMIP server should new keys be created in, if any?
     #[serde(skip_serializing_if = "Option::is_none", default)]
     default_server_id: Option<String>,
+}
+
+//--- impl Display
+
+/// Displays in muti-line tabulated format like so:
+///
+/// ```
+/// Configured KMIP servers:
+///     ID: my_server_x [DEFAULT]
+///         Address:                           127.0.0.1:5696
+///         Server Certificate Verification:   Disabled
+///         Server Certificate:                None
+///         Certificate Authority Certificate: None
+///         Client Certificate Authentication: Disabled
+///     ID: my_server
+///         Address:                           127.0.0.1:5696
+///         Server Certificate Verification:   Disabled
+///         Server Certificate:                None
+///         Certificate Authority Certificate: None
+///         Client Certificate Authentication: Enabled
+///             Client Certificate: /blah
+///             Private Key:        /tmp/tmp
+/// ```
+impl std::fmt::Display for KmipConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Configured KMIP servers:")?;
+        for (server_id, cfg) in &self.servers {
+            let default = match Some(server_id) == self.default_server_id.as_ref() {
+                true => " [DEFAULT]",
+                false => "",
+            };
+            use std::fmt::Write;
+            let mut indented = indenter::indented(f);
+            writeln!(indented, "ID: {server_id}{default}")?;
+
+            let mut twice_indented = indenter::indented(&mut indented);
+            write!(twice_indented, "{cfg}")?;
+        }
+        Ok(())
+    }
 }
 
 //------------ KmipPoolManager -----------------------------------------------

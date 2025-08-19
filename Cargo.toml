@@ -39,6 +39,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-fo
     "unstable-zonetree",
     "kmip",
 ] }
+indenter = "0.3.4"
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
