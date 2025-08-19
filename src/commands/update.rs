@@ -200,6 +200,7 @@ impl Update {
         // 1. (Cont.) If not provided, determine zone apex and fetch name servers
         let nsnames = if self.nameservers.is_empty() {
             Some(
+                // 3. Order nameserver list, listing primary first
                 UpdateHelpers::determine_nsnames(env, &apex, &mname)
                     .await
                     .context("while fetching the authoritative nameservers for the zone")?,
@@ -208,6 +209,7 @@ impl Update {
             None
         };
 
+        // 4. Create UPDATE and send to first server in list
         // TODO: pass SOA record fetched above to make sure changes to the SOA
         // record by the user adhere to the RFC specifications of e.g. only
         // increasing serial
