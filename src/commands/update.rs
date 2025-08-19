@@ -87,7 +87,7 @@ pub struct Update {
     nameservers: Vec<IpAddr>,
 
     /// Zone the domain name belongs to (to skip SOA query)
-    #[arg(short = 'z', long = "ZONE")]
+    #[arg(short = 'z', long = "zone", value_name = "ZONE")]
     zone: Option<Name<Vec<u8>>>,
 
     /// TSIG credentials for the UPDATE packet
