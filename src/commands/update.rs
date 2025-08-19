@@ -680,8 +680,11 @@ impl Update {
                     };
 
                     let rcode = resp.header().rcode();
-                    if rcode != Rcode::NOERROR {
-                        writeln!(env.stdout(), ";; UPDATE response was {rcode}");
+                    if rcode == Rcode::SERVFAIL || rcode == Rcode::NOTIMP {
+                        writeln!(env.stderr(), "Skipping {name} @ {socket}: {rcode}");
+                        continue;
+                    } else if rcode != Rcode::NOERROR {
+                        writeln!(env.stdout(), "UPDATE response was {rcode}");
                     }
                     return Ok(());
                 }
@@ -698,8 +701,11 @@ impl Update {
                 };
 
                 let rcode = resp.header().rcode();
-                if rcode != Rcode::NOERROR {
-                    writeln!(env.stdout(), ";; UPDATE response was {rcode}");
+                if rcode == Rcode::SERVFAIL || rcode == Rcode::NOTIMP {
+                    writeln!(env.stderr(), "Skipping _ @ {socket}: {rcode}");
+                    continue;
+                } else if rcode != Rcode::NOERROR {
+                    writeln!(env.stdout(), "UPDATE response was {rcode}");
                 }
                 return Ok(());
             }
@@ -707,7 +713,7 @@ impl Update {
 
         // Our list of nsnames has been exhausted, we can only report that
         // we couldn't find anything.
-        writeln!(env.stdout(), ";; No responses");
+        writeln!(env.stdout(), "No successful responses");
 
         Ok(())
     }
