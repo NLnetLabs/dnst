@@ -1353,6 +1353,7 @@ fn remove_key(kmip_pool_mgr: &mut KmipPoolManager, url: Url) -> Result<(), Error
             let key_url = KeyUrl::try_from(url)?;
             let key_id = key_url.key_id();
             let conn = kmip_pool_mgr.get_pool(key_url.server_id())?.get()?;
+            // TODO: Use conn.destroy() once it is available in domain.
             // TODO: Batch these together?
             conn.revoke_key(key_id)
                 .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
