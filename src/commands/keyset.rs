@@ -3175,7 +3175,7 @@ struct KmipConfig {
 /// Displays in muti-line tabulated format like so:
 ///
 /// ```
-/// Configured KMIP servers:
+/// Servers:
 ///     ID: my_server_x [DEFAULT]
 ///         Address:                           127.0.0.1:5696
 ///         Server Certificate Verification:   Disabled
@@ -3193,7 +3193,7 @@ struct KmipConfig {
 /// ```
 impl std::fmt::Display for KmipConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Configured KMIP servers:")?;
+        writeln!(f, "Servers:")?;
         for (server_id, cfg) in &self.servers {
             let default = match Some(server_id) == self.default_server_id.as_ref() {
                 true => " [DEFAULT]",
