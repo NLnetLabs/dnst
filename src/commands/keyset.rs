@@ -2941,7 +2941,7 @@ pub struct KmipServerConnectionConfig {
 
 /// Displays in multi-line tabulated format like so:
 ///
-/// ```
+/// ```text
 /// Address:                           127.0.0.1:5696
 /// Server Certificate Verification:   Disabled
 /// Server Certificate:                None
@@ -3214,7 +3214,7 @@ impl KmipState {
 
 /// Displays in muti-line tabulated format like so:
 ///
-/// ```
+/// ```text
 /// Servers:
 ///     ID: my_server_x [DEFAULT]
 ///         Address:                           127.0.0.1:5696
@@ -3228,8 +3228,8 @@ impl KmipState {
 ///         Server Certificate:                None
 ///         Certificate Authority Certificate: None
 ///         Client Certificate Authentication: Enabled
-///             Client Certificate: /blah
-///             Private Key:        /tmp/tmp
+///             Client Certificate:            /blah
+///             Private Key:                   /tmp/tmp
 /// ```
 impl std::fmt::Display for KmipState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
