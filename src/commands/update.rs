@@ -1178,9 +1178,13 @@ impl UpdateHelpers {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
+    use domain::base::iana::Class;
+    use domain::base::{Name, Rtype, Ttl};
     use domain::{tsig::Algorithm, utils::base64};
 
-    use crate::commands::update::LdnsUpdate;
+    use crate::commands::update::{LdnsUpdate, UpdateAction};
     use crate::{commands::Command, env::fake::FakeCmd};
 
     use super::{TSigInfo, Update};
@@ -1203,62 +1207,124 @@ mod test {
         x
     }
 
-    // #[test]
-    // fn dnst_parse() {
-    //     let cmd = FakeCmd::new(["dnst", "update"]);
+    // TODO: Add tests triggering the runtime checks
+    // TODO: Add stelline tests
 
-    //     cmd.parse().unwrap_err();
-    //     cmd.args(["example.test"]).parse().unwrap_err();
-    //     cmd.args(["--zone", "example.test"]).parse().unwrap_err();
-    //     cmd.args(["--zone", "example.test", "ns.example.test"])
-    //         .parse()
-    //         .unwrap_err();
-    //     cmd.args(["foo.test", "bar.test", "none"])
-    //         .parse()
-    //         .unwrap_err();
+    #[test]
+    fn dnst_parse() {
+        let cmd = FakeCmd::new(["dnst", "update"]);
 
-    //     let base = Update {
-    //         domain: "foo.test".parse().unwrap(),
-    //         ip: None,
-    //         zone: None,
-    //         tsig: None,
-    //     };
+        cmd.parse().unwrap_err();
+        cmd.args(["example.test"]).parse().unwrap_err();
+        cmd.args(["--zone", "example.test"]).parse().unwrap_err();
+        cmd.args(["--zone", "example.test", "ns.example.test"])
+            .parse()
+            .unwrap_err();
+        cmd.args(["example.test", "bar.test", "none"])
+            .parse()
+            .unwrap_err();
+        // Error when missing rtype to add (missing rdata is a runtime error)
+        cmd.args(["example.test", "add"]).parse().unwrap_err();
+        // Error when missing rtype
+        cmd.args(["example.test", "delete"]).parse().unwrap_err();
 
-    //     let res = parse(cmd.args(["foo.test", "none"]));
-    //     assert_eq!(res, base);
+        let base = Update {
+            domain: "example.test".parse().unwrap(),
+            zone: None,
+            tsig: None,
+            // This is not actually a default, but I need to add something here
+            action: UpdateAction::Add {
+                rtype: Rtype::A,
+                rdata: vec![String::from("127.0.0.1")],
+            },
+            class: Class::IN,
+            ttl: Ttl::from_secs(3600),
+            nameservers: Default::default(),
+            rrset_exists: None,
+            rrset_exists_exact: None,
+            rrset_non_existent: None,
+            name_in_use: None,
+            name_not_in_use: None,
+        };
 
-    //     let res = parse(cmd.args(["foo.test", "1.1.1.1"]));
-    //     assert_eq!(
-    //         res,
-    //         Update {
-    //             ip: Some("1.1.1.1".parse().unwrap()),
-    //             ..base.clone()
-    //         }
-    //     );
+        let res = parse(cmd.args(["example.test", "add", "A", "127.0.0.1"]));
+        assert_eq!(res, base);
 
-    //     let res = parse(cmd.args(["foo.test", "1.1.1.1", "--zone", "bar.test"]));
-    //     assert_eq!(
-    //         res,
-    //         Update {
-    //             ip: Some("1.1.1.1".parse().unwrap()),
-    //             zone: Some("bar.test".parse().unwrap()),
-    //             ..base.clone()
-    //         }
-    //     );
+        let res = parse(cmd.args(["example.test", "add", "A", "127.0.0.1", "127.0.0.2"]));
+        assert_eq!(
+            res,
+            Update {
+                action: UpdateAction::Add {
+                    rtype: Rtype::A,
+                    rdata: vec!["127.0.0.1".into(), "127.0.0.2".into()],
+                },
+                ..base.clone()
+            }
+        );
 
-    //     let res = parse(cmd.args(["foo.test", "none", "--tsig", "somekey:1234"]));
-    //     assert_eq!(
-    //         res,
-    //         Update {
-    //             tsig: Some(TSigInfo {
-    //                 name: "somekey".parse().unwrap(),
-    //                 key: base64::decode("1234").unwrap(),
-    //                 algorithm: Algorithm::Sha256,
-    //             }),
-    //             ..base.clone()
-    //         }
-    //     );
-    // }
+        let res = parse(cmd.args(["example.test", "delete", "AAAA", "::1"]));
+        assert_eq!(
+            res,
+            Update {
+                action: UpdateAction::Delete {
+                    rtype: Rtype::AAAA,
+                    rdata: vec!["::1".into()],
+                },
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["example.test", "clear"]));
+        assert_eq!(
+            res,
+            Update {
+                action: UpdateAction::Clear,
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args([
+            "example.test",
+            "--tsig",
+            "somekey:1234",
+            "--ttl",
+            "60",
+            "--server",
+            "127.0.0.9",
+            "add",
+            "TXT",
+            "Hallo",
+        ]));
+        assert_eq!(
+            res,
+            Update {
+                tsig: Some(TSigInfo {
+                    name: "somekey".parse().unwrap(),
+                    key: base64::decode("1234").unwrap(),
+                    algorithm: Algorithm::Sha256,
+                }),
+                ttl: Ttl::from_secs(60),
+                nameservers: vec![[127, 0, 0, 9].into()],
+                action: UpdateAction::Add {
+                    rtype: Rtype::TXT,
+                    rdata: vec!["Hallo".into()]
+                },
+                ..base.clone()
+            }
+        );
+
+        let res = parse(cmd.args(["example.test", "--zone", "test", "add", "A", "127.0.0.1"]));
+        assert_eq!(
+            res,
+            Update {
+                zone: Some(Name::from_str("test").unwrap()),
+                ..base.clone()
+            }
+        );
+
+        // Parsing the prerequisites arguments here doesn't make much sense as
+        // they only get validated at runtime
+    }
 
     #[test]
     fn ldns_parse() {
