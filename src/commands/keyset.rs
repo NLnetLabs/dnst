@@ -380,8 +380,7 @@ impl Keyset {
                 cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
                 autoremove: false,
-                kmip_servers: HashMap::new(),
-                default_kmip_server: None,
+                kmip: Default::default(),
             };
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
             let mut file = File::create(&state_file).map_err::<Error, _>(|e| {
@@ -427,7 +426,7 @@ impl Keyset {
 
         let mut config_changed = false;
         let mut state_changed = false;
-        let mut kmip_pool_mgr = KmipPoolManager::new(&ksc);
+        let mut kmip_pool_mgr = KmipPoolManager::new(&ksc.kmip);
 
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
@@ -1430,7 +1429,7 @@ fn kmip_command(
 ) -> Result<bool, Error> {
     match cmd {
         KmipCommands::Disable => {
-            ksc.default_kmip_server = None;
+            ksc.kmip.default_server_id = None;
         }
 
         KmipCommands::AddServer {
@@ -1463,14 +1462,14 @@ fn kmip_command(
         }
 
         KmipCommands::SetDefaultServer { server_id } => {
-            if !ksc.kmip_servers.contains_key(&server_id) {
+            if !ksc.kmip.servers.contains_key(&server_id) {
                 return Err(format!("KMIP server id '{server_id}' is not known").into());
             }
-            ksc.default_kmip_server = Some(server_id);
+            ksc.kmip.default_server_id = Some(server_id);
         }
 
         KmipCommands::GetServer { server_id } => {
-            let Some(server) = ksc.kmip_servers.get(&server_id) else {
+            let Some(server) = ksc.kmip.servers.get(&server_id) else {
                 return Err(format!("KMIP server id '{server_id}' is not known").into());
             };
             dbg!(server);
@@ -1478,7 +1477,7 @@ fn kmip_command(
         }
 
         KmipCommands::ListServers => {
-            dbg!(&ksc.kmip_servers);
+            dbg!(&ksc.kmip.servers);
             return Ok(false);
         }
     }
@@ -1501,7 +1500,7 @@ fn remove_kmip_server(
     kss: &KeySetState,
     server_id: String,
 ) -> Result<(), Error> {
-    if ksc.default_kmip_server.as_ref() == Some(&server_id) {
+    if ksc.kmip.default_server_id.as_ref() == Some(&server_id) {
         return Err(format!(
             "KMIP server '{server_id}' cannot be removed as it is the current default. Use kmip disable first."
         )
@@ -1524,7 +1523,7 @@ fn remove_kmip_server(
         .into());
     }
 
-    let removed = ksc.kmip_servers.remove(&server_id);
+    let removed = ksc.kmip.servers.remove(&server_id);
 
     if let Some(credentials_path) = removed.and_then(|s| s.server_credentials_path) {
         let mut credentials_file = KmipServerCredentialsFile::create_or_load(&credentials_path)?;
@@ -1574,7 +1573,7 @@ fn add_kmip_server(
     client_cert_path: Option<PathBuf>,
     client_key_path: Option<PathBuf>,
 ) -> Result<(), Error> {
-    if ksc.kmip_servers.contains_key(&server_id) {
+    if ksc.kmip.servers.contains_key(&server_id) {
         return Err(Error::new(&format!(
             "unable to add KMIP server '{server_id}': server already exists!"
         )));
@@ -1641,10 +1640,10 @@ fn add_kmip_server(
         ..Default::default()
     };
 
-    ksc.kmip_servers.insert(server_id.clone(), settings);
+    ksc.kmip.servers.insert(server_id.clone(), settings);
 
-    if ksc.kmip_servers.len() == 1 {
-        ksc.default_kmip_server = Some(server_id);
+    if ksc.kmip.servers.len() == 1 {
+        ksc.kmip.default_server_id = Some(server_id);
     }
 
     Ok(())
@@ -1693,12 +1692,8 @@ struct KeySetConfig {
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
 
-    /// KMIP servers to use, keyed by user chosen HSM id.
-    kmip_servers: HashMap<String, KmipServerConnectionSettings>,
-
-    /// Which KMIP server should new keys be created in, if any?
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    default_kmip_server: Option<String>,
+    /// KMIP related configuration.
+    kmip: KmipConfig,
 }
 
 /// Persistent state for the keyset command.
@@ -2108,7 +2103,8 @@ fn update_dnskey_rrset(
 
 fn kmip_create_conn_pool(ksc: &KeySetConfig, server_id: &str) -> Result<SyncConnPool, Error> {
     let srv = ksc
-        .kmip_servers
+        .kmip
+        .servers
         .get(server_id)
         .ok_or(format!("No KMIP server configured with id {server_id}"))?;
 
@@ -3003,6 +2999,21 @@ impl From<KmipConnError> for Error {
     }
 }
 
+//------------ KmipConfig ----------------------------------------------------
+
+/// KMIP related configuration.
+///
+/// Part of [`KeySetConfig`].
+#[derive(Default, Deserialize, Serialize)]
+struct KmipConfig {
+    /// KMIP servers to use, keyed by user chosen HSM id.
+    servers: HashMap<String, KmipServerConnectionSettings>,
+
+    /// Which KMIP server should new keys be created in, if any?
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    default_server_id: Option<String>,
+}
+
 //------------ KmipPoolManager -----------------------------------------------
 //
 // TODO: Change this to be a KmipConnectorProvider once domain takes KMIP
@@ -3015,7 +3026,7 @@ impl From<KmipConnError> for Error {
 /// KMIP server ID.
 struct KmipPoolManager<'a> {
     /// Access to the KMIP server configurations.
-    ksc: &'a KeySetConfig,
+    config: &'a KmipConfig,
 
     /// Connection pools by server ID.
     pools: HashMap<String, SyncConnPool>,
@@ -3023,9 +3034,9 @@ struct KmipPoolManager<'a> {
 
 impl<'a> KmipPoolManager<'a> {
     /// Create a new pool manager for the given KMIP server configurations.
-    pub fn new(ksc: &'a KeySetConfig) -> Self {
+    pub fn new(config: &'a KmipConfig) -> Self {
         Self {
-            ksc,
+            config,
             pools: Default::default(),
         }
     }
@@ -3037,8 +3048,8 @@ impl<'a> KmipPoolManager<'a> {
     ///
     /// Returns Ok(None) if no default KMIP server is set.
     pub fn get_default_pool(&mut self) -> Result<Option<SyncConnPool>, Error> {
-        self.ksc
-            .default_kmip_server
+        self.config
+            .default_server_id
             .as_ref()
             .map(|id| self.get_pool(id))
             .transpose()
@@ -3055,7 +3066,7 @@ impl<'a> KmipPoolManager<'a> {
         match self.pools.get(id) {
             Some(pool) => Ok(pool.clone()),
             None => {
-                let Some(srv_conn_settings) = self.ksc.kmip_servers.get(id) else {
+                let Some(srv_conn_settings) = self.config.servers.get(id) else {
                     return Err(format!("No KMIP server config exists for server '{id}").into());
                 };
                 let conn_settings = srv_conn_settings.load(id).map_err(|err| {
