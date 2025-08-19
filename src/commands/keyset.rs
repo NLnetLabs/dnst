@@ -1351,14 +1351,9 @@ fn remove_key(kmip_pool_mgr: &mut KmipPoolManager, url: Url) -> Result<(), Error
 
         "kmip" => {
             let key_url = KeyUrl::try_from(url)?;
-            let key_id = key_url.key_id();
             let conn = kmip_pool_mgr.get_pool(key_url.server_id())?.get()?;
-            // TODO: Use conn.destroy() once it is available in domain.
-            // TODO: Batch these together?
-            conn.revoke_key(key_id)
-                .map_err(|err| format!("Failed to revoke KMIP key {key_id}: {err}"))?;
-            conn.destroy_key(key_id)
-                .map_err(|err| format!("Failed to destroy KMIP key {key_id}: {err}"))?;
+            conn.destroy_key(key_url.key_id())
+                .map_err(|e| format!("unable to remove key {key_url}: {e}"))?;
         }
 
         _ => {
@@ -3074,7 +3069,7 @@ impl KmipServerConnectionConfig {
         match &self.client_cert_auth {
             Some(cfg) => Ok(Some(ClientCertificate::SeparatePem {
                 cert_bytes: Self::load_binary_file(&cfg.cert_path)?,
-                key_bytes: Some(Self::load_binary_file(&cfg.private_key_path)?),
+                key_bytes: Self::load_binary_file(&cfg.private_key_path)?,
             })),
             None => Ok(None),
         }
