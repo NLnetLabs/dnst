@@ -36,31 +36,8 @@ use crate::Args;
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
-// TODO: add .context() to errors?
-
-// UI:
-// Synopsis:
-// - `dnst update [options] add <domain name> <RRTYPE> <RRs>...`
-// - `dnst update [options] delete <domain name> <RRTYPE> [<RRs>...]`
-// - `dnst update [options] clear <domain name>` (distinction to avoid accidental deletion of whole domain names)
-
-// Examples:
-// - `dnst update add <domain name> AAAA "::1" "::2"` - Add multiple AAAA records
-// - `dnst update add <domain name> TXT "challenge"` - Add multiple TXT records
-// - `dnst update delete <domain name> AAAA ::1 ::2` - Delete exact AAAA RRs on domain name (`::1` and `::2` in this case)
-// - `dnst update delete <domain name> AAAA` - Delete all AAAA RRs on domain name
-// - `dnst update clear <domain name>` - Delete all RRSETs on domain name, aka delete the whole domain name
-
-// type SomeRecord = Record<NameVecU8, ZoneRecordData<Vec<u8>, NameVecU8>>;
-// type SomeRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
 type ParsedRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
-// type SomeRecord = ScannedRecord;
 type NameTypeTuple = (Name<Vec<u8>>, Rtype);
-
-// pub type ScannedDname = Chain<RelativeName<Bytes>, Name<Bytes>>;
-// pub type ScannedRecordData = ZoneRecordData<Bytes, ScannedDname>;
-// pub type ScannedRecord = Record<ScannedDname, ScannedRecordData>;
-// pub type ScannedString = Str<Bytes>;
 
 //------------ Update --------------------------------------------------------
 
@@ -101,8 +78,7 @@ pub struct Update {
     /// This specifies the prerequisite that at least one RR with a specified
     /// NAME and TYPE must exist.
     ///
-    /// Note that, if the domain name is relative, it will be relative to the
-    /// zone's apex.
+    /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
         long = "rrset-exists",
         visible_alias = "rrset",
@@ -118,6 +94,8 @@ pub struct Update {
     /// This specifies the prerequisite that a set of RRs with a specified
     /// NAME and TYPE exists and has the same members with the same RDATAs as
     /// the RRset specified.
+    ///
+    /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
         long = "rrset-exists-exact",
         visible_alias = "rrset-exact",
@@ -128,6 +106,8 @@ pub struct Update {
     /// RRset does not exist. (Optionally) provide this option multiple times,
     /// with format "<DOMAIN_NAME> <TYPE>" each, to build up a list of RRs
     /// that specify that no RRs with a specified NAME and TYPE can exist.
+    ///
+    /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
         long = "rrset-non-existent",
         visible_alias = "rrset-empty",
@@ -140,6 +120,8 @@ pub struct Update {
     /// own at least one RR.
     ///
     /// Note that this prerequisite is NOT satisfied by empty nonterminals.
+    ///
+    /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
         long = "name-in-use",
         visible_alias = "name-used",
@@ -152,6 +134,8 @@ pub struct Update {
     /// NOT own any RRs.
     ///
     /// Note that this prerequisite IS satisfied by empty nonterminals.
+    ///
+    /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
         long = "name-not-in-use",
         visible_alias = "name-unused",
