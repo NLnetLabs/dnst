@@ -3154,6 +3154,7 @@ struct KmipClientCredentialsFile {
     credentials: KmipClientCredentialsSet,
 
     /// The read/write/create mode.
+    #[allow(dead_code)]
     mode: KmipServerCredentialsFileMode,
 }
 
@@ -3281,6 +3282,7 @@ impl KmipClientCredentialsFile {
         self.credentials.0.contains_key(server_id)
     }
 
+    #[allow(dead_code)]
     fn get(&self, server_id: &str) -> Option<&KmipClientCredentials> {
         self.credentials.0.get(server_id)
     }
@@ -3580,31 +3582,14 @@ impl KmipServerConnectionConfig {
     /// In the case of Nameshed-HSM-Relay the username is the PKCS#11 slot
     /// label and the password is the PKCS#11 user PIN.
     fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
-        Ok(match &self.client_credentials_path {
-            Some(p) => {
-                let file = File::open(p).map_err::<Error, _>(|e| {
-                    format!("error opening credentials file {} for reading for KMIP server '{server_id}': {e}", p.display()).into()
-                })?;
-                let mut credentials_set: KmipClientCredentialsSet = serde_json::from_reader(file)
-                    .map_err::<Error, _>(|e| {
-                    format!(
-                        "error loading credentials file {} for KMIP server '{server_id}': {e}",
-                        p.display()
-                    )
-                    .into()
-                })?;
-                let credentials =
-                    credentials_set
-                        .0
-                        .remove(server_id)
-                        .ok_or(Error::new(&format!(
-                    "error loading credentials for KMIP server '{server_id}' from credentials file {}: no credentials for server '{server_id}' found",
-                    p.display()
-                )))?;
-                (Some(credentials.username), credentials.password)
+        if let Some(p) = &self.client_credentials_path {
+            let mut file =
+                KmipClientCredentialsFile::new(p, KmipServerCredentialsFileMode::ReadOnly)?;
+            if let Some(creds) = file.remove(server_id) {
+                return Ok((Some(creds.username), creds.password));
             }
-            None => (None, None),
-        })
+        }
+        Ok((None, None))
     }
 
     /// Load an arbitrary file as unparsed bytes into memory.
