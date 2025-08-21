@@ -1,3 +1,6 @@
+#![warn(missing_docs)]
+#![warn(clippy::missing_docs_in_private_items)]
+
 use crate::env::Env;
 use crate::error::Error;
 use crate::util;
@@ -43,15 +46,71 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, warn};
 use url::Url;
 
+/// Maximum tries to generate new key with a key tag that does not conclict
+/// with the key tags of existing keys.
 const MAX_KEY_TAG_TRIES: u8 = 10;
 
-// Wait this amount before retrying for network errors, DNS errors, etc.
+/// Wait this amount before retrying for network errors, DNS errors, etc.
 const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
 
 // Types to simplify some HashSet types.
+/// Type for a Name that uses a Vec.
 type NameVecU8 = Name<Vec<u8>>;
+/// Type for a record that uses ZoneRecordData and a Vec.
 type RecordZoneRecordData = Record<NameVecU8, ZoneRecordData<Vec<u8>, NameVecU8>>;
 
+// Automatic key rolls
+//
+// Keyset supports four types of automatic key rolls:
+// 1) A KSK roll. Roll one (or more) KSKs to a new KSK.
+// 2) A ZSK roll. Roll one (or more) ZSKs to a new ZSK.
+// 3) A CSK roll. Roll any KSK, ZSK, or CSK to a single new CSK or roll
+//    one (or more CSKs) plus any KSK or ZSK to a new KSK plus a new ZSK.
+//    This depends on the value of the use_csk config variable.
+// 4) An algorithm roll. Roll any KSK, ZSK, or CSK to a new CSK (if use_csk
+//    is true) or to a new KSK and a new ZSK (if use_csk is false) with an
+//    algorithm that is different from the one in the old keys.
+//
+// For each roll type automation can be enable for four different types of
+// steps:
+// 1) Start. When automation is enabled for this step, keyset checks if keys
+//    are expired, no conflicting rolls are currently in progress and no
+//    conditions (use of CSK, the need for a algorithm roll) prevents this
+//    type of roll.
+// 2) Report. In the complete key roll, these are two steps:
+//    propagation1_complete and propagation2_complete. When automation is
+//    enabled, keyset goes through the list of actions and takes care of
+//    the Report actions (ReportDnskeyPropagated, ReportDsPropagated,
+//    ReportRrsigPropagated). Keyset checks nameservers for the zone
+//    (or the parent zone in the case of ReportDsPropagated) to make sure
+//    that new information has propagated to all listed nameservers.
+//    The maximum TTL is passed to Keyset::propagation1_complete (or
+//    Keyset::propagation2_complete).
+// 3) Expire. This corresponds to the steps cache_expired1 and
+//    cache_expired2. When enabled, this step wait until time equal to the
+//    TTL amount that was reported in propagation1_complete or
+//    propagation2_complete to have passed before continuing to the next step.
+// 4) Done. When enabled this step takes care of any Wait actions
+//    (WaitDnskeyPropagated, WaitDsPropagated, WaitRrsigPropagated). This
+//    is very similar to the Report step except no TTL value is reported.
+//    After this step, the key roll is considered done though some old date
+//    may still exist in caches.
+//
+//  For each key roll type, automation for each step can be enabled or disabled
+//  individually. This give a total of sixteen flags.
+//
+//  The function auto_start handles the Start step. The other steps are
+//  handled by auto_report_expire_done. The current state for automatic report
+//  and done handling is kept in a field called 'internal' in the KeySetState
+//  structure.
+//
+//  At every change to the config or the state file, the next time
+//  'dnst keyset cron' should be called is computed and stored in the
+//  state file. The function cron_next_auto_start provides timestamps for
+//  automatic start of key rolls, cron_next_auto_report_expire_done does
+//  the same for the report, expire, and done steps.
+
+/// Command line arguments of the keyset utility.
 #[derive(Clone, Debug, clap::Args)]
 pub struct Keyset {
     /// Keyset config
@@ -63,10 +122,15 @@ pub struct Keyset {
     cmd: Commands,
 }
 
+/// Type for an optional Duration. A separate type is needed because CLAP
+/// treats Option<T> special.
 type OptDuration = Option<Duration>;
 
+/// The subcommands of the keyset utility.
 #[derive(Clone, Debug, Subcommand)]
 enum Commands {
+    /// Create empty state for a DNS zone. This will create both the config
+    /// file as well as the state file.
     Create {
         /// Domain name
         #[arg(short = 'n')]
@@ -77,177 +141,297 @@ enum Commands {
         keyset_state: PathBuf,
     },
 
+    /// Init creates keys for an empty state file.
     Init,
+
+    /// The following should be move to ksk, zsk, etc. subcommands.
     StartKskRoll,
+    /// XXX
     StartZskRoll,
+    /// XXX
     StartCskRoll,
+    /// XXX
     StartAlgorithmRoll,
+    /// XXX
     KskPropagation1Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     KskPropagation2Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     ZskPropagation1Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     ZskPropagation2Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     CskPropagation1Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     CskPropagation2Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     AlgorithmPropagation1Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     AlgorithmPropagation2Complete {
+        /// XXX
         ttl: u32,
     },
+    /// XXX
     KskCacheExpired1,
+    /// XXX
     KskCacheExpired2,
+    /// XXX
     ZskCacheExpired1,
+    /// XXX
     ZskCacheExpired2,
+    /// XXX
     CskCacheExpired1,
+    /// XXX
     CskCacheExpired2,
+    /// XXX
     AlgorithmCacheExpired1,
+    /// XXX
     AlgorithmCacheExpired2,
+    /// XXX
     KskRollDone,
+    /// XXX
     ZskRollDone,
+    /// XXX
     CskRollDone,
+    /// XXX
     AlgorithmRollDone,
+    /// Report status, such as key rolls that are in progress, expired
+    /// keys, when to call the 'cron' subcommand next.
     Status,
+    /// Report actions that are associated with the current state of
+    /// any key rolls.
     Actions,
+    /// List all keys in the current state.
     Keys,
 
+    /// Get various config and state values.
     Get {
+        /// The specific get subcommand.
         #[command(subcommand)]
         subcommand: GetCommands,
     },
 
+    /// Set config values.
     Set {
+        /// The specific set subcommand.
         #[command(subcommand)]
         subcommand: SetCommands,
     },
 
+    /// Show all config variables.
     Show,
+
+    /// Execute any automatic steps such a refreshing signatures or
+    /// automatic steps in key rolls.
     Cron,
 }
 
 #[derive(Clone, Debug, Subcommand)]
 enum GetCommands {
+    /// Get the state of the use_csk config variable.
     UseCsk,
+    /// Get the state of the autoremove config variable.
     Autoremove,
+    /// Get the state of the algorithm config variable.
     Algorithm,
+    /// Get the state of the ds_algorithm config variable.
     DsAlgorithm,
+    /// Get the state of the dnskey_lifetime config variable.
     DnskeyLifetime,
+    /// Get the state of the cds_lifetime config variable.
     CdsLifetime,
+    /// Get the current DNSKEY RRset including signatures.
     Dnskey,
+    /// Get the current CDS and CDNSKEY RRsets including signatures.
     Cds,
+    /// Get the current DS records that canbe added to the parent zone.
     Ds,
 }
 
 #[derive(Clone, Debug, Subcommand)]
 enum SetCommands {
+    /// Set the use_csk config variable.
     UseCsk {
+        /// The value of the config variable.
         #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
     },
+    /// Set the autoremove config variable.
     Autoremove {
+        /// The value of the config variable.
         #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
     },
+    /// Set the algorithm config variable.
     Algorithm {
+        /// The number of bits of a new RSA key. At the moment RSA is the
+        /// only public key algorithm that needs a bits argument.
         #[arg(short = 'b')]
         bits: Option<usize>,
 
+        /// The algorithm to use for new keys.
         algorithm: String,
     },
+
+    /// Set the config values for automatic KSK rolls.
     AutoKsk {
+        /// Whether to automatically start a key roll.
         #[arg(action = clap::ArgAction::Set)]
         start: bool,
+        /// Whether to automatically handle report actions.
         #[arg(action = clap::ArgAction::Set)]
         report: bool,
+        /// Whether to automatically handle cache expiration actions.
         #[arg(action = clap::ArgAction::Set)]
         expire: bool,
+        /// Whether to automatically handle done actions.
         #[arg(action = clap::ArgAction::Set)]
         done: bool,
     },
+    /// Set the config values for automatic ZSK rolls.
     AutoZsk {
+        /// Whether to automatically start a key roll.
         #[arg(action = clap::ArgAction::Set)]
         start: bool,
+        /// Whether to automatically handle report actions.
         #[arg(action = clap::ArgAction::Set)]
         report: bool,
+        /// Whether to automatically handle cache expiration actions.
         #[arg(action = clap::ArgAction::Set)]
         expire: bool,
+        /// Whether to automatically handle done actions.
         #[arg(action = clap::ArgAction::Set)]
         done: bool,
     },
+    /// Set the config values for automatic CSK rolls.
     AutoCsk {
+        /// Whether to automatically start a key roll.
         #[arg(action = clap::ArgAction::Set)]
         start: bool,
+        /// Whether to automatically handle report actions.
         #[arg(action = clap::ArgAction::Set)]
         report: bool,
+        /// Whether to automatically handle cache expiration actions.
         #[arg(action = clap::ArgAction::Set)]
         expire: bool,
+        /// Whether to automatically handle done actions.
         #[arg(action = clap::ArgAction::Set)]
         done: bool,
     },
+    /// Set the config values for automatic algorithm rolls.
     AutoAlgorithm {
+        /// Whether to automatically start a key roll.
         #[arg(action = clap::ArgAction::Set)]
         start: bool,
+        /// Whether to automatically handle report actions.
         #[arg(action = clap::ArgAction::Set)]
         report: bool,
+        /// Whether to automatically handle cache expiration actions.
         #[arg(action = clap::ArgAction::Set)]
         expire: bool,
+        /// Whether to automatically handle done actions.
         #[arg(action = clap::ArgAction::Set)]
         done: bool,
     },
+    /// Set the hash algorithm to use for creating DS records.
     DsAlgorithm {
+        /// The hash algorithm.
         #[arg(value_parser = DsAlgorithm::new)]
         algorithm: DsAlgorithm,
     },
+    /// Set the amount inception times of signatures over the DNSKEY RRset
+    /// are backdated.
+    ///
+    /// Note that positive values are subtract from the current time.
     DnskeyInceptionOffset {
+        /// The offset.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// Set how much time the expiration times of signatures over the DNSKEY
+    /// RRset are in the future.
     DnskeyLifetime {
+        /// The lifetime.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// Set how much time the DNSKEY signatures still have to be valid.
+    ///
+    /// New signatures will be generated when the time until the expiration
+    /// time is less than that.
     DnskeyRemainTime {
+        /// The required remaining time.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// Set the amount inception times of signatures over the CDS and
+    /// CDNSKEY  RRsets are backdated.
+    ///
+    /// Note that positive values are subtract from the current time.
     CdsInceptionOffset {
+        /// The offset.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// Set how much time the expiration times of signatures over the CDS
+    /// and CDNSKEY RRsets are in the future.
     CdsLifetime {
+        /// The lifetime.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// Set how much time the CDS/CDNSKEY signatures still have to be valid.
+    ///
+    /// New signatures will be generated when the time until the expiration
+    /// time is less than that.
     CdsRemainTime {
+        /// The required remaining time.
         #[arg(value_parser = parse_duration)]
         duration: Duration,
     },
+    /// How long a KSK is valid from the time it was first 'published'.
     KskValidity {
+        /// The amount of time the key is valid.
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
+    /// How long a ZSK is valid from the time it was first 'published'.
     ZskValidity {
+        /// The amount of time the key is valid.
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
+    /// How long a CSK is valid from the time it was first 'published'.
     CskValidity {
+        /// The amount of time the key is valid.
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
 }
 
 impl Keyset {
+    /// execute the keyset command.
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let runtime =
             tokio::runtime::Runtime::new().expect("tokio::runtime::Runtime::new should not fail");
@@ -1023,6 +1207,7 @@ impl Keyset {
     }
 }
 
+/// Implement the get subcommand.
 fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
     match cmd {
         GetCommands::UseCsk => {
@@ -1069,6 +1254,7 @@ fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
     }
 }
 
+/// Implement the set subcommand.
 fn set_command(
     cmd: SetCommands,
     ksc: &mut KeySetConfig,
@@ -1178,42 +1364,54 @@ fn set_command(
 /// Config for the keyset command.
 #[derive(Deserialize, Serialize)]
 struct KeySetConfig {
+    /// Filename of the state file.
     state_file: PathBuf,
+
+    /// Directory where new key file should be created.
     keys_dir: PathBuf,
 
+    /// Whether to use a CSK (if true) or a KSK and a ZSK.
     use_csk: bool,
 
     /// Algorithm and other parameters for key generation.
     algorithm: KeyParameters,
 
+    /// Validity of KSKs.
     ksk_validity: Option<Duration>,
+    /// Validity of ZSKs.
     zsk_validity: Option<Duration>,
+    /// Validity of CSKs.
     csk_validity: Option<Duration>,
 
+    /// Configuration variable for automatic KSK rolls.
     auto_ksk: AutoConfig,
+    /// Configuration variable for automatic ZSK rolls.
     auto_zsk: AutoConfig,
+    /// Configuration variable for automatic CSK rolls.
     auto_csk: AutoConfig,
+    /// Configuration variable for automatic algorithm rolls.
     auto_algorithm: AutoConfig,
 
-    // DNSKEY inception offset
+    /// DNSKEY signature inception offset (positive values are subtracted
+    ///from the current time).
     dnskey_inception_offset: Duration,
 
-    // DNSKEY sig lifetime
+    /// DNSKEY signature lifetime
     dnskey_signature_lifetime: Duration,
 
-    // DNSKEY resign
+    /// The required remaining signature lifetime.
     dnskey_remain_time: Duration,
 
-    // CDS/CDNSKEY inception offset
+    /// CDS/CDNSKEY signature inception offset
     cds_inception_offset: Duration,
 
-    // CDS/CDNSKEY sig lifetime
+    /// CDS/CDNSKEY signature lifetime
     cds_signature_lifetime: Duration,
 
-    // CDS/CDNSKEY resign
+    /// The required remaining signature lifetime.
     cds_remain_time: Duration,
 
-    // DS hash algorithm
+    /// The DS hash algorithm.
     ds_algorithm: DsAlgorithm,
 
     /// Automatically remove keys that are no long in use.
@@ -1222,9 +1420,13 @@ struct KeySetConfig {
 
 #[derive(Default, Deserialize, Serialize)]
 struct AutoConfig {
+    /// Whether to start a key roll automatically.
     start: bool,
+    /// Whether to handle the Report actions automatically.
     report: bool,
+    /// Whether to handle the cache expire step automatically.
     expire: bool,
+    /// Whether to handle the done step automatically.
     done: bool,
 }
 
@@ -1234,27 +1436,46 @@ struct KeySetState {
     /// Domain KeySet state.
     keyset: KeySet,
 
+    /// DNSKEY RRset plus signatures to include in the signed zone.
     pub dnskey_rrset: Vec<String>,
+
+    /// DS records to add to the parent zone.
     pub ds_rrset: Vec<String>,
+
+    /// CDS and CDNSKEY RRsets plus signatures to include in the signed zone.
     pub cds_rrset: Vec<String>,
+
+    /// Place holder for NS records. Maybe the four _rrset fields should be
+    /// combined. Though for extensibility there needs to be a field that
+    /// informs the signer which Rtypes need special treatment.
     pub ns_rrset: Vec<String>,
 
+    /// Next time to call the cron subcommand.
     cron_next: Option<UnixTime>,
 
+    /// Internal state for automatic key rolls.
     internal: HashMap<RollType, RollStateReports>,
 }
 
 #[derive(Deserialize, Serialize)]
 enum KeyParameters {
+    /// The RSASHA256 algorithm with the key length in bits.
     RsaSha256(usize),
+    /// The RSASHA512 w algorithmith the key length in bits.
     RsaSha512(usize),
+    /// The ECDSAP256SHA256 algorithm.
     EcdsaP256Sha256,
+    /// The ECDSAP384SHA384 algorithm.
     EcdsaP384Sha384,
+    /// The ED25519 algorithm.
     Ed25519,
+    /// The ED448 algorithm.
     Ed448,
 }
 
 impl KeyParameters {
+    /// Generate a new KeyParameter object from the algorithm name and
+    /// the key length (when required).
     fn new(algorithm: &str, bits: Option<usize>) -> Result<Self, Error> {
         if algorithm == "RSASHA256" {
             let bits = bits.ok_or::<Error>("bits option expected\n".into())?;
@@ -1275,6 +1496,7 @@ impl KeyParameters {
         }
     }
 
+    /// Return the GenerateParams equivalent of a KeyParameters object.
     fn to_generate_params(&self) -> GenerateParams {
         match self {
             KeyParameters::RsaSha256(size) => GenerateParams::RsaSha256 {
@@ -1304,14 +1526,18 @@ impl Display for KeyParameters {
     }
 }
 
+/// The hash algorithm to use for DS records.
 // Do we want Deserialize and Serialize for DigestAlgorithm?
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum DsAlgorithm {
+    /// Hash the public key using SHA-256.
     Sha256,
+    /// Hash the public key using SHA-384.
     Sha384,
 }
 
 impl DsAlgorithm {
+    /// Create a new DsAlgorithm based on the hash algorithm name.
     fn new(digest: &str) -> Result<Self, Error> {
         if digest == "SHA-256" {
             Ok(DsAlgorithm::Sha256)
@@ -1322,6 +1548,7 @@ impl DsAlgorithm {
         }
     }
 
+    /// Return the equivalent DigestAlgorithm for a DsAlgorithm object.
     fn to_digest_algorithm(&self) -> DigestAlgorithm {
         match self {
             DsAlgorithm::Sha256 => DigestAlgorithm::SHA256,
@@ -1339,17 +1566,24 @@ impl Display for DsAlgorithm {
     }
 }
 
+/// State needed for automatic key rolls.
 #[derive(Default, Deserialize, Serialize)]
 struct RollStateReports {
+    /// State for the propagation1-complete step.
     propagation1: Mutex<ReportState>,
+    /// State for the propagation2-complete step.
     propagation2: Mutex<ReportState>,
+    /// State for the done step.
     done: Mutex<ReportState>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct ReportState {
+    /// State for DNSKEY propagation checks.
     dnskey: Option<AutoReportActionsResult>,
+    /// State for DS propagation checks.
     ds: Option<AutoReportActionsResult>,
+    /// State for RRSIG propagation checks.
     rrsig: Option<AutoReportRrsigResult>,
 }
 
@@ -1428,6 +1662,10 @@ fn new_keys(
     Ok((public_key_url, secret_key_url, algorithm, key_tag))
 }
 
+/// Update the DNSKEY RRset and signures in the KeySetState.
+///
+/// Collect all keys where present() returns true and sign the DNSKEY RRset
+/// with all KSK and CSK (KSK state) where signer() returns true.
 fn update_dnskey_rrset(
     kss: &mut KeySetState,
     ksc: &KeySetConfig,
@@ -1557,6 +1795,10 @@ fn update_dnskey_rrset(
     Ok(())
 }
 
+/// Create the CDS and CDNSKEY RRsets plus signatures.
+///
+/// The CDS and CDNSKEY RRsets contain the keys where at_parent() returns
+/// true. The RRsets are signed with all keys that sign the DNSKEY RRset.
 fn create_cds_rrset(
     kss: &mut KeySetState,
     ksc: &KeySetConfig,
@@ -1745,10 +1987,15 @@ fn create_cds_rrset(
     Ok(())
 }
 
+/// Remove the CDS and CDNSKEY RRsets and signatures.
 fn remove_cds_rrset(kss: &mut KeySetState) {
     kss.cds_rrset.truncate(0);
 }
 
+/// Update the DS RRset.
+///
+/// The DS records are generated from all keys where at_parent() returns true.
+/// This RRset is not signed.
 fn update_ds_rrset(
     kss: &mut KeySetState,
     digest_alg: DigestAlgorithm,
@@ -1819,6 +2066,11 @@ fn update_ds_rrset(
     Ok(())
 }
 
+/// Handle the actions that result from key roll steps that always need to
+/// be handled independent of automation.
+///
+/// Those are the actions that update the DNSKEY RRset, DS records and the
+/// CDS and CDNSKEY RRsets.
 fn handle_actions(
     actions: &[Action],
     ksc: &KeySetConfig,
@@ -1847,6 +2099,9 @@ fn handle_actions(
     Ok(())
 }
 
+/// Print a list of actions.
+///
+/// TODO: make this list user friendly.
 fn print_actions(actions: &[Action]) {
     if actions.is_empty() {
         println!("No actions");
@@ -1859,6 +2114,7 @@ fn print_actions(actions: &[Action]) {
     }
 }
 
+/// Parse a duration from a string with suffixes like 'm', 'h', 'w', etc.
 fn parse_duration(value: &str) -> Result<Duration, Error> {
     let span: Span = value
         .parse()
@@ -1869,6 +2125,8 @@ fn parse_duration(value: &str) -> Result<Duration, Error> {
     Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
 }
 
+/// Parse an optional duration from a string but also allow 'off' to signal
+/// no duration.
 fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
     if value == "off" {
         return Ok(None);
@@ -1877,6 +2135,10 @@ fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
     Ok(Some(duration))
 }
 
+/// Check whether signatures need to be renewed.
+///
+/// The input is an RRset plus signatures in zonefile format plus a
+/// duration how long the signatures are required to remain valid.
 fn sig_renew(rrset: &[String], remain_time: &Duration) -> bool {
     let mut zonefile = Zonefile::new();
     for r in rrset {
@@ -1901,6 +2163,8 @@ fn sig_renew(rrset: &[String], remain_time: &Duration) -> bool {
     false
 }
 
+/// Return where a key has expired. Return a label for the type of
+/// key as well to help user friendly output.
 fn key_expired(key: &Key, ksc: &KeySetConfig) -> (bool, &'static str) {
     let Some(timestamp) = key.timestamps().published() else {
         return (false, "");
@@ -1924,10 +2188,13 @@ fn key_expired(key: &Key, ksc: &KeySetConfig) -> (bool, &'static str) {
     (timestamp.elapsed() > validity, label)
 }
 
+/// Create a PathBuf for the parent directory of a PathBuf.
 fn make_parent_dir(filename: PathBuf) -> PathBuf {
     filename.parent().unwrap_or(Path::new("/")).to_path_buf()
 }
 
+/// Compute when the cron subcommand should be called to refresh signatures
+/// for an RRset.
 fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTime> {
     let mut zonefile = Zonefile::new();
     for r in rrset {
@@ -1960,44 +2227,72 @@ fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTim
     })
 }
 
+/// The result of an automatic action check that does not need to report a
+/// TTL.
 #[derive(Debug)]
 enum AutoActionsResult {
+    /// The action has completed.
     Ok,
+    /// Try again after the UnixTime parameter.
     Wait(UnixTime),
 }
 
+/// The result of an automatic action check the does need to report a TTL.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum AutoReportActionsResult {
+    /// The action has completed, report at least the Ttl in the parameter.
     Report(Ttl),
+    /// Try again after the UnixTime parameter.
     Wait(UnixTime),
 }
 
+/// The result of checking for RRSIG propagation.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum AutoReportRrsigResult {
+    /// The action has completed, report at least the Ttl in the parameter.
     Report(Ttl),
+    /// A DNS request failed (for example due to a network problem). Try again
+    /// after the UnixTime parameter.
     Wait(UnixTime),
+    /// The zone has updated signatures, wait for this version of the zone to
+    /// appear on all name servers.
     WaitSoa {
+        /// Try again after this time.
         next: UnixTime,
+        /// Wait for this serial or newer.
         serial: Serial,
+        /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
+        /// The ttl to put in the Report variable when the check succeeds.
         report_ttl: Ttl,
     },
+    /// Wait for a specific record to get updated signatures.
     WaitRecord {
+        /// Try again after this time.
         next: UnixTime,
+        /// Name to check.
         name: Name<Vec<u8>>,
+        /// Rtype to check.
         rtype: Rtype,
+        /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
     },
+    /// For NSEC3 record, it is not possible to directly check if they got new
+    /// signatures. Instead, wait for a new version of the zone and check the
+    /// entire zone.
     WaitNextSerial {
+        /// Try again after this time.
         next: UnixTime,
+        /// Wait until the zone version is new than this serial.
         serial: Serial,
+        /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
     },
 }
 
 /// Handle the actions for the Done state automatically. Actions for this
 /// state cannot have report actions, but there can be wait actions.
-async fn auto_actions(
+async fn auto_wait_actions(
     actions: &[Action],
     kss: &KeySetState,
     report_state: &Mutex<ReportState>,
@@ -2224,6 +2519,7 @@ async fn auto_actions(
     AutoActionsResult::Ok
 }
 
+/// Handle automatic report actions.
 async fn auto_report_actions(
     actions: &[Action],
     kss: &KeySetState,
@@ -2467,6 +2763,8 @@ async fn auto_report_actions(
     AutoReportActionsResult::Report(max_ttl)
 }
 
+/// Check whether automatic actions are done or not. If not, return until
+/// when to wait to try again.
 fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> AutoActionsResult {
     for a in actions {
         match a {
@@ -2528,6 +2826,7 @@ fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> 
     AutoActionsResult::Ok
 }
 
+/// Execute the done action.
 fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Result<(), Error> {
     let actions = kss.keyset.roll_done(roll_type);
 
@@ -2589,6 +2888,7 @@ fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Resu
     Ok(())
 }
 
+/// Start a KSK roll.
 fn start_ksk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
@@ -2685,6 +2985,7 @@ fn start_ksk_roll(
     Ok(actions)
 }
 
+/// Start a ZSK roll.
 fn start_zsk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
@@ -2782,6 +3083,7 @@ fn start_zsk_roll(
     Ok(actions)
 }
 
+/// Start a CSK roll.
 fn start_csk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
@@ -2919,6 +3221,7 @@ fn start_csk_roll(
     Ok(actions)
 }
 
+/// Start an algorithm roll.
 fn start_algorithm_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
@@ -3054,6 +3357,11 @@ fn start_algorithm_roll(
     Ok(actions)
 }
 
+/// Check whether a new DNSKEY RRset has propagated.
+///
+/// Compile a list of nameservers for the zone and their addresses and
+/// query each address for the DNSKEY RRset. The function
+/// check_dnskey_for_address does the actual work.
 async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult {
     // Convert the DNSKEY RRset plus RRSIGs into a HashSet.
     // Find the address of all name servers of zone
@@ -3113,6 +3421,13 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
     AutoReportActionsResult::Report(max_ttl)
 }
 
+/// Check whether the parent zone has a DS RRset that matches the keys
+/// with 'at_parent' equal to true.
+///
+/// Compile a list of nameservers for the parent zone and their addresses and
+/// query each address for the DS RRset. The function
+/// check_ds_for_address does the actual work. The CDNSKEY RRset is
+/// used as the reference for the DS RRset.
 async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResult, Error> {
     // Convert the CDNSKEY RRset into a HashSet.
     // Find the name of the parent zone.
@@ -3164,6 +3479,17 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
     Ok(AutoReportActionsResult::Report(max_ttl))
 }
 
+/// Report whether all RRSIGs (except for the ones that are copied from
+/// keyset state) have been updated.
+///
+/// The basic process is to send an AXFR query to the primary nameserver and
+/// check the zone. If the zone checks out, very that all of the nameservers
+/// of the zone have the checked SOA serial or newer. If a (name, rtype) tuple
+/// is found with the wrong signatures then keep checking that name, rtype
+/// combination until the right signatures are found. Then go back to checking
+/// the entire zone. NSEC3 is special because it is not possible to directly
+/// query for NSEC3 records. In that case, wait for high SOA serial and check
+/// the entire zone again.
 async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
     // This function assume a single signer. Multi-signer is not supported
     // at all, but any kind of active-passive or active-active setup would also
@@ -3205,19 +3531,20 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
     )
 }
 
+/// Check where the zone has signatures from the right keys.
+///
+/// Collect the ZSK algorithm and key tags into a HashSet
+/// Get the primary nameserver from the SOA record (this should become
+/// a configuration option for the nameserver and any TSIG key to use).
+/// Transfer the zone.
+/// Assume the signer is correct.
+/// Convert the RRSIGs into a HashMap with (name, type) as key and a HashSet
+/// of (algorithm, key tag) as value.
+/// Convert the other records into a BtreeMap with name as key and
+/// a HashMap of type as the value. Check that each name and type has a
+/// corresponding complete RRSIG set.
+/// Ignore delegated records
 async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
-    // Check where the zone has signatures from the right keys.
-    // Collect the ZSK algorithm and key tags into a HashSet
-    // Get the primary nameserver from the SOA record (this should become
-    // a configuration option for the nameserver and any TSIG key to use).
-    // Transfer the zone.
-    // Assume the signer is correct.
-    // Convert the RRSIGs into a HashMap with (name, type) as key and a HashSet
-    // of (algorithm, key tag) as value.
-    // Convert the other records into a BtreeMap with name as key and
-    // a HashMap of type as the value. Check that each name and type has a
-    // corresponding complete RRSIG set.
-    // Ignore delegated records
     let expected_set = get_expected_zsk_key_tags(kss);
 
     let zone = kss.keyset.name();
@@ -3349,6 +3676,7 @@ async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
     Err(format!("AXFR for {zone} failed for all addresses {addresses:?}").into())
 }
 
+/// Return the set of addresses of the nameservers of a zone.
 async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error> {
     // Paranoid solution:
     // Find nameserver addresses for the parent zone.
@@ -3403,6 +3731,7 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
     Ok(set)
 }
 
+/// Return the IPv4 and IPv6 addresses associated with a name.
 async fn addresses_for_name(
     resolver: &StubResolver,
     name: impl ToName,
@@ -3415,6 +3744,8 @@ async fn addresses_for_name(
     Ok(res)
 }
 
+/// Check whether a nameserver at a specific address has the right DNSKEY
+/// RRset plus signatures.
 async fn check_dnskey_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
@@ -3508,6 +3839,7 @@ async fn check_dnskey_for_address(
     }
 }
 
+/// Check whether a nameserver at a specific address has the right DS RRset.
 async fn check_ds_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
@@ -3583,6 +3915,8 @@ async fn check_ds_for_address(
     }
 }
 
+/// Check whether a nameserver at a specific address has the right SOA serial
+/// or a newer one.
 async fn check_soa_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
@@ -3618,6 +3952,7 @@ async fn check_soa_for_address(
     Ok(AutoReportActionsResult::Report(Ttl::from_secs(0)))
 }
 
+/// Return the name of the parent zone.
 async fn parent_zone(name: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
     dbg!("parent_zone");
     dbg!(name);
@@ -3654,6 +3989,14 @@ async fn parent_zone(name: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
     Err(format!("{parent}/SOA query failed").into())
 }
 
+/// This function automatically starts a key roll when the conditions are right.
+///
+/// First the conficting_roll function is invoked to make sure there are no
+/// rolls in progress that would conflict. Then match_keytype is used to
+/// select key that could participate in this roll. The published time of
+/// each key is compared to the validity parameter to see if the key
+/// needs to be replaced. No key roll will happen is validity is equal to
+/// None. The start_roll parameter starts the key roll.
 #[allow(clippy::too_many_arguments)]
 fn auto_start<Env>(
     validity: &Option<Duration>,
@@ -3707,6 +4050,13 @@ fn auto_start<Env>(
     Ok(())
 }
 
+/// Handle automation for the report, expire and done steps.
+///
+/// The auto parameter has the flags that control whether automation is
+/// enabled or disabled for a step. The roll_list parameters are the
+/// roll types that are covered by the auto parameter.
+/// This function calls two function (auto_report_actions and
+/// auto_wait_actions) to handle, repectively, the Report and Wait actions.
 async fn auto_report_expire_done(
     auto: &AutoConfig,
     roll_list: &[RollType],
@@ -3792,7 +4142,7 @@ async fn auto_report_expire_done(
             if let Some(RollState::Done) = kss.keyset.rollstates().get(r) {
                 let report_state = &kss.internal.get(r).expect("should not fail").done;
                 let actions = kss.keyset.actions(*r);
-                match auto_actions(&actions, kss, report_state, state_changed).await {
+                match auto_wait_actions(&actions, kss, report_state, state_changed).await {
                     AutoActionsResult::Ok => {
                         do_done(kss, *r, ksc.autoremove)?;
                         *state_changed = true;
@@ -3805,6 +4155,11 @@ async fn auto_report_expire_done(
     Ok(())
 }
 
+/// This function computes when the next key roll should happen.
+///
+/// It has the same logic as auto_start but instead of starting a key roll,
+/// it (optionally) adds a timestamp to the cron_next vector. Should this
+/// be merged with auto_start?
 fn cron_next_auto_start(
     validity: Option<Duration>,
     auto: &AutoConfig,
@@ -3849,6 +4204,12 @@ fn cron_next_auto_start(
     }
 }
 
+/// This function computes when next to try to move to the next state.
+///
+/// For the Report and Wait actions that involves checking when propagation
+/// should be tested again. For the expire step it computes when the
+/// keyset object in the domain library accepts the cache_expired1 or
+/// cache_expired2 methods.
 fn cron_next_auto_report_expire_done(
     auto: &AutoConfig,
     roll_list: &[RollType],
@@ -3929,18 +4290,31 @@ fn cron_next_auto_report_expire_done(
     Ok(())
 }
 
+/// The result of checking whether all RRSIG records are present.
 #[derive(PartialEq)]
 enum CheckRrsigsResult {
+    /// The required RRSIGs are present.
     Done,
-    WaitRecord { name: Name<Vec<u8>>, rtype: Rtype },
+    /// Wait for a specific name, rtype combination to get updated signatures.
+    WaitRecord {
+        /// The name to check.
+        name: Name<Vec<u8>>,
+        /// And the Rtype.
+        rtype: Rtype,
+    },
+    /// Wait for the next version of the zone.
     WaitNextSerial,
 }
 
+/// Type for the key of the signature HashMap.
 type SigmapKey = (Name<Vec<u8>>, Rtype);
+/// Type for the value of the signature HashMap.
 type SigmapValue = HashSet<(SecurityAlgorithm, u16)>;
 
-// Returns:
-// Done - if the zone changes out
+/// Check if all authoritive records have the right signatures.
+///
+/// A zone is not authoritative for names below a delegation. At a delegation,
+/// a zone is authoritative for DS and NSEC records.
 fn check_rrsigs(
     treemap: BTreeMap<Name<Vec<u8>>, HashSet<Rtype>>,
     sigmap: HashMap<SigmapKey, SigmapValue>,
@@ -4009,6 +4383,7 @@ fn check_rrsigs(
     result
 }
 
+/// Check if a name, Rtype pair has the right signatures.
 async fn check_record(
     name: &Name<Vec<u8>>,
     rtype: &Rtype,
@@ -4052,6 +4427,7 @@ async fn check_record(
     Err(format!("lookup of {name}/{rtype} failed for all addresses {addresses:?}").into())
 }
 
+/// Check if the zone has move to the next serial.
 async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
     let zone = kss.keyset.name();
     let addresses = get_primary_addresses(zone).await?;
@@ -4086,6 +4462,8 @@ async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Er
     Err(format!("lookup of {zone}/SOA failed for all addresses {addresses:?}").into())
 }
 
+/// Check if all addresses of all nameservers of the zone to see if they
+/// have at least the SOA serial passed as parameter.
 async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
     // Find the address of all name servers of zone
     // Ask each nameserver for the SOA record.
@@ -4114,6 +4492,10 @@ async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
     Ok(true)
 }
 
+/// Get the expected key tags.
+///
+/// Instead of validating signatures against the keys that sign the zone,
+/// the signatures are of only checked for key tags.
 fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u16)> {
     kss.keyset
         .keys()
@@ -4127,6 +4509,7 @@ fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u
         .collect()
 }
 
+/// Get the addresses of the primary nameserver of a zone.
 async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Error> {
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::SOA)).await?;
@@ -4148,6 +4531,10 @@ async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Erro
     addresses_for_name(&resolver, mname).await
 }
 
+/// Check if an algorithm roll is needed.
+///
+/// An algorithm roll is needed if the algorithm listed in config is
+/// different from the set of algorithms in the collection of active keys.
 fn algorithm_roll_needed(ksc: &KeySetConfig, kss: &KeySetState) -> bool {
     // Collect the algorithms in all active keys. Check if the algorithm
     // for new keys is the same.

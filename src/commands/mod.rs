@@ -2,7 +2,10 @@
 pub mod help;
 pub mod key2ds;
 pub mod keygen;
+
+/// Key management utility.
 pub mod keyset;
+
 pub mod notify;
 pub mod nsec3hash;
 pub mod signzone;
