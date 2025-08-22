@@ -3722,7 +3722,7 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
         let AllRecordData::Ns(ns) = r.data() else {
             continue;
         };
-        if r.class() != Class::IN || *r.owner() != zone {
+        if *r.owner() != zone {
             continue;
         }
         nameservers.push(ns.nsdname().clone());
