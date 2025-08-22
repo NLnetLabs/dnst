@@ -17,9 +17,10 @@ name = "ldns"
 path = "src/bin/ldns.rs"
 
 [features]
-default = ["openssl", "ring"]
+default = ["kmip", "openssl", "ring"]
 
 # Cryptographic backends
+kmip = ["domain/kmip"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
@@ -37,7 +38,6 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-fo
     "unstable-sign",
     "unstable-validator",
     "unstable-zonetree",
-    "kmip",
 ] }
 indenter = "0.3.4"
 lexopt = "0.3.0"
