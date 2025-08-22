@@ -6,6 +6,7 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::ops::Not;
 use std::path::{absolute, Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -13,9 +14,9 @@ use bytes::Bytes;
 use clap::Subcommand;
 use domain::base::iana::Class;
 use domain::base::iana::{DigestAlgorithm, SecurityAlgorithm};
-use domain::base::name::FlattenInto;
+use domain::base::name::{FlattenInto, ToLabelIter};
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
-use domain::base::{Name, Record, ToName, Ttl};
+use domain::base::{Name, NameBuilder, Record, ToName, Ttl};
 use domain::crypto::kmip::{self, ClientCertificate, ConnectionSettings, KeyUrl};
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes, SignRaw};
 use domain::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
@@ -27,10 +28,12 @@ use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::validator::base::DnskeyExt;
 use domain::rdata::dnssec::Timestamp;
 use domain::rdata::{Cdnskey, Cds, Dnskey, Ds, ZoneRecordData};
+use domain::utils::base32::encode_string_hex;
 use domain::zonefile::inplace::Zonefile;
 use domain::zonefile::inplace::{Entry, ScannedRecordData};
 use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 use url::Url;
 
 use crate::env::Env;
@@ -360,6 +363,22 @@ enum KmipCommands {
             default_value_t = 8192
         )]
         max_response_bytes: u32,
+
+        /// Optional user supplied key label prefix.
+        ///
+        /// Can be used to denote the s/w that created the key, and/or to
+        /// indicate which installation/environment it belongs to, e.g. dev,
+        /// test, prod, etc.
+        #[arg(help_heading = "Key Labels", long = "key-label-prefix")]
+        key_label_prefix: Option<String>,
+
+        /// Maximum label length (in bytes) permitted by the HSM.
+        #[arg(
+            help_heading = "Key Labels",
+            long = "key-label-max-bytes",
+            default_value_t = 32
+        )]
+        key_label_max_bytes: u8,
     },
 
     /// Modify an existing KMIP server configuration.
@@ -443,6 +462,18 @@ enum KmipCommands {
         /// Modify the maximum KMIP response size to accept (in bytes).
         #[arg(help_heading = "Client Limits", long = "max-response-bytes")]
         max_response_bytes: Option<u32>,
+
+        /// Optional user supplied key label prefix.
+        ///
+        /// Can be used to denote the s/w that created the key, and/or to
+        /// indicate which installation/environment it belongs to, e.g. dev,
+        /// test, prod, etc.
+        #[arg(help_heading = "Key Labels", long = "key-label-prefix")]
+        key_label_prefix: Option<String>,
+
+        /// Maximum label length (in bytes) permitted by the HSM.
+        #[arg(help_heading = "Key Labels", long = "key-label-max-bytes")]
+        key_label_max_bytes: Option<u8>,
     },
 
     /// Remove an existing non-default KMIP server.
@@ -1569,6 +1600,8 @@ fn kmip_command(env: &impl Env, cmd: KmipCommands, kss: &mut KeySetState) -> Res
             read_timeout,
             write_timeout,
             max_response_bytes,
+            key_label_prefix,
+            key_label_max_bytes,
         } => {
             // Handle only the valid cases. Let Clap reject the invalid cases
             // with a helpful error message, e.g. password without username is
@@ -1610,6 +1643,12 @@ fn kmip_command(env: &impl Env, cmd: KmipCommands, kss: &mut KeySetState) -> Res
                 max_response_bytes,
             };
 
+            let key_label_cfg = KeyLabelConfig {
+                max_label_bytes: key_label_max_bytes,
+                supports_relabeling: true,
+                prefix: key_label_prefix.unwrap_or_default(),
+            };
+
             add_kmip_server(
                 &mut kss.kmip,
                 server_id,
@@ -1619,6 +1658,7 @@ fn kmip_command(env: &impl Env, cmd: KmipCommands, kss: &mut KeySetState) -> Res
                 client_auth,
                 server_auth,
                 limits,
+                key_label_cfg,
             )?;
         }
 
@@ -1640,6 +1680,8 @@ fn kmip_command(env: &impl Env, cmd: KmipCommands, kss: &mut KeySetState) -> Res
             read_timeout,
             write_timeout,
             max_response_bytes,
+            key_label_prefix,
+            key_label_max_bytes,
         } => {
             let mut crl_credentials_store_path = ChangeRemoveLeave::Leave;
             let mut crl_username = ChangeRemoveLeave::Leave;
@@ -1701,6 +1743,8 @@ fn kmip_command(env: &impl Env, cmd: KmipCommands, kss: &mut KeySetState) -> Res
                 read_timeout,
                 write_timeout,
                 max_response_bytes,
+                key_label_prefix,
+                key_label_max_bytes,
             )
             .map_err(|err| {
                 Error::new(&format!(
@@ -1842,6 +1886,7 @@ fn add_kmip_server(
     client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
     server_cert_verification: KmipServerTlsCertificateVerificationConfig,
     client_limits: KmipClientLimits,
+    key_label_config: KeyLabelConfig,
 ) -> Result<(), Error> {
     if kmip.servers.contains_key(&server_id) {
         return Err(Error::new(&format!(
@@ -1858,7 +1903,6 @@ fn add_kmip_server(
             credentials_store_path,
             credentials,
         }) => {
-            eprintln!("ADD");
             let mut credentials_file = KmipClientCredentialsFile::new(
                 &credentials_store_path,
                 KmipServerCredentialsFileMode::CreateReadWrite,
@@ -1892,6 +1936,7 @@ fn add_kmip_server(
         client_credentials_path,
         client_cert_auth,
         client_limits,
+        key_label_config,
     };
 
     kmip.servers.insert(server_id.clone(), settings);
@@ -1928,6 +1973,8 @@ fn modify_kmip_server(
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     max_response_bytes: Option<u32>,
+    key_label_prefix: Option<String>,
+    key_label_max_bytes: Option<u8>,
 ) -> Result<(), Error> {
     let Some(mut cfg) = kmip.servers.remove(server_id) else {
         return Err("server does not exist!".into());
@@ -2128,6 +2175,13 @@ fn modify_kmip_server(
         cfg.client_limits.max_response_bytes = v;
     }
 
+    if let Some(v) = key_label_prefix {
+        cfg.key_label_config.prefix = v;
+    }
+    if let Some(v) = key_label_max_bytes {
+        cfg.key_label_config.max_label_bytes = v;
+    }
+
     kmip.servers.insert(server_id.to_string(), cfg);
 
     if kmip.servers.len() == 1 {
@@ -2316,14 +2370,95 @@ fn new_keys(
             // specifically and try again with a different name? Should we add
             // a random element to each name? Should we keep track of used
             // names and detect a collision ourselves when choosing a name?
-            // Is their some natural differentiator that can be used to name
+            // Is there some natural differentiator that can be used to name
             // keys uniquely other than zone name?
-            let suffix = match make_ksk {
-                true => "_ksk",
-                false => "_zsk",
-            };
+            //
+            // Elements to include in a key name:
+            //   - Application, e.g. Nameshed or NS.
+            //   - Namespace, e.g. prod or test or dev.
+            //   - Key type, e.g. KSK or ZSK.
+            //   - Zone name, e.g. example.com, but also a.b.c.d.f.com
+            //   - Uniqifier, e.g. to differentiate pre-generated keys for
+            //     the same zone.
+            //
+            // Max 32 characters seem to be wise as that is the lowest limit
+            // used amongst PKCS#11 HSM providers for a which a limit is
+            // known.
+            //
+            // Use an overridable naming template? E.g. support placeholders
+            // such as <key type>, <uniqifier> and <zone name>, with a default
+            // of:
+            //
+            //   <zone name>-<uniqifier>-<key type>
+            //
+            // Where <uniqifier> is 2 bytes long and <key type> is 3 bytes
+            // long, leaving 32 - '-' - 2 - '-' - 3 = 32 - 7 = 25 bytes for
+            // <zone name>, which can be abbreviated if too long by replacing
+            // the middle with '...' and <uniqifier> is a 0 padded positive
+            // integer in the range 00..99 giving 100 keys to roll the zone
+            // up to twice a week without needing to use 00 again.
+            //
+            // When overridden a user could include fixed namespace and
+            // application values, e.g.:
+            //
+            //   NS-PROD-<zone name>-<uniqifier>-<key type>
+            //
+            // Resulting in key names like:
+            //
+            //   NS-PROD-example.com-001-ksk
+            //   NS-DEV-some.lo...in-name-013-zsk
+            //   (shrunk from NS-DEV-some.long-domain-name-013-zsk)
+            //   01234567890123456789012345678901
+            //
+            // However, regarding <uniqifier>, it may be that pre-generation
+            // should be accomplished differently, by generating the keys
+            // outside of dnst keyset and importing them. But it may still
+            // be useful to consider what to do if a key fails to generate,
+            // should we retry with an integer value at the end of the zone
+            // name (within the 32 byte limit - aside: should that limit also
+            // be configurable?), can we even tell that failure was due to a
+            // name collision?
+            //
+            // Alternate proposals are to use <prefix>-<zone name>-<key
+            // type> or even a random number then re-labeled post-generation
+            // to include the key tag (which requires the generated key to
+            // determine). The initial random number is to avoid conflcits if
+            // re-labeling fails.
+            //
+            // And for <uniqifier> to be a hexified 16-bit random number that
+            // we can scan existing keys for to avoid conflict with a key that
+            // we might have generated before.
+            //
+            // And for name truncation to keep the last label (TLD) then remove
+            // next nearest labels until the name fits the limit, and add an
+            // extra '.' in to make it clear it was truncated, else keep the
+            // first n characters.
+            //
+            // And to make the max limit be configurable for HSMs that support
+            // longer than 32 bytes. We could also make the entire label a user
+            // overridable format/template string.
+            //
+            // For now we will do:
+            //
+            //   1. Configurable label length limit defaulting to 32 bytes.
+            //   2. Initial hexified random 32-byte label.
+            //   3. Relabel to: <prefix>-<(partial) zone name>-<key tag>-<key type>.
+
+            // Generate initial hexified random byte label.
+            let server_id = kmip_conn_pool.server_id();
+            let key_label_cfg = &mut kmip.servers.get_mut(server_id).unwrap().key_label_config;
+
+            let mut rnadom_bytes = vec![0; key_label_cfg.max_label_bytes as usize];
+            rand::fill(&mut rnadom_bytes[..]);
+            let public_key_random_label = encode_string_hex(&rnadom_bytes);
+
+            let mut random_bytes = vec![0; key_label_cfg.max_label_bytes as usize];
+            rand::fill(&mut random_bytes[..]);
+            let private_key_random_label = encode_string_hex(&random_bytes);
+
             let key_pair = kmip::sign::generate(
-                format!("{}{suffix}", name.fmt_with_dot()),
+                public_key_random_label,
+                private_key_random_label,
                 algorithm.clone(),
                 flags,
                 kmip_conn_pool.clone(),
@@ -2333,8 +2468,78 @@ fn new_keys(
             let dnskey = key_pair.dnskey();
 
             if !keys.iter().any(|(_, k)| k.key_tag() == dnskey.key_tag()) {
+                if key_label_cfg.supports_relabeling {
+                    // Re-label the key now that we know the key tag.
+                    let key_type = match make_ksk {
+                        true => "ksk",
+                        false => "zsk",
+                    };
+
+                    let prefix = &key_label_cfg.prefix;
+                    let key_tag = dnskey.key_tag().to_string();
+                    let zone_name = name.to_string();
+                    let max_label_bytes = key_label_cfg.max_label_bytes as usize;
+
+                    let public_key_label = format_key_label(
+                        prefix,
+                        &zone_name,
+                        &key_tag,
+                        key_type,
+                        "-pub",
+                        max_label_bytes,
+                    );
+
+                    if let Err(err) = &public_key_label {
+                        warn!("Failed to generate label for public key, key will have a hex label: {err}");
+                    }
+
+                    let private_key_label = format_key_label(
+                        prefix,
+                        &zone_name,
+                        &key_tag,
+                        key_type,
+                        "-pri",
+                        max_label_bytes,
+                    );
+
+                    if let Err(err) = &private_key_label {
+                        warn!("Failed to generate label for private key, key will have a hex label: {err}");
+                    }
+
+                    if let (Ok(public_key_label), Ok(private_key_label)) =
+                        (public_key_label, private_key_label)
+                    {
+                        let conn = kmip_conn_pool.get()?;
+                        // If key generation succeeded then the most likely reason
+                        // for the rename operation to fail is lack of support for
+                        // key relabeling.
+                        match conn.rename_key(key_pair.public_key_id(), public_key_label) {
+                            Ok(_res) => {
+                                // TODO: Inspect the response attributes to see if
+                                // the Modify Attribute operation actually changed
+                                // the attribute as requested?
+
+                                // If re-labelling the public key succeeded but
+                                // re-labelling the private key fails, that is
+                                // unexpected. Why would it succeed for one and
+                                // fail for the other?
+                                conn.rename_key(key_pair.private_key_id(), private_key_label)
+                            .map_err::<Error, _>(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()).into())?;
+                            }
+                            Err(err) => {
+                                // Assume that key re-labeling is not supported
+                                // and disable future re-labeling attempts for
+                                // this server.
+                                warn!("KMIP post key generation re-labeling with server '{server_id}' failed, re-labeling will be disabled for this server: {err}");
+                                key_label_cfg.supports_relabeling = false;
+                            }
+                        }
+                    }
+                }
+
                 break (key_pair, dnskey);
             }
+
             if retries <= 1 {
                 return Err("unable to generate key with unique key tag".into());
             }
@@ -2412,6 +2617,88 @@ fn new_keys(
         })?;
         Ok((public_key_url, secret_key_url, algorithm, key_tag))
     }
+}
+
+fn format_key_label(
+    prefix: &str,
+    zone_name: &str,
+    key_tag: &str,
+    key_type: &str,
+    suffix: &str,
+    max_label_bytes: usize,
+) -> Result<String, Error> {
+    let mut public_key_label = format!("{prefix}{zone_name}-{key_tag}-{key_type}{suffix}");
+    if public_key_label.len() > max_label_bytes {
+        let diff = public_key_label.len() - max_label_bytes;
+        let max_zone_name_len = zone_name.len().saturating_sub(diff);
+        if max_zone_name_len < 8 {
+            return Err(format!("Insufficient space to include a useful (partial) zone name in generated KMIP key label: {max_zone_name_len} < 8").into());
+        }
+        // If the name is a valid DNS name, truncate it by
+        // keeping the right most label (the TLD) but removing
+        // labels one by one prior to that until the name is
+        // short enough.
+        let zone_name = truncate_zone_name(zone_name.to_string(), max_zone_name_len);
+        public_key_label = format!("{prefix}{zone_name}-{key_tag}-{key_type}{suffix}");
+    }
+    Ok(public_key_label)
+}
+
+fn truncate_zone_name(mut zone_name: String, max_zone_name_len: usize) -> String {
+    if zone_name.len() <= max_zone_name_len {
+        return zone_name;
+    }
+    if max_zone_name_len > 0 {
+        if let Ok(dns_name) = Name::<Vec<u8>>::from_str(&zone_name) {
+            // We can only shorten names that have at least
+            // three labels.
+            let num_labels = dns_name.iter_labels().count();
+            if num_labels >= 3 {
+                let mut end_name = NameBuilder::new_vec();
+
+                // Append prior labels until the current
+                // length + '.' + the final label + '.' would
+                // be too long.
+                let mut labels = dns_name.iter_labels().rev();
+
+                // Keep the root and TLD labels.
+                end_name
+                    .append_label(labels.next().unwrap().as_slice())
+                    .unwrap();
+                end_name
+                    .append_label(labels.next().unwrap().as_slice())
+                    .unwrap();
+
+                // Append labels from the left as long as they fit.
+                let mut labels = dns_name.iter_labels();
+                let mut start_name = NameBuilder::new_vec();
+                for _ in 0..num_labels - 2 {
+                    let label = labels.next().unwrap();
+                    // Minus one to allow space for the '..' that will be used
+                    // instead of '.' to signify that label based truncation
+                    // occurred.
+                    if start_name.len() + label.len() + end_name.len() < (max_zone_name_len - 1) {
+                        start_name.append_label(label.as_slice()).unwrap();
+                    }
+                }
+
+                if !start_name.is_empty() {
+                    // Build final name
+                    let mut zone_name = start_name.finish().to_string();
+                    zone_name.push_str("..");
+                    zone_name.push_str(&end_name.into_name().unwrap().to_string());
+                    zone_name.push('.');
+
+                    if zone_name.len() <= max_zone_name_len {
+                        return zone_name;
+                    }
+                }
+            }
+        }
+    }
+
+    zone_name.truncate(max_zone_name_len);
+    zone_name
 }
 
 fn update_dnskey_rrset(
@@ -3400,6 +3687,39 @@ impl std::fmt::Display for KmipClientLimits {
     }
 }
 
+//------------ KeyLabelConfig ------------------------------------------------
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct KeyLabelConfig {
+    /// Maximum label length.
+    pub max_label_bytes: u8,
+
+    /// Supports re-labeling.
+    ///
+    /// Defaults to true, will be changed to false if relabeling fails to
+    /// avoid further attempts to relabel.
+    pub supports_relabeling: bool,
+
+    /// Optional user supplied key label prefix.
+    ///
+    /// E.g. to denote the s/w that created the key, and/or to indicate which
+    /// installation/environment it belongs to, e.g. dev, test, prod, etc.
+    pub prefix: String,
+}
+
+impl std::fmt::Display for KeyLabelConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Prefix:                        {}", self.prefix)?;
+        writeln!(f, "Max Bytes:                     {}", self.max_label_bytes,)?;
+        writeln!(
+            f,
+            "Supports Re-Labeling:          {}",
+            self.supports_relabeling
+        )?;
+        Ok(())
+    }
+}
+
 //------------ KmipServerConnectionConfig ------------------------------------
 
 /// Settings for connecting to a KMIP HSM server.
@@ -3424,6 +3744,9 @@ pub struct KmipServerConnectionConfig {
 
     /// Limits to be applied by the KMIP client
     pub client_limits: KmipClientLimits,
+
+    /// Key labeling configuration.
+    pub key_label_config: KeyLabelConfig,
 }
 
 //--- impl Display
@@ -3445,6 +3768,8 @@ pub struct KmipServerConnectionConfig {
 /// ```
 impl std::fmt::Display for KmipServerConnectionConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+
         fn opt_path_to_string(p: &Option<PathBuf>) -> String {
             match p {
                 Some(p) => p.display().to_string(),
@@ -3495,10 +3820,19 @@ impl std::fmt::Display for KmipServerConnectionConfig {
                 writeln!(f, "Client Certificate Authentication: Disabled")?;
             }
         }
-        writeln!(f, "Client Limits:")?;
-        use std::fmt::Write;
-        let mut indented = indenter::indented(f);
-        write!(indented, "{}", self.client_limits)?;
+
+        {
+            writeln!(f, "Client Limits:")?;
+            let mut indented = indenter::indented(f);
+            write!(indented, "{}", self.client_limits)?;
+        }
+
+        {
+            writeln!(f, "Key Label Config:")?;
+            let mut indented = indenter::indented(f);
+            write!(indented, "{}", self.key_label_config)?;
+        }
+
         Ok(())
     }
 }
@@ -3719,5 +4053,79 @@ impl std::fmt::Display for KmipState {
             write!(twice_indented, "{cfg}")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_zone_name() {
+        // Name already shorter than the truncation length
+        assert_eq!(&truncate_zone_name("".to_string(), 5), "");
+        assert_eq!(&truncate_zone_name("nl.".to_string(), 5), "nl.");
+
+        // Names longer than the truncation length but the labels under the
+        // TLD are too long to allow shortening by dropping of labels, instead
+        // shortening is done by brute truncation.
+        assert_eq!(&truncate_zone_name("nlnetlabs.nl.".to_string(), 5), "nlnet");
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 5),
+            "a.b.c"
+        );
+
+        // Names longer than the truncation length and has labels under the
+        // TLD that are short enough to permit truncation by dropping of labels
+        // in the middle. A double dot (..) indicates that truncation occurred.
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 10),
+            "a.b.c..nl."
+        );
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 12),
+            "a.b.c.d..nl."
+        );
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 19),
+            "a.b.c.d..nl."
+        );
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 20),
+            "a.b.c.d..nl."
+        );
+
+        // Name is equal to the truncation length so no truncation needed.
+        assert_eq!(
+            &truncate_zone_name("a.b.c.d.nlnetlabs.nl.".to_string(), 21),
+            "a.b.c.d.nlnetlabs.nl."
+        );
+    }
+
+    #[test]
+    fn test_format_key_label() {
+        assert_eq!(
+            format_key_label("", "a.b.c.d.nlnetlabs.nl.", "12345", "ksk", "", 20).unwrap(),
+            "a.b.c..nl.-12345-ksk"
+        );
+        assert_eq!(
+            format_key_label("", "a.b.c.d.nlnetlabs.nl.", "12345", "ksk", "", 31).unwrap(),
+            "a.b.c.d.nlnetlabs.nl.-12345-ksk"
+        );
+        assert_eq!(
+            format_key_label(
+                "prefix-",
+                "a.b.c.d.nlnetlabs.nl.",
+                "12345",
+                "ksk",
+                "-suffix",
+                45
+            )
+            .unwrap(),
+            "prefix-a.b.c.d.nlnetlabs.nl.-12345-ksk-suffix"
+        );
+
+        // Max len too short to hold the generated label.
+        assert!(format_key_label("", "a.b.c.d.nlnetlabs.nl.", "12345", "ksk", "", 10).is_err());
     }
 }

@@ -20,7 +20,7 @@ path = "src/bin/ldns.rs"
 default = ["kmip", "openssl", "ring"]
 
 # Cryptographic backends
-kmip = ["domain/kmip"]
+kmip = ["domain/kmip", "dep:rand"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
@@ -43,6 +43,7 @@ indenter = "0.3.4"
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
+rand = { version = "0.9.2", optional = true }
 ring = "0.17.8"
 tokio = "1.40.0"
 
