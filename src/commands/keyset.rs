@@ -9,7 +9,9 @@ use clap::Subcommand;
 use domain::base::iana::{Class, DigestAlgorithm, OptRcode, SecurityAlgorithm};
 use domain::base::name::FlattenInto;
 use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
-use domain::base::{MessageBuilder, Name, Record, Rtype, Serial, ToName, Ttl};
+use domain::base::{
+    MessageBuilder, Name, ParseRecordData, ParsedName, Record, Rtype, Serial, ToName, Ttl,
+};
 use domain::crypto::sign::{self, GenerateParams, KeyPair, SecretKeyBytes};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
@@ -58,6 +60,8 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
 type NameVecU8 = Name<Vec<u8>>;
 /// Type for a record that uses ZoneRecordData and a Vec.
 type RecordZoneRecordData = Record<NameVecU8, ZoneRecordData<Vec<u8>, NameVecU8>>;
+/// Type for a DNSKEY record.
+type RecordDnskey = Record<NameVecU8, Dnskey<Vec<u8>>>;
 
 // Automatic key rolls
 //
@@ -3397,6 +3401,10 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
         .map(|a| check_dnskey_for_address(zone, a, target_dnskey.clone()))
         .collect();
     let res: Vec<_> = join_all(futures).await;
+
+    // Be paranoid. The variable max_ttl is set to None initially to make
+    // sure that we only return a value if something has been assigned
+    // during the loop.
     let mut max_ttl = None;
     for r in res {
         let r = match r {
@@ -3436,14 +3444,23 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
     // one we want.
     // If it doesn't match, wait the TTL of the RRset to try again.
     // On error, wait a default time.
-    let mut target_cdnskey: HashSet<RecordZoneRecordData> = HashSet::new();
+
+    let mut target_dnskey: HashSet<RecordDnskey> = HashSet::new();
     for cdnskey_rr in &kss.cds_rrset {
         let mut zonefile = Zonefile::new();
         zonefile.extend_from_slice(cdnskey_rr.as_bytes());
         zonefile.extend_from_slice(b"\n");
-        if let Ok(Some(Entry::Record(rec))) = zonefile.next_entry() {
-            if rec.rtype() == Rtype::CDNSKEY {
-                target_cdnskey.insert(rec.flatten_into());
+        if let Ok(Some(Entry::Record(r))) = zonefile.next_entry() {
+            if let ZoneRecordData::Cdnskey(cdnskey) = r.data() {
+                let dnskey = Dnskey::<Vec<u8>>::new(
+                    cdnskey.flags(),
+                    cdnskey.protocol(),
+                    cdnskey.algorithm(),
+                    cdnskey.public_key().to_vec(),
+                )
+                .expect("should not fail");
+                let record = Record::new(r.owner().to_name(), r.class(), r.ttl(), dnskey);
+                target_dnskey.insert(record);
             }
         }
     }
@@ -3458,7 +3475,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
 
     let futures: Vec<_> = addresses
         .iter()
-        .map(|a| check_ds_for_address(zone, a, target_cdnskey.clone()))
+        .map(|a| check_ds_for_address(zone, a, target_dnskey.clone()))
         .collect();
     let res: Vec<_> = join_all(futures).await;
     let mut max_ttl = None;
@@ -3494,7 +3511,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
     // This function assume a single signer. Multi-signer is not supported
     // at all, but any kind of active-passive or active-active setup would also
     // need changes. With more than one signer, each signer needs to be
-    // checked explcitly. Then for all nameservers it needs to be checked
+    // checked explicitly. Then for all nameservers it needs to be checked
     // that their SOA versions are at least as high as all of the signers.
     // Check the zone. If the zone checks out, make sure that all nameservers
     // have at least the version of the zone that was checked.
@@ -3531,7 +3548,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
     )
 }
 
-/// Check where the zone has signatures from the right keys.
+/// Check whether the zone has signatures from the right keys.
 ///
 /// Collect the ZSK algorithm and key tags into a HashSet
 /// Get the primary nameserver from the SOA record (this should become
@@ -3541,7 +3558,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
 /// Convert the RRSIGs into a HashMap with (name, type) as key and a HashSet
 /// of (algorithm, key tag) as value.
 /// Convert the other records into a BtreeMap with name as key and
-/// a HashMap of type as the value. Check that each name and type has a
+/// a HashSet of type as the value. Check that each name and type has a
 /// corresponding complete RRSIG set.
 /// Ignore delegated records
 async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
@@ -3751,29 +3768,13 @@ async fn check_dnskey_for_address(
     address: &IpAddr,
     mut target_dnskey: HashSet<RecordZoneRecordData>,
 ) -> Result<AutoReportActionsResult, Error> {
-    let server_addr = SocketAddr::new(*address, 53);
-    let udp_connect = UdpConnect::new(server_addr);
-    let tcp_connect = TcpConnect::new(server_addr);
-    let (udptcp_conn, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
-    tokio::spawn(transport.run());
-
-    let mut msg = MessageBuilder::new_vec();
-    msg.header_mut().set_rd(true);
-    let mut msg = msg.question();
-    msg.push((zone, Rtype::DNSKEY)).expect("should not fail");
-    let mut req = RequestMessage::new(msg).expect("should not fail");
-    req.set_dnssec_ok(true);
-    let mut request = udptcp_conn.send_request(req.clone());
-    let response = request.get_response().await.map_err::<Error, _>(|e| {
-        format!("{zone}/DNSKEY request to {address} failed: {e}").into()
-    })?;
+    let records = lookup_name_rtype_at_address(zone, Rtype::DNSKEY, address).await?;
 
     let mut max_ttl = Ttl::from_secs(0);
 
-    for r in response.answer()?.limit_to_in::<AllRecordData<_, _>>() {
-        let r = r?;
+    for r in records {
         if let AllRecordData::Dnskey(dnskey) = r.data() {
-            if r.class() != Class::IN || r.owner() != zone {
+            if r.owner() != zone {
                 continue;
             }
             max_ttl = max(max_ttl, r.ttl());
@@ -3800,8 +3801,7 @@ async fn check_dnskey_for_address(
             continue;
         }
         if let AllRecordData::Rrsig(rrsig) = r.data() {
-            if r.class() != Class::IN || r.owner() != zone || rrsig.type_covered() != Rtype::DNSKEY
-            {
+            if r.owner() != zone || rrsig.type_covered() != Rtype::DNSKEY {
                 continue;
             }
             max_ttl = max(max_ttl, r.ttl());
@@ -3843,70 +3843,44 @@ async fn check_dnskey_for_address(
 async fn check_ds_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
-    mut target_cdnskey: HashSet<RecordZoneRecordData>,
+    mut target_dnskey: HashSet<RecordDnskey>,
 ) -> Result<AutoReportActionsResult, Error> {
-    let server_addr = SocketAddr::new(*address, 53);
-    let udp_connect = UdpConnect::new(server_addr);
-    let tcp_connect = TcpConnect::new(server_addr);
-    let (udptcp_conn, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
-    tokio::spawn(transport.run());
-
-    let mut msg = MessageBuilder::new_vec();
-    msg.header_mut().set_rd(true);
-    let mut msg = msg.question();
-    msg.push((zone, Rtype::DS)).expect("should not fail");
-    let req = RequestMessage::new(msg).expect("should not fail");
-    let mut request = udptcp_conn.send_request(req.clone());
-    let response = request.get_response().await.map_err::<Error, _>(|e| {
-        format!("{zone}/DNSKEY request to {address} failed: {e}").into()
-    })?;
+    let records = lookup_name_rtype_at_address::<Ds<_>>(zone, Rtype::DS, address).await?;
 
     let mut max_ttl = Ttl::from_secs(0);
 
-    for r in response.answer()?.limit_to_in::<AllRecordData<_, _>>() {
-        let r = r?;
-        if let AllRecordData::Ds(ds) = r.data() {
-            if r.class() != Class::IN || r.owner() != zone {
-                continue;
-            }
-            max_ttl = max(max_ttl, r.ttl());
-            let target_r = target_cdnskey.iter().find(|target_r| {
-                if let ZoneRecordData::Cdnskey(target_cdnskey) = target_r.data() {
-                    let dnskey = Dnskey::new(
-                        target_cdnskey.flags(),
-                        target_cdnskey.protocol(),
-                        target_cdnskey.algorithm(),
-                        target_cdnskey.public_key(),
-                    )
-                    .expect("should not fail");
-                    let digest = dnskey
-                        .digest(zone, ds.digest_type())
-                        .expect("should not fail");
-                    ds.algorithm() == target_cdnskey.algorithm() && ds.digest() == digest.as_ref()
-                } else {
-                    false
-                }
-            });
-            if let Some(record) = target_r {
-                // Clone record to release target_cdnskey.
-                let record = record.clone();
-                // Found one, remove it from the set.
-                target_cdnskey.remove(&record);
-            } else {
-                // The current record is not found in the target set. Wait
-                // until the TTL has expired.
-                debug!("Check DS RRset: DS record not expected");
-                return Ok(AutoReportActionsResult::Wait(
-                    UnixTime::now() + r.ttl().into_duration(),
-                ));
-            }
+    for r in records {
+        if r.owner() != zone {
             continue;
         }
+        max_ttl = max(max_ttl, r.ttl());
+        let target_r = target_dnskey.iter().find(|target_r| {
+            let digest = target_r
+                .data()
+                .digest(zone, r.data().digest_type())
+                .expect("should not fail");
+            r.data().algorithm() == target_r.data().algorithm()
+                && r.data().digest() == digest.as_ref()
+        });
+        if let Some(record) = target_r {
+            // Clone record to release target_dnskey.
+            let record = record.clone();
+            // Found one, remove it from the set.
+            target_dnskey.remove(&record);
+        } else {
+            // The current record is not found in the target set. Wait
+            // until the TTL has expired.
+            debug!("Check DS RRset: DS record not expected");
+            return Ok(AutoReportActionsResult::Wait(
+                UnixTime::now() + r.ttl().into_duration(),
+            ));
+        }
+        continue;
     }
-    let cdnskey = target_cdnskey.iter().next();
-    if let Some(cdnskey) = cdnskey {
+    let dnskey = target_dnskey.iter().next();
+    if let Some(dnskey) = dnskey {
         debug!("Check DS RRset: expected DS record not present");
-        let ttl = cdnskey.ttl();
+        let ttl = dnskey.ttl();
         Ok(AutoReportActionsResult::Wait(
             UnixTime::now() + ttl.into_duration(),
         ))
@@ -3922,6 +3896,42 @@ async fn check_soa_for_address(
     address: &IpAddr,
     serial: Serial,
 ) -> Result<AutoReportActionsResult, Error> {
+    let records = lookup_name_rtype_at_address::<Soa<_>>(zone, Rtype::SOA, address).await?;
+
+    if records.is_empty() {
+        return Ok(AutoReportActionsResult::Wait(
+            UnixTime::now() + DEFAULT_WAIT,
+        ));
+    }
+
+    if let Some(ttl) = records
+        .iter()
+        .filter_map(|r| {
+            if r.data().serial() < serial {
+                Some(r.ttl())
+            } else {
+                None
+            }
+        })
+        .next()
+    {
+        return Ok(AutoReportActionsResult::Wait(UnixTime::now() + ttl.into()));
+    }
+    // Return a dummy TTL. The caller knows the real TTL to report.
+    Ok(AutoReportActionsResult::Report(Ttl::from_secs(0)))
+}
+
+/// Lookup a name, rtype pair at an address.
+///
+/// Extract records of type T from the answer.
+async fn lookup_name_rtype_at_address<T>(
+    name: &Name<Vec<u8>>,
+    rtype: Rtype,
+    address: &IpAddr,
+) -> Result<Vec<Record<ParsedName<Bytes>, T>>, Error>
+where
+    for<'a> T: ParseRecordData<'a, Bytes>,
+{
     let server_addr = SocketAddr::new(*address, 53);
     let udp_connect = UdpConnect::new(server_addr);
     let tcp_connect = TcpConnect::new(server_addr);
@@ -3931,25 +3941,20 @@ async fn check_soa_for_address(
     let mut msg = MessageBuilder::new_vec();
     msg.header_mut().set_rd(true);
     let mut msg = msg.question();
-    msg.push((zone, Rtype::SOA)).expect("should not fail");
+    msg.push((name, rtype)).expect("should not fail");
     let mut req = RequestMessage::new(msg).expect("should not fail");
     req.set_dnssec_ok(true);
     let mut request = udptcp_conn.send_request(req.clone());
-    let response = request
-        .get_response()
-        .await
-        .map_err::<Error, _>(|e| format!("{zone}/SOA request to {address} failed: {e}").into())?;
+    let response = request.get_response().await.map_err::<Error, _>(|e| {
+        format!("{name}/{rtype} request to {address} failed: {e}").into()
+    })?;
 
-    for r in response.answer()?.limit_to_in::<Soa<_>>() {
+    let mut res = Vec::new();
+    for r in response.answer()?.limit_to_in::<T>() {
         let r = r?;
-        if r.data().serial() < serial {
-            return Ok(AutoReportActionsResult::Wait(
-                UnixTime::now() + r.ttl().into(),
-            ));
-        }
+        res.push(r);
     }
-    // Return a dummy TTL. The caller knows the real TTL to report.
-    Ok(AutoReportActionsResult::Report(Ttl::from_secs(0)))
+    Ok(res)
 }
 
 /// Return the name of the parent zone.
@@ -4137,7 +4142,7 @@ async fn auto_report_expire_done(
     }
     if auto.done {
         // If there is current a roll in the done state and all
-        // actions have completed and the flag is set, end the key roll.
+        // actions have completed then call do_done to end the key roll.
         for r in roll_list {
             if let Some(RollState::Done) = kss.keyset.rollstates().get(r) {
                 let report_state = &kss.internal.get(r).expect("should not fail").done;
@@ -4359,6 +4364,13 @@ fn check_rrsigs(
                 HashSet::new()
             };
             if set != expected_set {
+                // NSEC3 records are special because we cannot directly query
+                // for them. For 'normal' record, return WaitRecord.
+                // For NSEC3 we need to wait for a new version of the zone,
+                // so we return WaitNextSerial. However, WaitRecord is more
+                // efficient. Therefore, if the mismatch is at an NSEC3 then
+                // remember this by setting result to WaitNextSerial but
+                // keep checking.
                 if rtype != Rtype::NSEC3 {
                     warn!(
                         "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
