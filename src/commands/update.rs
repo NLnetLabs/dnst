@@ -408,10 +408,10 @@ impl Update {
         // parse the rdata
         let rr = format!(". 1 IN {rtype} {rdata}\n");
         zonefile.extend_from_slice(rr.as_bytes());
-        if let Ok(Some(Entry::Record(record))) = zonefile.next_entry() {
-            Ok(record.data().clone().flatten_into())
-        } else {
-            Err(format!("Failed to parse rdata for {rtype}: {rdata}").into())
+        match zonefile.next_entry() {
+            Ok(Some(Entry::Record(record))) => Ok(record.data().clone().flatten_into()),
+            Ok(_) => unreachable!("We always create a record"),
+            Err(e) => Err(format!("Failed to parse rdata for {rtype} {rdata} -- Error: {e}").into()),
         }
     }
 
