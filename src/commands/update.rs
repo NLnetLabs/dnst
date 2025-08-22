@@ -411,7 +411,9 @@ impl Update {
         match zonefile.next_entry() {
             Ok(Some(Entry::Record(record))) => Ok(record.data().clone().flatten_into()),
             Ok(_) => unreachable!("We always create a record"),
-            Err(e) => Err(format!("Failed to parse rdata for {rtype} {rdata} -- Error: {e}").into()),
+            Err(e) => {
+                Err(format!("Failed to parse rdata for {rtype} {rdata} -- Error: {e}").into())
+            }
         }
     }
 
