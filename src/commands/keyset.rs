@@ -4366,7 +4366,7 @@ fn check_rrsigs(
             };
             if set != expected_set {
                 // NSEC3 records are special because we cannot directly query
-                // for them. For 'normal' record, return WaitRecord.
+                // for them. For 'normal' records, return WaitRecord.
                 // For NSEC3 we need to wait for a new version of the zone,
                 // so we return WaitNextSerial. However, WaitRecord is more
                 // efficient. Therefore, if the mismatch is at an NSEC3 then
