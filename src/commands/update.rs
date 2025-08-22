@@ -167,7 +167,7 @@ impl Update {
         // 1. If not provided, determine zone apex and fetch name servers
         let (apex, mname, _soa) = match &self.zone {
             Some(zone) => {
-                let tmp = UpdateHelpers::find_mname_and_soa(env, &zone)
+                let tmp = UpdateHelpers::find_mname_and_soa(env, zone)
                     .await
                     .context("fetching the SOA record")?;
                 (zone.clone(), tmp.0, tmp.1)
@@ -223,7 +223,7 @@ impl Update {
     fn parse_prerequisite_name_type(
         args: &Vec<String>,
         origin: &Name<Vec<u8>>,
-    ) -> Result<Vec<(Name<Vec<u8>>, Rtype)>, Error> {
+    ) -> Result<Vec<NameTypeTuple>, Error> {
         let mut records = Vec::new();
         for arg in args {
             if let Some((name, typ)) = arg.split_once(' ') {
@@ -352,7 +352,7 @@ impl Update {
                     return Err("Provide at least one RDATA item to add".into());
                 }
                 for r in rdata {
-                    let rdata = Self::parse_rdata(rtype, &r)?;
+                    let rdata = Self::parse_rdata(rtype, r)?;
                     update_section
                         .push(Self::create_rr_addition(
                             self.domain.clone(),
@@ -374,7 +374,7 @@ impl Update {
                         })?
                 } else {
                     for r in rdata {
-                        let rdata = Self::parse_rdata(rtype, &r)?;
+                        let rdata = Self::parse_rdata(rtype, r)?;
                         update_section
                             .push(Self::create_rr_deletion(self.domain.clone(), rdata))
                             .map_err(|e| -> Error {
@@ -406,12 +406,12 @@ impl Update {
         let mut zonefile = Zonefile::new();
         // The origin, ttl and class are irrelevant here and only needed to
         // parse the rdata
-        let rr = format!(". 1 IN {} {}\n", rtype, rdata);
+        let rr = format!(". 1 IN {rtype} {rdata}\n");
         zonefile.extend_from_slice(rr.as_bytes());
         if let Ok(Some(Entry::Record(record))) = zonefile.next_entry() {
-            return Ok(record.data().clone().flatten_into());
+            Ok(record.data().clone().flatten_into())
         } else {
-            return Err(format!("Failed to parse rdata for {rtype}: {rdata}").into());
+            Err(format!("Failed to parse rdata for {rtype}: {rdata}").into())
         }
     }
 
@@ -693,7 +693,7 @@ impl Update {
             }
         } else {
             for ip in &self.nameservers {
-                let socket = SocketAddr::new(ip.clone(), 53);
+                let socket = SocketAddr::new(*ip, 53);
                 let resp = match connect_and_send_request(&env, socket, &msg, &tsig_key).await {
                     Ok(resp) => resp,
                     Err(err) => {
