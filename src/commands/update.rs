@@ -725,24 +725,39 @@ impl Update {
 
 #[derive(Clone, Debug, PartialEq, Eq, Subcommand)]
 enum UpdateAction {
-    /// Add RRs to domain
+    /// Add RRs to a domain
     Add {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
         rtype: Rtype,
 
-        /// RDATA (One or more)
-        #[arg(value_name = "RDATA")]
+        /// RDATA (One or more). Each argument corresponds to a single RR's
+        /// RDATA, so beware of (shell and DNS) quoting rules.
+        ///
+        /// Each RDATA argument will be parsed as if it was read from a zone file.
+        ///
+        /// Examples:
+        ///   $ dnst update some.example.com add TLSA '0 0 1 dead beef ...'
+        ///   $ dnst update some.example.com add TXT \
+        ///       '"Spacious String" "Another string for the same TXT record"' \
+        ///       '"This is another TXT RR"'
+        #[arg(value_name = "RDATA", verbatim_doc_comment)]
         rdata: Vec<String>,
     },
 
-    /// Delete specific RRs or a complete RRset from domain
+    /// Delete specific RRs or a complete RRsets from a domain
     Delete {
         /// RRtype
         #[arg(value_name = "RRTYPE")]
         rtype: Rtype,
 
-        /// RDATA (Optional. Delete whole RRset, if none provided.)
+        /// RDATA (Optional. Delete whole RRset, if none provided). Each
+        /// argument corresponds to a single RR's RDATA, so beware of (shell
+        /// and DNS) quoting rules.
+        ///
+        /// Each RDATA argument will be parsed as if it was read from a zone file.
+        ///
+        /// For quoting example see `dnst update add --help`
         #[arg(value_name = "RDATA")]
         rdata: Vec<String>,
     },
@@ -1009,49 +1024,6 @@ impl LdnsUpdate {
 
 //------------ UpdateHelpers -------------------------------------------------
 
-// 4 - Requestor Behaviour
-
-//    4.1. Requestors are expected to know the name of the
-//    zone they intend to update and to know or be able to determine the
-//    name servers for that zone.
-
-//    4.2. If update ordering is desired, the requestor will need to know
-//    the value of the existing SOA RR.  Requestors who update the SOA RR
-//    must update the SOA SERIAL field in a positive direction (as defined
-//    by [RFC1982]) and also preserve the other SOA fields unless the
-//    requestor's explicit intent is to change them.  The SOA SERIAL field
-//    must never be set to zero (0).
-
-//    4.3. [...], then it should arrange to try the primary master server (as
-//    given by the SOA MNAME field if matched by some NS NSDNAME) first to
-//    avoid unnecessary forwarding
-
-//    4.4. [...], the requestor composes an UPDATE message of the following
-//    form and sends it to the first name server on its list:
-
-//       ID:                        (new)
-//       Opcode:                    UPDATE
-//       Zone zcount:               1
-//       Zone zname:                (zone name)
-//       Zone zclass:               (zone class)
-//       Zone ztype:                T_SOA
-//       Prerequisite Section:      (see previous text)
-//       Update Section:            (see previous text)
-//       Additional Data Section:   (empty)
-
-//    4.5. If the requestor receives a response, and the response has an
-//    RCODE other than SERVFAIL or NOTIMP, then the requestor returns an
-//    appropriate response to its caller.
-
-//    4.6. If a response is received whose RCODE is SERVFAIL or NOTIMP, or
-//    if no response is received within an implementation dependent timeout
-//    period, or if an ICMP error is received indicating that the server's
-//    port is unreachable, then the requestor will delete the unusable
-//    server from its internal name server list and try the next one,
-//    repeating until the name server list is empty.  If the requestor runs
-//    out of servers to try, an appropriate error will be returned to the
-//    requestor's caller.
-
 struct UpdateHelpers;
 
 impl UpdateHelpers {
@@ -1081,7 +1053,7 @@ impl UpdateHelpers {
     ///
     /// This is achieved in 3 steps:
     ///  1. Get the MNAME with a SOA query for the domain name
-    ///  2. Get the A record for the MNAME
+    ///  2. Get the IP addresses for the MNAME
     ///  3. Send a SOA query to that IP address and use the owner as zone
     ///     and the MNAME from that response.
     async fn find_mname_and_zone_and_soa(
