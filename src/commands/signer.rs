@@ -432,7 +432,6 @@ impl Signer {
                     todo!();
                 }
                 if need_resign {
-                    println!("Signing zone");
                     signer_state.config_modified = signer_config_modified;
                     signer_state.keyset_state_modified = keyset_state_modified;
                     let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
@@ -1074,6 +1073,8 @@ impl Signer {
             }
         }
 
+        writer.flush()?;
+
         if !sc.notify_command.is_empty() {
             let output = Command::new(&sc.notify_command[0])
                 .args(&sc.notify_command[1..])
@@ -1532,6 +1533,15 @@ struct ZonemdTuple(ZonemdScheme, ZonemdAlgorithm);
 enum FileOrStdout<T: io::Write, U: io::Write> {
     File(T),
     Stdout(Stream<U>),
+}
+
+impl<T: io::Write, U: io::Write> FileOrStdout<T, U> {
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        match self {
+            FileOrStdout::File(f) => f.flush(),
+            FileOrStdout::Stdout(s) => (s as &Stream<_>).flush(),
+        }
+    }
 }
 
 impl<T: io::Write, U: io::Write> fmt::Write for FileOrStdout<T, U> {
