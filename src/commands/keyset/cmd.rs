@@ -1375,6 +1375,7 @@ pub struct KeySetState {
 
     /// KMIP related configuration.
     #[cfg(feature = "kmip")]
+    #[serde(default)]
     pub kmip: KmipState,
 }
 
