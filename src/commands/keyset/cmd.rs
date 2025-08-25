@@ -1,3 +1,4 @@
+//! The keyset subcomnand.
 use std::cmp::min;
 use std::collections::HashMap;
 use std::convert::From;

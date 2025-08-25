@@ -1,14 +1,23 @@
-/// KMIP support
-///
-/// KMIP (OASIS Key Management Interoperability Protocol) is a specification
-/// for communicating with HSMs (Hardware Security Modules) that implement
-/// secure cryptographic key generation and signing of data using generated
-/// keys.
-///
-/// The functions and types in this module are used to extend `dnst keyset` to
-/// support KMIP based cryptographic keys as well as the default Ring/OpenSSL
-/// based keys.
-//------------ KmipClientCredentialArgs --------------------------------------
+//! KMIP support for the keyset subcommand.
+//!
+//! KMIP (OASIS Key Management Interoperability Protocol) is a specification
+//! for communicating with HSMs (Hardware Security Modules) that implement
+//! secure cryptographic key generation and signing of data using generated
+//! keys.
+//!
+//! The functions and types in this module are used to extend `dnst keyset` to
+//! support KMIP based cryptographic keys as well as the default Ring/OpenSSL
+//! based keys.
+
+// Note: Currently this is only used by `dnst keyset` but one can imagine it
+// also being used by `dnst keygen`, `dnst key2ds` and `dnst signzone`. It may
+// make sense to move the pure KMIP content from here to say src/kmip.rs and
+// only keep the `dnst keyset` specific KMIP content in this module. One would
+// also then need a way to configure which KMIP server the other subcommands
+// should use and might want to also at that point consider a `dnst`-wide
+// config mechanism for KMIP servers, e.g. `dnst kmip` or `dnst cfg kmip` or
+// something.
+
 use std::{
     collections::HashMap,
     fmt::Formatter,
@@ -37,6 +46,7 @@ use crate::{
 
 /// The default TCP port on which to connect to a KMIP server as defined by
 /// IANA.
+// TODO: Move this to the `kmip-protocol` crate?
 pub const DEF_KMIP_PORT: u16 = 5696;
 
 //------------ KmipCommands --------------------------------------------------
@@ -333,6 +343,7 @@ pub enum KmipCommands {
 
 //------------ kmip_command() ------------------------------------------------
 
+/// Process a `dnst keyset kmip` command.
 pub fn kmip_command(
     env: &impl Env,
     cmd: KmipCommands,
@@ -368,12 +379,12 @@ pub fn kmip_command(
 
             let credentials = match (credentials_store_path, username, password) {
                 (Some(credentials_store_path), Some(username), password) => {
-                    Some(KmipClientCredentialArgs {
+                    Some(KmipClientCredentialsConfig {
                         credentials_store_path,
                         credentials: Some(KmipClientCredentials { username, password }),
                     })
                 }
-                (Some(credentials_store_path), _, _) => Some(KmipClientCredentialArgs {
+                (Some(credentials_store_path), _, _) => Some(KmipClientCredentialsConfig {
                     credentials_store_path,
                     credentials: None,
                 }),
@@ -588,6 +599,7 @@ fn remove_kmip_server(kss: &mut KeySetState, server_id: String) -> Result<(), Er
     Ok(())
 }
 
+/// Remove credentials from a file, removing the file entirely if then empty.
 fn remove_kmip_client_credentials(
     server_id: &str,
     credentials_path: &Path,
@@ -646,7 +658,7 @@ fn add_kmip_server(
     server_id: String,
     ip_host_or_fqdn: String,
     port: u16,
-    credentials: Option<KmipClientCredentialArgs>,
+    credentials: Option<KmipClientCredentialsConfig>,
     client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
     server_cert_verification: KmipServerTlsCertificateVerificationConfig,
     client_limits: KmipClientLimits,
@@ -663,7 +675,7 @@ fn add_kmip_server(
         // Use unauthenticated access to the KMIP server.
         None => None,
 
-        Some(KmipClientCredentialArgs {
+        Some(KmipClientCredentialsConfig {
             credentials_store_path,
             credentials,
         }) => {
@@ -716,13 +728,19 @@ fn add_kmip_server(
 
 /// Should a setting be changed, removed or left as-is?
 enum ChangeRemoveLeave<T> {
+    /// The setting should be changed to the given value.
     Change(T),
+
+    /// The setting should be removed as if it were never set by the user.
     Remove,
+
+    /// The setting should be left unchanged at its current value.
     Leave,
 }
 
 //------------ modify_kmip_server() ------------------------------------------
 
+/// Modify the settings of a currently configured KMIP server.
 #[allow(clippy::too_many_arguments)]
 fn modify_kmip_server(
     kmip: &mut KmipState,
@@ -959,9 +977,10 @@ fn modify_kmip_server(
     Ok(())
 }
 
-//------------ KmipClientCredentialArgs --------------------------------------
+//------------ KmipClientCredentialsConfig -----------------------------------
 
-pub struct KmipClientCredentialArgs {
+/// Optional disk file based credentials for connecting to a KMIP server.
+pub struct KmipClientCredentialsConfig {
     pub credentials_store_path: PathBuf,
     pub credentials: Option<KmipClientCredentials>,
 }
@@ -999,6 +1018,7 @@ struct KmipClientCredentialsSet(HashMap<String, KmipClientCredentials>);
 
 //------------ KmipClientCredentialsFileMode ---------------------------------
 
+/// The access mode to use when accessing a credentials file.
 #[derive(Debug)]
 pub enum KmipServerCredentialsFileMode {
     /// Open an existing credentials file for reading. Saving will fail.
@@ -1216,7 +1236,7 @@ pub struct KmipClientTlsCertificateAuthConfig {
 
 //------------ KmipServerTlsCertificateVerificationConfig --------------------
 
-/// Configuratin for KMIP TLS certificate verification.
+/// Configuration for KMIP TLS certificate verification.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipServerTlsCertificateVerificationConfig {
     /// Whether or not to enable server certificate verification.
@@ -1246,6 +1266,8 @@ impl Default for KmipServerTlsCertificateVerificationConfig {
 
 //------------ KmipClientLimits ----------------------------------------------
 
+/// Limits to be imposed on the KMIP client when commmunicating with a KMIP
+/// server.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipClientLimits {
     /// TCP connect timeout
@@ -1288,6 +1310,7 @@ impl std::fmt::Display for KmipClientLimits {
 
 //------------ KeyLabelConfig ------------------------------------------------
 
+/// Whether and how to relabel KMIP keys with human readable labels.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KeyLabelConfig {
     /// Maximum label length.
@@ -1655,6 +1678,7 @@ impl std::fmt::Display for KmipState {
     }
 }
 
+/// Construct from parts a KMIP key label.
 pub fn format_key_label(
     prefix: &str,
     zone_name: &str,
@@ -1680,6 +1704,10 @@ pub fn format_key_label(
     Ok(public_key_label)
 }
 
+/// Trnucate a zone name to a maximum length.
+///
+/// First attempt to truncate by removing labels under the TLD label, falling
+/// back to truncating to N bytes from the start if needed.
 fn truncate_zone_name(mut zone_name: String, max_zone_name_len: usize) -> String {
     if zone_name.len() <= max_zone_name_len {
         return zone_name;
