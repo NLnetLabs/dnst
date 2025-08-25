@@ -166,11 +166,21 @@ pub enum KmipCommands {
         ca_cert_path: Option<PathBuf>,
 
         /// TCP connect timeout.
+        // Note: This should be low otherwise the CLI user experience when
+        // running a command that interacts with a KMIP server, like `dnst
+        // init`, is that the command hangs if the KMIP server is not running
+        // or not reachable, until the timeout expires, and one would expect
+        // that under normal circumstances establishing a TCP connection to
+        // the KMIP server should be quite quick.
+        // Note: Does this also include time for TLS setup?
         #[arg(help_heading = "Client Limits", long = "connect-timeout", value_parser = parse_duration, default_value = "3s")]
         connect_timeout: Duration,
 
         /// TCP response read timeout.
-        #[arg(help_heading = "Client Limits", long = "read-timeout", value_parser = parse_duration, default_value = "3s")]
+        // Note: This should be high otherwise for HSMs that are slow to
+        // respond, like the YubiHSM, we time out the connection while waiting
+        // for the response when generating keys.
+        #[arg(help_heading = "Client Limits", long = "read-timeout", value_parser = parse_duration, default_value = "30s")]
         read_timeout: Duration,
 
         /// TCP request write timeout.
