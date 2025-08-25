@@ -613,7 +613,7 @@ impl Keyset {
                         .expect("should not happen")
                 };
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kss, env, true)?;
                 kss.internal
                     .insert(RollType::AlgorithmRoll, Default::default());
 
@@ -621,25 +621,25 @@ impl Keyset {
                 state_changed = true;
             }
             Commands::StartKskRoll => {
-                let actions = start_ksk_roll(&ksc, &mut kss, env)?;
+                let actions = start_ksk_roll(&ksc, &mut kss, env, true)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartZskRoll => {
-                let actions = start_zsk_roll(&ksc, &mut kss, env)?;
+                let actions = start_zsk_roll(&ksc, &mut kss, env, true)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartCskRoll => {
-                let actions = start_csk_roll(&ksc, &mut kss, env)?;
+                let actions = start_csk_roll(&ksc, &mut kss, env, true)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartAlgorithmRoll => {
-                let actions = start_algorithm_roll(&ksc, &mut kss, env)?;
+                let actions = start_algorithm_roll(&ksc, &mut kss, env, true)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -689,7 +689,7 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kss, env, true)?;
 
                 // Report actions
                 print_actions(&actions);
@@ -728,7 +728,7 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env)?;
+                handle_actions(&actions, &ksc, &mut kss, env, true)?;
 
                 // Report actions
                 print_actions(&actions);
@@ -769,14 +769,66 @@ impl Keyset {
                 if let Some(cron_next) = &kss.cron_next {
                     println!("Next time to run the 'cron' subcommand {cron_next}");
                 }
+
+                let mut first = true;
+                for (r, s) in kss.keyset.rollstates() {
+                    let auto_state = kss.internal.get(r).expect("should exit");
+                    match s {
+                        // Nothing to report.
+                        RollState::CacheExpire1(_) | RollState::CacheExpire2(_) => (),
+
+                        RollState::Propagation1 => {
+                            let auto_state =
+                                auto_state.propagation1.lock().expect("should not fail");
+                            if auto_state.dnskey.is_none()
+                                && auto_state.ds.is_none()
+                                && auto_state.rrsig.is_none()
+                            {
+                                continue;
+                            }
+                            if first {
+                                first = false;
+                                println!("Automatic key roll state:");
+                            }
+                            show_automatic_roll_state(*r, s, &auto_state, true);
+                        }
+                        RollState::Propagation2 => {
+                            let auto_state =
+                                auto_state.propagation2.lock().expect("should not fail");
+                            if auto_state.dnskey.is_none()
+                                && auto_state.ds.is_none()
+                                && auto_state.rrsig.is_none()
+                            {
+                                continue;
+                            }
+                            if first {
+                                first = false;
+                                println!("Automatic key roll state:");
+                            }
+                            show_automatic_roll_state(*r, s, &auto_state, true);
+                        }
+                        RollState::Done => {
+                            let auto_state = auto_state.done.lock().expect("should not fail");
+                            if auto_state.dnskey.is_none()
+                                && auto_state.ds.is_none()
+                                && auto_state.rrsig.is_none()
+                            {
+                                continue;
+                            }
+                            if first {
+                                first = false;
+                                println!("Automatic key roll state:");
+                            }
+                            show_automatic_roll_state(*r, s, &auto_state, false);
+                        }
+                    }
+                }
             }
             Commands::Actions => {
                 for roll in kss.keyset.rollstates().keys() {
                     let actions = kss.keyset.actions(*roll);
                     println!("{roll:?} actions:");
-                    for a in actions {
-                        println!("\t{a:?}");
-                    }
+                    print_actions(&actions);
                 }
             }
             Commands::Keys => {
@@ -883,12 +935,18 @@ impl Keyset {
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
-                    update_dnskey_rrset(&mut kss, &ksc, env)?;
+                    update_dnskey_rrset(&mut kss, &ksc, env, false)?;
                     state_changed = true;
                 }
                 if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
                     println!("CDS/CDNSKEY RRSIGs need to be renewed");
-                    create_cds_rrset(&mut kss, &ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?;
+                    create_cds_rrset(
+                        &mut kss,
+                        &ksc,
+                        ksc.ds_algorithm.to_digest_algorithm(),
+                        env,
+                        false,
+                    )?;
                     state_changed = true;
                 }
 
@@ -1582,7 +1640,7 @@ struct RollStateReports {
     done: Mutex<ReportState>,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ReportState {
     /// State for DNSKEY propagation checks.
     dnskey: Option<AutoReportActionsResult>,
@@ -1675,6 +1733,7 @@ fn update_dnskey_rrset(
     kss: &mut KeySetState,
     ksc: &KeySetConfig,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<(), Error> {
     let mut dnskeys = Vec::new();
     for (k, v) in kss.keyset.keys() {
@@ -1796,7 +1855,12 @@ fn update_dnskey_rrset(
         kss.dnskey_rrset
             .push(r.display_zonefile(DisplayKind::Simple).to_string());
     }
-    println!("Got DNSKEY RRset: {:?}", kss.dnskey_rrset);
+    if verbose {
+        println!("Got DNSKEY RRset:");
+        for r in &kss.dnskey_rrset {
+            println!("\t{r}");
+        }
+    }
     Ok(())
 }
 
@@ -1809,6 +1873,7 @@ fn create_cds_rrset(
     ksc: &KeySetConfig,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<(), Error> {
     let mut cds_list = Vec::new();
     let mut cdnskey_list = Vec::new();
@@ -1988,7 +2053,12 @@ fn create_cds_rrset(
             .push(r.display_zonefile(DisplayKind::Simple).to_string());
     }
 
-    println!("Got CDS/CDNSKEY RRset: {:?}", kss.cds_rrset);
+    if verbose {
+        println!("Got CDS/CDNSKEY RRset:");
+        for r in &kss.cds_rrset {
+            println!("\t{r}");
+        }
+    }
     Ok(())
 }
 
@@ -2005,6 +2075,7 @@ fn update_ds_rrset(
     kss: &mut KeySetState,
     digest_alg: DigestAlgorithm,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<(), Error> {
     let mut ds_list = Vec::new();
     for (k, v) in kss.keyset.keys() {
@@ -2067,7 +2138,12 @@ fn update_ds_rrset(
             .push(r.display_zonefile(DisplayKind::Simple).to_string());
     }
 
-    println!("Got DS RRset: {:?}", kss.ds_rrset);
+    if verbose {
+        println!("Got DS RRset:");
+        for r in &kss.ds_rrset {
+            println!("\t{r}");
+        }
+    }
     Ok(())
 }
 
@@ -2081,16 +2157,21 @@ fn handle_actions(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<(), Error> {
     for action in actions {
         match action {
-            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env)?,
-            Action::CreateCdsRrset => {
-                create_cds_rrset(kss, ksc, ksc.ds_algorithm.to_digest_algorithm(), env)?
-            }
+            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env, verbose)?,
+            Action::CreateCdsRrset => create_cds_rrset(
+                kss,
+                ksc,
+                ksc.ds_algorithm.to_digest_algorithm(),
+                env,
+                verbose,
+            )?,
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
-                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env)?
+                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env, verbose)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
@@ -2111,11 +2192,59 @@ fn print_actions(actions: &[Action]) {
     if actions.is_empty() {
         println!("No actions");
     } else {
-        print!("Actions:");
+        println!("Actions:");
+        let mut report_count = 0;
         for a in actions {
-            print!(" {a:?}");
+            println!("\t{a:?}:");
+            match a {
+                Action::CreateCdsRrset => {
+                    println!("\t\tsign the zone with the CDS and CDNSKEY RRsets")
+                }
+                Action::RemoveCdsRrset => {
+                    println!("\t\tsign the zone with empty CDS and CDNSKEY RRsets")
+                }
+                Action::UpdateDnskeyRrset => {
+                    println!("\t\tsign the zone with the new DNSKEY RRset from the state file")
+                }
+                Action::UpdateDsRrset => {
+                    println!("\t\tupdate the DS RRset at the parent to match the CDNSKEY RRset")
+                }
+                Action::UpdateRrsig => println!("\t\tsign the zone with the new zone signing keys"),
+                Action::ReportDnskeyPropagated => {
+                    println!("\t\tverify that the new DNSKEY RRset has propagated to all");
+                    println!("\t\tnameservers and report (at least) the TTL of the DNSKEY RRset");
+                    report_count += 1;
+                }
+                Action::ReportDsPropagated => {
+                    println!("\t\tverify that all nameservers of the parent zone have a new");
+                    println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset and");
+                    println!("\t\treport (at least) the TTL of the DNSKEY RRset");
+                    report_count += 1;
+                }
+                Action::ReportRrsigPropagated => {
+                    println!("\t\tverify that the new RRSIG records have propagated to all");
+                    println!("\t\tnameservers and report (at least) the maximum TTL among");
+                    println!("\t\tthe RRSIG records");
+                    report_count += 1;
+                }
+                Action::WaitDnskeyPropagated => {
+                    println!("\t\tverify that the new DNSKEY RRset has propagated to all");
+                    println!("\t\tnameservers");
+                }
+                Action::WaitDsPropagated => {
+                    println!("\t\tverify that all nameservers of the parent zone have a new");
+                    println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset");
+                }
+                Action::WaitRrsigPropagated => {
+                    println!("\t\tverify that the new RRSIG records have propagated to all");
+                    println!("\t\tnameservers");
+                }
+            }
+            println!();
         }
-        println!();
+        if report_count > 1 {
+            println!("\tNote: with multiple Report actions, report the maximum of the TTLs.");
+        }
     }
 }
 
@@ -2331,8 +2460,6 @@ async fn auto_wait_actions(
 
                 let result = report_dnskey_propagated(kss).await;
 
-                dbg!(&result);
-
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.dnskey = Some(result.clone());
                 drop(report_state_locked);
@@ -2499,7 +2626,6 @@ async fn auto_wait_actions(
                 });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
-                dbg!("Setting rrsig to WaitSoa");
                 report_state_locked.rrsig = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2734,7 +2860,6 @@ async fn auto_report_actions(
                 });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
-                dbg!("Setting rrsig to WaitSoa");
                 report_state_locked.rrsig = Some(result.clone());
                 drop(report_state_locked);
                 *state_changed = true;
@@ -2898,8 +3023,10 @@ fn start_ksk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<Vec<Action>, Error> {
-    let roll_type = RollType::KskRoll;
+    //let roll_type = RollType::KskRoll;
+    let roll_type = RollType::KskDoubleDsRoll;
 
     assert!(!kss.keyset.keys().is_empty());
 
@@ -2985,7 +3112,7 @@ fn start_ksk_roll(
             return Err(e);
         }
     };
-    handle_actions(&actions, ksc, kss, env)?;
+    handle_actions(&actions, ksc, kss, env, verbose)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -2995,6 +3122,7 @@ fn start_zsk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::ZskRoll;
 
@@ -3083,7 +3211,7 @@ fn start_zsk_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env)?;
+    handle_actions(&actions, ksc, kss, env, verbose)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3093,6 +3221,7 @@ fn start_csk_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::CskRoll;
 
@@ -3221,7 +3350,7 @@ fn start_csk_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env)?;
+    handle_actions(&actions, ksc, kss, env, verbose)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3231,6 +3360,7 @@ fn start_algorithm_roll(
     ksc: &KeySetConfig,
     kss: &mut KeySetState,
     env: &impl Env,
+    verbose: bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::AlgorithmRoll;
 
@@ -3357,7 +3487,7 @@ fn start_algorithm_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env)?;
+    handle_actions(&actions, ksc, kss, env, verbose)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3392,7 +3522,6 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
             return AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT);
         }
     };
-    dbg!(&addresses);
 
     // addresses_for_zone returns at least one address.
     assert!(!addresses.is_empty());
@@ -3469,7 +3598,6 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
     let zone = kss.keyset.name();
     let parent_zone = parent_zone(zone).await?;
     let addresses = addresses_for_zone(&parent_zone).await?;
-    dbg!(&addresses);
 
     // addresses_for_zone returns at least one address.
     assert!(!addresses.is_empty());
@@ -3569,7 +3697,6 @@ async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
 
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::SOA)).await?;
-    dbg!(&answer.answer());
     let Some(Ok((mname, mut serial))) = answer
         .answer()?
         .limit_to_in::<Soa<_>>()
@@ -3708,7 +3835,6 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
     // Current method, ask a resolver for the apex NS RRset. Loop over the
     // set and ask for addresses. Return the list of addresses.
 
-    dbg!(zone.to_name::<Vec<u8>>());
     let mut nameservers = Vec::new();
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::NS)).await?;
@@ -3716,7 +3842,6 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
     if rcode != OptRcode::NOERROR {
         return Err(format!("{}/NS query failed: {rcode}", zone.to_name::<Vec<u8>>()).into());
     }
-    dbg!(&answer.answer());
     for r in answer.answer()?.limit_to_in::<AllRecordData<_, _>>() {
         let r = r?;
         let AllRecordData::Ns(ns) = r.data() else {
@@ -3730,7 +3855,6 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
     if nameservers.is_empty() {
         return Err(format!("{} has no NS records", zone.to_name::<Vec<u8>>()).into());
     }
-    dbg!(&nameservers);
 
     let mut futures = Vec::new();
     for n in nameservers {
@@ -3960,15 +4084,12 @@ where
 
 /// Return the name of the parent zone.
 async fn parent_zone(name: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
-    dbg!("parent_zone");
-    dbg!(name);
     let parent = name
         .parent()
         .ok_or_else::<Error, _>(|| format!("unable to get parent of {name}").into())?;
 
     let resolver = StubResolver::new();
     let answer = resolver.query((&parent, Rtype::SOA)).await?;
-    dbg!(&answer.answer());
     let rcode = answer.opt_rcode();
     if rcode != OptRcode::NOERROR {
         return Err(format!("{parent}/SOA query failed: {rcode}").into());
@@ -4013,7 +4134,7 @@ fn auto_start<Env>(
     state_changed: &mut bool,
     conficting_roll: impl Fn(RollType) -> bool,
     match_keytype: impl Fn(KeyType) -> Option<KeyState>,
-    start_roll: impl Fn(&KeySetConfig, &mut KeySetState, Env) -> Result<Vec<Action>, Error>,
+    start_roll: impl Fn(&KeySetConfig, &mut KeySetState, Env, bool) -> Result<Vec<Action>, Error>,
 ) -> Result<(), Error> {
     if let Some(validity) = validity {
         if auto.start {
@@ -4046,7 +4167,7 @@ fn auto_start<Env>(
                     .min();
                 if let Some(next) = next {
                     if next < UnixTime::now() {
-                        start_roll(ksc, kss, env)?;
+                        start_roll(ksc, kss, env, false)?;
                         *state_changed = true;
                     }
                 }
@@ -4107,9 +4228,7 @@ async fn auto_report_expire_done(
                             }
                         };
 
-                        handle_actions(&actions, ksc, kss, env)?;
-                        // Report actions
-                        print_actions(&actions);
+                        handle_actions(&actions, ksc, kss, env, false)?;
                         *state_changed = true;
                     }
                 }
@@ -4134,9 +4253,8 @@ async fn auto_report_expire_done(
                 let actions = actions.map_err::<Error, _>(|e| {
                     format!("cache_expired[12] failed for state {r:?}: {e}").into()
                 })?;
-                handle_actions(&actions, ksc, kss, env)?;
+                handle_actions(&actions, ksc, kss, env, false)?;
                 // Report actions
-                print_actions(&actions);
                 *state_changed = true;
             }
         }
@@ -4526,7 +4644,6 @@ fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u
 async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Error> {
     let resolver = StubResolver::new();
     let answer = resolver.query((zone, Rtype::SOA)).await?;
-    dbg!(&answer.answer());
     let Some(Ok(mname)) = answer
         .answer()?
         .limit_to_in::<Soa<_>>()
@@ -4574,6 +4691,72 @@ fn algorithm_roll_needed(ksc: &KeySetConfig, kss: &KeySetState) -> bool {
         .collect();
     let new_algs = HashSet::from([ksc.algorithm.to_generate_params().algorithm()]);
     curr_algs != new_algs
+}
+
+/// Show the automatic roll state for one state in a roll.
+fn show_automatic_roll_state(
+    roll: RollType,
+    state: &RollState,
+    auto_state: &ReportState,
+    report: bool,
+) {
+    println!("Roll {roll:?}, state {state:?}:");
+    if let Some(status) = &auto_state.dnskey {
+        match status {
+            AutoReportActionsResult::Wait(retry) => {
+                println!("\tWait until the new DNSKEY RRset has propagated to all nameservers.");
+                println!("\tTry again after {retry}");
+            }
+            AutoReportActionsResult::Report(ttl) => {
+                println!("\tThe new DNSKEY RRset has propagated to all nameservers.");
+                if report {
+                    println!("\tReport (at least) TTL {}", ttl.as_secs());
+                }
+            }
+        }
+    }
+    if let Some(status) = &auto_state.ds {
+        match status {
+            AutoReportActionsResult::Wait(retry) => {
+                println!("\tWait until the new DS RRset has propagated to all nameservers");
+                println!("\tof the parent zone. Try again after {retry}");
+            }
+            AutoReportActionsResult::Report(ttl) => {
+                println!("\tThe new DS RRset has propagated to all nameservers.");
+                if report {
+                    println!("\tReport (at least) TTL {}", ttl.as_secs());
+                }
+            }
+        }
+    }
+    if let Some(status) = &auto_state.rrsig {
+        match status {
+            AutoReportRrsigResult::Wait(next) => {
+                println!("\tSomething went wrong transferring the zone to be verified.");
+                println!("\tTry again after {next}");
+            }
+            AutoReportRrsigResult::WaitRecord {
+                name, rtype, next, ..
+            } => {
+                println!("\tWait until {name}/{rtype} is signed with the right keys.");
+                println!("\tTry again after {next}");
+            }
+            AutoReportRrsigResult::WaitNextSerial { serial, next, .. } => {
+                println!("\tWait for a zone with serial higher than {serial}");
+                println!("\tTry again after {next}");
+            }
+            AutoReportRrsigResult::WaitSoa { serial, next, .. } => {
+                println!("\tWait until the zone with at least serial {serial} has propagated");
+                println!("\tto all nameservers. Try again after {next}");
+            }
+            AutoReportRrsigResult::Report(ttl) => {
+                println!("\tThe new RRSIG records have propagated to all nameservers.");
+                if report {
+                    println!("\tReport (at least) TTL {}", ttl.as_secs());
+                }
+            }
+        }
+    }
 }
 
 /*
