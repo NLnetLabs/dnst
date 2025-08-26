@@ -40,9 +40,11 @@ use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::fs::{remove_file, File};
+use std::io;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
@@ -433,6 +435,12 @@ enum SetCommands {
         #[arg(value_parser = parse_opt_duration)]
         opt_duration: OptDuration,
     },
+
+    /// Set the command to run when the DS records at the parent need updating.
+    UpdateDsCommand {
+        /// Command and arguments.
+        args: Vec<String>,
+    },
 }
 
 impl Keyset {
@@ -487,6 +495,7 @@ impl Keyset {
                 cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
                 autoremove: false,
+                update_ds_command: Vec::new(),
             };
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
             let mut file = File::create(&state_file).map_err::<Error, _>(|e| {
@@ -532,6 +541,7 @@ impl Keyset {
 
         let mut config_changed = false;
         let mut state_changed = false;
+        let mut run_update_ds_command = false;
 
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
@@ -613,7 +623,14 @@ impl Keyset {
                         .expect("should not happen")
                 };
 
-                handle_actions(&actions, &ksc, &mut kss, env, true)?;
+                handle_actions(
+                    &actions,
+                    &ksc,
+                    &mut kss,
+                    env,
+                    true,
+                    &mut run_update_ds_command,
+                )?;
                 kss.internal
                     .insert(RollType::AlgorithmRoll, Default::default());
 
@@ -621,25 +638,29 @@ impl Keyset {
                 state_changed = true;
             }
             Commands::StartKskRoll => {
-                let actions = start_ksk_roll(&ksc, &mut kss, env, true)?;
+                let actions =
+                    start_ksk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartZskRoll => {
-                let actions = start_zsk_roll(&ksc, &mut kss, env, true)?;
+                let actions =
+                    start_zsk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartCskRoll => {
-                let actions = start_csk_roll(&ksc, &mut kss, env, true)?;
+                let actions =
+                    start_csk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
 
                 print_actions(&actions);
                 state_changed = true;
             }
             Commands::StartAlgorithmRoll => {
-                let actions = start_algorithm_roll(&ksc, &mut kss, env, true)?;
+                let actions =
+                    start_algorithm_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
 
                 print_actions(&actions);
                 state_changed = true;
@@ -689,7 +710,14 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env, true)?;
+                handle_actions(
+                    &actions,
+                    &ksc,
+                    &mut kss,
+                    env,
+                    true,
+                    &mut run_update_ds_command,
+                )?;
 
                 // Report actions
                 print_actions(&actions);
@@ -728,7 +756,14 @@ impl Keyset {
 
                 // Handle error
 
-                handle_actions(&actions, &ksc, &mut kss, env, true)?;
+                handle_actions(
+                    &actions,
+                    &ksc,
+                    &mut kss,
+                    env,
+                    true,
+                    &mut run_update_ds_command,
+                )?;
 
                 // Report actions
                 print_actions(&actions);
@@ -931,6 +966,7 @@ impl Keyset {
                 println!("cds-remain-time: {:?}", ksc.cds_remain_time);
                 println!("ds-algorithm: {:?}", ksc.ds_algorithm);
                 println!("autoremove: {:?}", ksc.autoremove);
+                println!("update_ds_command: {:?}", ksc.update_ds_command);
             }
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
@@ -979,6 +1015,7 @@ impl Keyset {
                         } else {
                             start_csk_roll
                         },
+                        &mut run_update_ds_command,
                     )?;
 
                     // The same for the ZSK.
@@ -1006,6 +1043,7 @@ impl Keyset {
                         } else {
                             start_csk_roll
                         },
+                        &mut run_update_ds_command,
                     )?;
                 } else {
                     auto_start(
@@ -1024,6 +1062,7 @@ impl Keyset {
                             }
                         },
                         start_ksk_roll,
+                        &mut run_update_ds_command,
                     )?;
 
                     auto_start(
@@ -1042,6 +1081,7 @@ impl Keyset {
                             }
                         },
                         start_zsk_roll,
+                        &mut run_update_ds_command,
                     )?;
                 }
 
@@ -1069,6 +1109,7 @@ impl Keyset {
                     } else {
                         start_csk_roll
                     },
+                    &mut run_update_ds_command,
                 )?;
 
                 auto_report_expire_done(
@@ -1078,6 +1119,7 @@ impl Keyset {
                     &mut kss,
                     env,
                     &mut state_changed,
+                    &mut run_update_ds_command,
                 )
                 .await?;
                 auto_report_expire_done(
@@ -1087,6 +1129,7 @@ impl Keyset {
                     &mut kss,
                     env,
                     &mut state_changed,
+                    &mut run_update_ds_command,
                 )
                 .await?;
                 auto_report_expire_done(
@@ -1096,6 +1139,7 @@ impl Keyset {
                     &mut kss,
                     env,
                     &mut state_changed,
+                    &mut run_update_ds_command,
                 )
                 .await?;
                 auto_report_expire_done(
@@ -1105,6 +1149,7 @@ impl Keyset {
                     &mut kss,
                     env,
                     &mut state_changed,
+                    &mut run_update_ds_command,
                 )
                 .await?;
             }
@@ -1266,6 +1311,22 @@ impl Keyset {
                 format!("unable to write to file {}: {e}", ksc.state_file.display()).into()
             })?;
         }
+
+        // Now check if we need to run the update_ds_command. Make sure that
+        // all locks are released before running the command. The command
+        // may want to call back into keyset to retreive the DS
+        // (or CDS/CDNSKEY) records.
+        if run_update_ds_command && !ksc.update_ds_command.is_empty() {
+            let output = Command::new(&ksc.update_ds_command[0])
+                .args(&ksc.update_ds_command[1..])
+                .output()?;
+            if !output.status.success() {
+                println!("update command failed with: {}", output.status);
+                io::stdout().write_all(&output.stdout)?;
+                io::stderr().write_all(&output.stderr)?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -1419,6 +1480,9 @@ fn set_command(
         SetCommands::CskValidity { opt_duration } => {
             ksc.csk_validity = opt_duration;
         }
+        SetCommands::UpdateDsCommand { args } => {
+            ksc.update_ds_command = args;
+        }
     }
     *config_changed = true;
     Ok(())
@@ -1479,6 +1543,9 @@ struct KeySetConfig {
 
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
+
+    /// Command to run when the DS records at the parent need updating.
+    update_ds_command: Vec<String>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -2158,6 +2225,7 @@ fn handle_actions(
     kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<(), Error> {
     for action in actions {
         match action {
@@ -2171,6 +2239,7 @@ fn handle_actions(
             )?,
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
+                *run_update_ds_command = true;
                 update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env, verbose)?
             }
             Action::UpdateRrsig => (),
@@ -3024,6 +3093,7 @@ fn start_ksk_roll(
     kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
     //let roll_type = RollType::KskRoll;
     let roll_type = RollType::KskDoubleDsRoll;
@@ -3112,7 +3182,7 @@ fn start_ksk_roll(
             return Err(e);
         }
     };
-    handle_actions(&actions, ksc, kss, env, verbose)?;
+    handle_actions(&actions, ksc, kss, env, verbose, run_update_ds_command)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3123,6 +3193,7 @@ fn start_zsk_roll(
     kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::ZskRoll;
 
@@ -3211,7 +3282,7 @@ fn start_zsk_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env, verbose)?;
+    handle_actions(&actions, ksc, kss, env, verbose, run_update_ds_command)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3222,6 +3293,7 @@ fn start_csk_roll(
     kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::CskRoll;
 
@@ -3350,7 +3422,7 @@ fn start_csk_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env, verbose)?;
+    handle_actions(&actions, ksc, kss, env, verbose, run_update_ds_command)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -3361,6 +3433,7 @@ fn start_algorithm_roll(
     kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
     let roll_type = RollType::AlgorithmRoll;
 
@@ -3487,7 +3560,7 @@ fn start_algorithm_roll(
         }
     };
 
-    handle_actions(&actions, ksc, kss, env, verbose)?;
+    handle_actions(&actions, ksc, kss, env, verbose, run_update_ds_command)?;
     kss.internal.insert(roll_type, Default::default());
     Ok(actions)
 }
@@ -4134,7 +4207,14 @@ fn auto_start<Env>(
     state_changed: &mut bool,
     conficting_roll: impl Fn(RollType) -> bool,
     match_keytype: impl Fn(KeyType) -> Option<KeyState>,
-    start_roll: impl Fn(&KeySetConfig, &mut KeySetState, Env, bool) -> Result<Vec<Action>, Error>,
+    start_roll: impl Fn(
+        &KeySetConfig,
+        &mut KeySetState,
+        Env,
+        bool,
+        &mut bool,
+    ) -> Result<Vec<Action>, Error>,
+    run_update_ds_command: &mut bool,
 ) -> Result<(), Error> {
     if let Some(validity) = validity {
         if auto.start {
@@ -4167,7 +4247,7 @@ fn auto_start<Env>(
                     .min();
                 if let Some(next) = next {
                     if next < UnixTime::now() {
-                        start_roll(ksc, kss, env, false)?;
+                        start_roll(ksc, kss, env, false, run_update_ds_command)?;
                         *state_changed = true;
                     }
                 }
@@ -4191,6 +4271,7 @@ async fn auto_report_expire_done(
     kss: &mut KeySetState,
     env: &impl Env,
     state_changed: &mut bool,
+    run_update_ds_command: &mut bool,
 ) -> Result<(), Error> {
     if auto.report {
         // If there is currently a roll in one of the
@@ -4228,7 +4309,7 @@ async fn auto_report_expire_done(
                             }
                         };
 
-                        handle_actions(&actions, ksc, kss, env, false)?;
+                        handle_actions(&actions, ksc, kss, env, false, run_update_ds_command)?;
                         *state_changed = true;
                     }
                 }
@@ -4253,7 +4334,7 @@ async fn auto_report_expire_done(
                 let actions = actions.map_err::<Error, _>(|e| {
                     format!("cache_expired[12] failed for state {r:?}: {e}").into()
                 })?;
-                handle_actions(&actions, ksc, kss, env, false)?;
+                handle_actions(&actions, ksc, kss, env, false, run_update_ds_command)?;
                 // Report actions
                 *state_changed = true;
             }
