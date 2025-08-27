@@ -45,7 +45,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
 use std::fmt::{Debug, Display, Formatter};
 //use std::fs::{remove_file, File};
-use std::fs::{remove_file as remove_fileX, File};
+use std::fs::{remove_file, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
@@ -265,8 +265,10 @@ enum Commands {
     /// automatic steps in key rolls.
     Cron,
 
+    /// Kmip command.
     #[cfg(feature = "kmip")]
     Kmip {
+        /// Kmip subcommands.
         #[command(subcommand)]
         subcommand: KmipCommands,
     },
@@ -573,82 +575,13 @@ impl Keyset {
                     return Err("already initialized\n".into());
                 }
 
-                // XXX create common function for new CSK keys.
+                let (new_stored, _) = new_csk_or_ksk_zsk(&ksc, &mut kss, env)?;
 
-                // Check for CSK.
-                let actions = if ksc.use_csk {
-                    // Generate CSK.
-                    let (csk_pub_name, csk_priv_name, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.algorithm.to_generate_params(),
-                        true,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                        #[cfg(feature = "kmip")]
-                        &mut kss.kmip,
-                    )?;
-                    kss.keyset
-                        .add_key_csk(
-                            csk_pub_name.to_string(),
-                            Some(csk_priv_name.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .expect("should not happen");
-
-                    kss.keyset
-                        .start_roll(RollType::AlgorithmRoll, &[], &[csk_pub_name.as_str()])
-                        .expect("should not happen")
-                } else {
-                    let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.algorithm.to_generate_params(),
-                        true,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                        #[cfg(feature = "kmip")]
-                        &mut kss.kmip,
-                    )?;
-                    kss.keyset
-                        .add_key_ksk(
-                            ksk_pub_url.to_string(),
-                            Some(ksk_priv_url.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .expect("should not happen");
-                    let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-                        kss.keyset.name(),
-                        ksc.algorithm.to_generate_params(),
-                        false,
-                        kss.keyset.keys(),
-                        &ksc.keys_dir,
-                        env,
-                        #[cfg(feature = "kmip")]
-                        &mut kss.kmip,
-                    )?;
-                    kss.keyset
-                        .add_key_zsk(
-                            zsk_pub_url.to_string(),
-                            Some(zsk_priv_url.to_string()),
-                            algorithm,
-                            key_tag,
-                            UnixTime::now(),
-                            true,
-                        )
-                        .expect("should not happen");
-
-                    let new = [ksk_pub_url.as_ref(), zsk_pub_url.as_ref()];
-                    kss.keyset
-                        .start_roll(RollType::AlgorithmRoll, &[], &new)
-                        .expect("should not happen")
-                };
+                let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+                let actions = kss
+                    .keyset
+                    .start_roll(RollType::AlgorithmRoll, &[], &new)
+                    .expect("should not happen");
 
                 handle_actions(
                     &actions,
@@ -1363,11 +1296,12 @@ impl Keyset {
     }
 }
 
+/// Remove a key from the filesystem or the HSM.
 #[allow(unused_variables)]
 fn remove_key(kss: &mut KeySetState, url: Url) -> Result<(), Error> {
     match url.scheme() {
         "file" => {
-            remove_fileX(url.path()).map_err::<Error, _>(|e| {
+            remove_file(url.path()).map_err::<Error, _>(|e| {
                 format!("unable to remove key file {}: {e}\n", url.path()).into()
             })?;
         }
@@ -2452,6 +2386,7 @@ fn create_cds_rrset(
     Ok(())
 }
 
+/// Create CDS and CDNSKEY RRsets.
 fn create_cds_rrset_helper(
     digest_alg: DigestAlgorithm,
     cds_list: &mut Vec<Record<Name<Bytes>, Cds<Vec<u8>>>>,
@@ -3474,15 +3409,15 @@ fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Resu
                     format!("unable to remove key {pubref}: {e}\n").into()
                 })?;
                 if let Some(privref) = privref {
-		    let priv_url = Url::parse(privref).map_err::<Error, _>(|e| {
-			format!("unable to parse {privref} as URL: {e}").into()
-		    })?;
+                    let priv_url = Url::parse(privref).map_err::<Error, _>(|e| {
+                        format!("unable to parse {privref} as URL: {e}").into()
+                    })?;
                     remove_key(kss, priv_url)?;
                 }
-		let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
-		    format!("unable to parse {pubref} as URL: {e}").into()
-		})?;
-		remove_key(kss, pub_url)?;
+                let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
+                    format!("unable to parse {pubref} as URL: {e}").into()
+                })?;
+                remove_key(kss, pub_url)?;
             }
             println!();
         }
@@ -3543,8 +3478,8 @@ fn start_ksk_roll(
         kss.keyset.keys(),
         &ksc.keys_dir,
         env,
-	#[cfg(feature = "kmip")]
-	&mut kss.kmip,
+        #[cfg(feature = "kmip")]
+        &mut kss.kmip,
     )?;
     kss.keyset
         .add_key_ksk(
@@ -3568,8 +3503,8 @@ fn start_ksk_roll(
         Ok(actions) => actions,
         Err(e) => {
             // Remove the keys we just created.
-	    remove_key(kss, ksk_priv_url)?;
-	    remove_key(kss, ksk_pub_url)?;
+            remove_key(kss, ksk_priv_url)?;
+            remove_key(kss, ksk_pub_url)?;
             return Err(e);
         }
     };
@@ -3632,8 +3567,8 @@ fn start_zsk_roll(
         kss.keyset.keys(),
         &ksc.keys_dir,
         env,
-	#[cfg(feature = "kmip")]
-	&mut kss.kmip,
+        #[cfg(feature = "kmip")]
+        &mut kss.kmip,
     )?;
     kss.keyset
         .add_key_zsk(
@@ -3657,8 +3592,8 @@ fn start_zsk_roll(
         Ok(actions) => actions,
         Err(e) => {
             // Remove the keys we just created.
-	    remove_key(kss, zsk_priv_url)?;
-	    remove_key(kss, zsk_pub_url)?;
+            remove_key(kss, zsk_priv_url)?;
+            remove_key(kss, zsk_pub_url)?;
             return Err(e);
         }
     };
@@ -3701,89 +3636,7 @@ fn start_csk_roll(
 
     // Collect algorithms. Maybe this needs to be in the library.
 
-    let (new_stored, new_urls) = if ksc.use_csk {
-        let mut new_urls = Vec::new();
-
-        // Create a new CSK
-        let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            true,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(csk_priv_url.clone());
-        new_urls.push(csk_pub_url.clone());
-        kss.keyset
-            .add_key_csk(
-                csk_pub_url.to_string(),
-                Some(csk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add CSK {csk_pub_url}: {e}\n").into())?;
-
-        let new = vec![csk_pub_url];
-        (new, new_urls)
-    } else {
-        let mut new_urls = Vec::new();
-
-        // Create a new KSK
-        let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            true,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(ksk_priv_url.clone());
-        new_urls.push(ksk_pub_url.clone());
-        kss.keyset
-            .add_key_ksk(
-                ksk_pub_url.to_string(),
-                Some(ksk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
-
-        // Create a new ZSK
-        let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            false,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(zsk_priv_url.clone());
-        new_urls.push(zsk_pub_url.clone());
-        kss.keyset
-            .add_key_zsk(
-                zsk_pub_url.to_string(),
-                Some(zsk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
-
-        let new = vec![ksk_pub_url, zsk_pub_url];
-        (new, new_urls)
-    };
+    let (new_stored, new_urls) = new_csk_or_ksk_zsk(ksc, kss, env)?;
 
     let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
@@ -3797,7 +3650,7 @@ fn start_csk_roll(
         Err(e) => {
             // Remove the key files we just created.
             for u in new_urls {
-		remove_key(kss, u)?;
+                remove_key(kss, u)?;
             }
             return Err(e);
         }
@@ -3839,90 +3692,7 @@ fn start_algorithm_roll(
         .collect();
     let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
 
-    let (new_stored, new_urls) = if ksc.use_csk {
-        let mut new_urls = Vec::new();
-
-        // Create a new CSK
-        let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            true,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(csk_priv_url.clone());
-        new_urls.push(csk_pub_url.clone());
-        kss.keyset
-            .add_key_csk(
-                csk_pub_url.to_string(),
-                Some(csk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add CSK {csk_pub_url}: {e}\n").into())?;
-
-        let new = vec![csk_pub_url];
-        (new, new_urls)
-    } else {
-        let mut new_urls = Vec::new();
-
-        // Create a new KSK
-        let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            true,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(ksk_priv_url.clone());
-        new_urls.push(ksk_pub_url.clone());
-        kss.keyset
-            .add_key_ksk(
-                ksk_pub_url.to_string(),
-                Some(ksk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
-
-        // Create a new ZSK
-        let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
-            kss.keyset.name(),
-            ksc.algorithm.to_generate_params(),
-            false,
-            kss.keyset.keys(),
-            &ksc.keys_dir,
-            env,
-	    #[cfg(feature = "kmip")]
-	    &mut kss.kmip,
-        )?;
-        new_urls.push(zsk_priv_url.clone());
-        new_urls.push(zsk_pub_url.clone());
-        kss.keyset
-            .add_key_zsk(
-                zsk_pub_url.to_string(),
-                Some(zsk_priv_url.to_string()),
-                algorithm,
-                key_tag,
-                UnixTime::now(),
-                true,
-            )
-            .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
-
-        let new = vec![ksk_pub_url, zsk_pub_url];
-        (new, new_urls)
-    };
-
+    let (new_stored, new_urls) = new_csk_or_ksk_zsk(ksc, kss, env)?;
     let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
     // Start the key roll
@@ -3935,7 +3705,7 @@ fn start_algorithm_roll(
         Err(e) => {
             // Remove the key files we just created.
             for u in new_urls {
-		remove_key(kss, u)?;
+                remove_key(kss, u)?;
             }
             return Err(e);
         }
@@ -5219,6 +4989,98 @@ fn show_automatic_roll_state(
             }
         }
     }
+}
+
+/// Create a new CSK key or KSK and ZSK keys if use_csk is false.
+fn new_csk_or_ksk_zsk(
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+) -> Result<(Vec<Url>, Vec<Url>), Error> {
+    let (new_stored, new_urls) = if ksc.use_csk {
+        let mut new_urls = Vec::new();
+
+        // Create a new CSK
+        let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(csk_priv_url.clone());
+        new_urls.push(csk_pub_url.clone());
+        kss.keyset
+            .add_key_csk(
+                csk_pub_url.to_string(),
+                Some(csk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add CSK {csk_pub_url}: {e}\n").into())?;
+
+        let new = vec![csk_pub_url];
+        (new, new_urls)
+    } else {
+        let mut new_urls = Vec::new();
+
+        // Create a new KSK
+        let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(ksk_priv_url.clone());
+        new_urls.push(ksk_pub_url.clone());
+        kss.keyset
+            .add_key_ksk(
+                ksk_pub_url.to_string(),
+                Some(ksk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
+
+        // Create a new ZSK
+        let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            false,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(zsk_priv_url.clone());
+        new_urls.push(zsk_pub_url.clone());
+        kss.keyset
+            .add_key_zsk(
+                zsk_pub_url.to_string(),
+                Some(zsk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
+
+        let new = vec![ksk_pub_url, zsk_pub_url];
+        (new, new_urls)
+    };
+    Ok((new_stored, new_urls))
 }
 
 /*
