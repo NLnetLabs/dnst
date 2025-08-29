@@ -36,7 +36,7 @@ use domain::resolv::lookup::lookup_host;
 use domain::resolv::StubResolver;
 #[cfg(feature = "kmip")]
 use domain::utils::base32::encode_string_hex;
-use domain::zonefile::inplace::{Entry, ScannedRecordData, Zonefile};
+use domain::zonefile::inplace::{Entry, Zonefile};
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
@@ -186,6 +186,13 @@ enum Commands {
         /// The specific key roll subcommand.
         #[command(subcommand)]
         subcommand: RollCommands,
+    },
+
+    /// Command for importing existing keys.
+    Import {
+        /// The specific import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportCommands,
     },
 
     /// Report status, such as key rolls that are in progress, expired
@@ -440,6 +447,15 @@ enum RollCommands {
     RollDone,
 }
 
+#[derive(Clone, Debug, Subcommand)]
+enum ImportCommands {
+    /// Import a public key.
+    PublicKey {
+        /// The file name of the public key.
+        path: PathBuf,
+    },
+}
+
 // We cannot use RollType because that name is already in use.
 enum RollVariant {
     /// Apply the subcommand to a KSK roll.
@@ -622,6 +638,11 @@ impl Keyset {
                 &mut state_changed,
                 &mut run_update_ds_command,
             )?,
+
+            Commands::Import { subcommand } => {
+                import_command(subcommand, &ksc, &mut kss, env, &mut state_changed)?
+            }
+
             Commands::Status => {
                 for (roll, state) in kss.keyset.rollstates().iter() {
                     println!("{roll:?}: {state:?}");
@@ -810,7 +831,7 @@ impl Keyset {
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
-                    update_dnskey_rrset(&mut kss, &ksc, env, false)?;
+                    update_dnskey_rrset(&ksc, &mut kss, env, false)?;
                     state_changed = true;
                 }
                 if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
@@ -1666,7 +1687,6 @@ fn new_keys(
     #[cfg(feature = "kmip")] kmip: &mut KmipState,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
-    // TODO: Attempt repeated generation to avoid key tag collisions.
     // TODO: Add a high-level operation in 'domain' to select flags?
     let flags = if make_ksk { 257 } else { 256 };
     let mut retries = MAX_KEY_TAG_TRIES;
@@ -1932,8 +1952,8 @@ fn new_keys(
 /// Collect all keys where present() returns true and sign the DNSKEY RRset
 /// with all KSK and CSK (KSK state) where signer() returns true.
 fn update_dnskey_rrset(
-    kss: &mut KeySetState,
     ksc: &KeySetConfig,
+    kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
 ) -> Result<(), Error> {
@@ -1953,44 +1973,21 @@ fn update_dnskey_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!(
-                            "update_dnskey_rrset: unable to open public key file {}: {e}",
-                            filename.display()
-                        )
-                        .into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
-                        .map_err::<Error, _>(|e| {
-                            format!("unable load zone from file {}: {e}", filename.display()).into()
+
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
                         })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
+                    let public_key =
+                        parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
                         })?;
 
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
-
-                        // Of the records that we see, we only care about DNSKEY records
-                        let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                            continue;
-                        };
-
-                        let record = Record::new(
-                            record
-                                .owner()
-                                .try_to_name::<Bytes>()
-                                .expect("should not fail"),
-                            record.class(),
-                            record.ttl(),
-                            dnskey.clone(),
-                        );
-
-                        dnskeys.push(record);
-                    }
+                    dnskeys.push(public_key);
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2003,7 +2000,7 @@ fn update_dnskey_rrset(
                             .map_err(|err| {
                                 format!("Failed to fetch public key for KMIP key URL: {err}")
                             })?;
-                    let owner = kss.keyset.name().clone().flatten_into();
+                    let owner: Name<_> = kss.keyset.name().clone().flatten_into();
                     // TODO: Where does this TTL come from?
                     let record = Record::new(
                         owner,
@@ -2393,52 +2390,44 @@ fn update_ds_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!(
-                            "update_ds_rrset: unable to open public key file {}: {e}",
-                            filename.display()
-                        )
-                        .into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
+                        })?;
+                    let public_key =
+                        parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
+                        })?;
+
+                    let digest = public_key
+                        .data()
+                        .digest(&public_key.owner(), digest_alg)
                         .map_err::<Error, _>(|e| {
-                            format!("unable to read zone from file {}: {e}", filename.display())
-                                .into()
-                        })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
+                            format!("error creating digest for DNSKEY record: {e}").into()
                         })?;
 
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
+                    let ds = Ds::new(
+                        public_key.data().key_tag(),
+                        public_key.data().algorithm(),
+                        digest_alg,
+                        digest.as_ref().to_vec(),
+                    )
+                    .expect(
+                        "Infallible because the digest won't be too long since it's a valid digest",
+                    );
 
-                        // Of the records that we see, we only care about DNSKEY records
-                        let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                            continue;
-                        };
+                    let ds_record = Record::new(
+                        public_key.owner().clone().flatten_into(),
+                        public_key.class(),
+                        public_key.ttl(),
+                        ds,
+                    );
 
-                        let digest = dnskey
-                            .digest(&record.owner(), digest_alg)
-                            .map_err::<Error, _>(|e| {
-                                format!("error creating digest for DNSKEY record: {e}").into()
-                            })?;
-
-                        let ds = Ds::new(dnskey.key_tag(), dnskey.algorithm(), digest_alg, digest.as_ref().to_vec()).expect(
-                            "Infallible because the digest won't be too long since it's a valid digest",
-                        );
-
-                        let ds_record = Record::new(
-                            record.owner().clone().flatten_into(),
-                            record.class(),
-                            record.ttl(),
-                            ds,
-                        );
-
-                        ds_list.push(ds_record);
-                    }
+                    ds_list.push(ds_record);
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2510,7 +2499,7 @@ fn handle_actions(
 ) -> Result<(), Error> {
     for action in actions {
         match action {
-            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env, verbose)?,
+            Action::UpdateDnskeyRrset => update_dnskey_rrset(ksc, kss, env, verbose)?,
             Action::CreateCdsRrset => create_cds_rrset(
                 kss,
                 ksc,
@@ -5035,6 +5024,61 @@ fn roll_variant_to_roll(roll_variant: RollVariant) -> RollType {
         RollVariant::Csk => RollType::CskRoll,
         RollVariant::Algorithm => RollType::AlgorithmRoll,
     }
+}
+
+/// Implementation of the Import subcommands.
+fn import_command(
+    subcommand: ImportCommands,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+    state_changed: &mut bool,
+) -> Result<(), Error> {
+    match subcommand {
+        ImportCommands::PublicKey { path } => {
+            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", path.display()).into()
+            })?;
+
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                format!("unable to parse public key file {}: {e}", path.display()).into()
+            })?;
+
+            let path = absolute(&path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", path.display(), e).into()
+            })?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            kss.keyset
+                .add_public_key(
+                    public_key_url.clone(),
+                    public_key.data().algorithm(),
+                    public_key.data().key_tag(),
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add public key {public_key_url}: {e}\n").into()
+                })?;
+            kss.keyset
+                .set_present(&public_key_url, true)
+                .expect("should not happen");
+
+            // What about visible. We should visible when DNSKEY RRset has
+            // propagated. But we are not doing a key roll now. Just set it
+            // unconditionally.
+            kss.keyset
+                .set_visible(&public_key_url, UnixTime::now())
+                .expect("should not happen");
+            *state_changed = true;
+        }
+    }
+
+    // Update the DNSKEY RRset if is is not empty. We don't want to create
+    // and incomplete DNSKEY RRset.
+    if !kss.dnskey_rrset.is_empty() {
+        update_dnskey_rrset(ksc, kss, env, true)?;
+    }
+    Ok(())
 }
 
 /*
