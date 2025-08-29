@@ -163,78 +163,31 @@ enum Commands {
     /// Init creates keys for an empty state file.
     Init,
 
-    /// The following should be move to ksk, zsk, etc. subcommands.
-    StartKskRoll,
-    /// XXX
-    StartZskRoll,
-    /// XXX
-    StartCskRoll,
-    /// XXX
-    StartAlgorithmRoll,
-    /// XXX
-    KskPropagation1Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for KSK rolls.
+    Ksk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    KskPropagation2Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for ZSK rolls.
+    Zsk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    ZskPropagation1Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for CSK rolls.
+    Csk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    ZskPropagation2Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for algorithm rolls.
+    Algorithm {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    CskPropagation1Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    CskPropagation2Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    AlgorithmPropagation1Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    AlgorithmPropagation2Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    KskCacheExpired1,
-    /// XXX
-    KskCacheExpired2,
-    /// XXX
-    ZskCacheExpired1,
-    /// XXX
-    ZskCacheExpired2,
-    /// XXX
-    CskCacheExpired1,
-    /// XXX
-    CskCacheExpired2,
-    /// XXX
-    AlgorithmCacheExpired1,
-    /// XXX
-    AlgorithmCacheExpired2,
-    /// XXX
-    KskRollDone,
-    /// XXX
-    ZskRollDone,
-    /// XXX
-    CskRollDone,
-    /// XXX
-    AlgorithmRollDone,
+
     /// Report status, such as key rolls that are in progress, expired
     /// keys, when to call the 'cron' subcommand next.
     Status,
@@ -463,6 +416,42 @@ enum SetCommands {
     },
 }
 
+#[derive(Clone, Debug, Subcommand)]
+enum RollCommands {
+    /// Start a key roll.
+    StartRoll,
+    /// Report that the first propagation step has completed.
+    Propagation1Complete {
+        /// The TTL that is required to be reported by the Report actions.
+        ttl: u32,
+    },
+    /// Cached information from before Propagation1Complete should have
+    /// expired by now.
+    CacheExpired1,
+    /// Report that the second propagation step has completed.
+    Propagation2Complete {
+        /// The TTL that is required to be reported by the Report actions.
+        ttl: u32,
+    },
+    /// Cached information from before Propagation2Complete should have
+    /// expired by now.
+    CacheExpired2,
+    /// Report that the final changes have propagated and the the roll is done.
+    RollDone,
+}
+
+// We cannot use RollType because that name is already in use.
+enum RollVariant {
+    /// Apply the subcommand to a KSK roll.
+    Ksk,
+    /// Apply the subcommand to a ZSK roll.
+    Zsk,
+    /// Apply the subcommand to a CSK roll.
+    Csk,
+    /// Apply the subcommand to an algorithm roll.
+    Algorithm,
+}
+
 impl Keyset {
     /// execute the keyset command.
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
@@ -597,152 +586,42 @@ impl Keyset {
                 print_actions(&actions);
                 state_changed = true;
             }
-            Commands::StartKskRoll => {
-                let actions =
-                    start_ksk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::StartZskRoll => {
-                let actions =
-                    start_zsk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::StartCskRoll => {
-                let actions =
-                    start_csk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::StartAlgorithmRoll => {
-                let actions =
-                    start_algorithm_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskPropagation1Complete { ttl }
-            | Commands::KskPropagation2Complete { ttl }
-            | Commands::ZskPropagation1Complete { ttl }
-            | Commands::ZskPropagation2Complete { ttl }
-            | Commands::CskPropagation1Complete { ttl }
-            | Commands::CskPropagation2Complete { ttl }
-            | Commands::AlgorithmPropagation1Complete { ttl }
-            | Commands::AlgorithmPropagation2Complete { ttl } => {
-                let actions = match self.cmd {
-                    Commands::KskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::KskRoll, ttl)
-                    }
-                    Commands::KskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::KskRoll, ttl)
-                    }
-                    Commands::ZskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::ZskRoll, ttl)
-                    }
-                    Commands::ZskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::ZskRoll, ttl)
-                    }
-                    Commands::CskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
-                    }
-                    Commands::CskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
-                    }
-                    Commands::AlgorithmPropagation1Complete { ttl: _ } => kss
-                        .keyset
-                        .propagation1_complete(RollType::AlgorithmRoll, ttl),
-                    Commands::AlgorithmPropagation2Complete { ttl: _ } => kss
-                        .keyset
-                        .propagation2_complete(RollType::AlgorithmRoll, ttl),
-                    _ => unreachable!(),
-                };
-
-                let actions = match actions {
-                    Ok(actions) => actions,
-                    Err(err) => {
-                        return Err(format!("Error reporting propagation complete: {err}\n").into());
-                    }
-                };
-
-                // Handle error
-
-                handle_actions(
-                    &actions,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    true,
-                    &mut run_update_ds_command,
-                )?;
-
-                // Report actions
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskCacheExpired1
-            | Commands::KskCacheExpired2
-            | Commands::ZskCacheExpired1
-            | Commands::ZskCacheExpired2
-            | Commands::CskCacheExpired1
-            | Commands::CskCacheExpired2
-            | Commands::AlgorithmCacheExpired1
-            | Commands::AlgorithmCacheExpired2 => {
-                let actions = match self.cmd {
-                    Commands::KskCacheExpired1 => kss.keyset.cache_expired1(RollType::KskRoll),
-                    Commands::KskCacheExpired2 => kss.keyset.cache_expired2(RollType::KskRoll),
-                    Commands::ZskCacheExpired1 => kss.keyset.cache_expired1(RollType::ZskRoll),
-                    Commands::ZskCacheExpired2 => kss.keyset.cache_expired2(RollType::ZskRoll),
-                    Commands::CskCacheExpired1 => kss.keyset.cache_expired1(RollType::CskRoll),
-                    Commands::CskCacheExpired2 => kss.keyset.cache_expired2(RollType::CskRoll),
-                    Commands::AlgorithmCacheExpired1 => {
-                        kss.keyset.cache_expired1(RollType::AlgorithmRoll)
-                    }
-                    Commands::AlgorithmCacheExpired2 => {
-                        kss.keyset.cache_expired2(RollType::AlgorithmRoll)
-                    }
-                    _ => unreachable!(),
-                };
-
-                let actions = match actions {
-                    Ok(actions) => actions,
-                    Err(err) => {
-                        return Err(format!("Error reporting cache expired: {err}\n").into());
-                    }
-                };
-
-                // Handle error
-
-                handle_actions(
-                    &actions,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    true,
-                    &mut run_update_ds_command,
-                )?;
-
-                // Report actions
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskRollDone
-            | Commands::ZskRollDone
-            | Commands::CskRollDone
-            | Commands::AlgorithmRollDone => {
-                let r = match self.cmd {
-                    Commands::KskRollDone => RollType::KskRoll,
-                    Commands::ZskRollDone => RollType::ZskRoll,
-                    Commands::CskRollDone => RollType::CskRoll,
-                    Commands::AlgorithmRollDone => RollType::AlgorithmRoll,
-                    _ => unreachable!(),
-                };
-                do_done(&mut kss, r, ksc.autoremove)?;
-                state_changed = true;
-            }
+            Commands::Ksk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Ksk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Zsk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Zsk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Csk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Csk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Algorithm { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Algorithm,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
             Commands::Status => {
                 for (roll, state) in kss.keyset.rollstates().iter() {
                     println!("{roll:?}: {state:?}");
@@ -1319,6 +1198,70 @@ fn remove_key(kss: &mut KeySetState, url: Url) -> Result<(), Error> {
         }
     }
 
+    Ok(())
+}
+
+/// Execute the key roll subcommands.
+fn roll_command(
+    cmd: RollCommands,
+    roll_variant: RollVariant,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+    state_changed: &mut bool,
+    run_update_ds_command: &mut bool,
+) -> Result<(), Error> {
+    let actions = match cmd {
+        RollCommands::StartRoll => {
+            let actions = match roll_variant {
+                RollVariant::Ksk => start_ksk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Zsk => start_zsk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Csk => start_csk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Algorithm => {
+                    start_algorithm_roll(ksc, kss, env, true, run_update_ds_command)?
+                }
+            };
+
+            print_actions(&actions);
+            *state_changed = true;
+            return Ok(());
+        }
+        RollCommands::Propagation1Complete { ttl } => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.propagation1_complete(roll, ttl)
+        }
+        RollCommands::CacheExpired1 => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.cache_expired1(roll)
+        }
+        RollCommands::Propagation2Complete { ttl } => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.propagation2_complete(roll, ttl)
+        }
+        RollCommands::CacheExpired2 => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.cache_expired2(roll)
+        }
+        RollCommands::RollDone => {
+            let roll = roll_variant_to_roll(roll_variant);
+            do_done(kss, roll, ksc.autoremove)?;
+            *state_changed = true;
+            return Ok(());
+        }
+    };
+
+    let actions = match actions {
+        Ok(actions) => actions,
+        Err(err) => {
+            return Err(format!("Error reporting propagation complete: {err}\n").into());
+        }
+    };
+
+    handle_actions(&actions, ksc, kss, env, true, run_update_ds_command)?;
+
+    // Report actions
+    print_actions(&actions);
+    *state_changed = true;
     Ok(())
 }
 
@@ -3433,8 +3376,7 @@ fn start_ksk_roll(
     verbose: bool,
     run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
-    //let roll_type = RollType::KskRoll;
-    let roll_type = RollType::KskDoubleDsRoll;
+    let roll_type = RollType::KskRoll;
 
     assert!(!kss.keyset.keys().is_empty());
 
@@ -5081,6 +5023,18 @@ fn new_csk_or_ksk_zsk(
         (new, new_urls)
     };
     Ok((new_stored, new_urls))
+}
+
+/// Return the right RollType for a RollVariant.
+fn roll_variant_to_roll(roll_variant: RollVariant) -> RollType {
+    // For key type, such as KSK and ZSK, that can have different rolls, we
+    // we should find out which variant is used.
+    match roll_variant {
+        RollVariant::Ksk => RollType::KskRoll,
+        RollVariant::Zsk => RollType::ZskRoll,
+        RollVariant::Csk => RollType::CskRoll,
+        RollVariant::Algorithm => RollType::AlgorithmRoll,
+    }
 }
 
 /*
