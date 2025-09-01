@@ -260,15 +260,14 @@ impl Update {
     ) -> Result<Vec<Name<Vec<u8>>>, Error> {
         let mut names = Vec::new();
         for name in args {
-            let uncertain = UncertainName::from_str(name)
+            let uncertain = UncertainName::<Vec<u8>>::from_str(name)
                 .map_err(|e| -> Error { format!("Invalid domain name '{name}': {e}").into() })?;
-            let name = match uncertain.as_absolute() {
-                Some(name) => name.clone(),
-                None => uncertain
-                    .chain(origin)
-                    .expect("we just checked that its not absolute")
-                    .to_name(),
-            };
+            let name = uncertain
+                .chain(origin)
+                .map_err(|_| -> Error {
+                    format!("Combining {name}.{origin} is too long for a domain name").into()
+                })?
+                .to_name();
             names.push(name)
         }
         Ok(names)
