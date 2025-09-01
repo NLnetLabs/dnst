@@ -144,7 +144,6 @@ impl Key2ds {
         })?;
         let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file).unwrap();
         for entry in zonefile {
-            dbg!(&entry);
             let entry = entry.map_err(|e| {
                 format!(
                     "Error while reading public key from file \"{}\": {e}",
