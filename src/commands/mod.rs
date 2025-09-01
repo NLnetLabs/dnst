@@ -81,9 +81,6 @@ pub enum Command {
     #[command(skip)]
     LdnsUpdate(self::update::LdnsUpdate),
 
-    /// Show the manual pages
-    Help(self::help::Help),
-
     /// Report a string to stdout
     ///
     /// This is used for printing version information and some other
@@ -102,7 +99,6 @@ impl Command {
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
             Self::LdnsUpdate(ldnsupdate) => ldnsupdate.execute(env),
-            Self::Help(help) => help.execute(),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())
