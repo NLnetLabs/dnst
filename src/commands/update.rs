@@ -295,17 +295,17 @@ impl Update {
             if let Some(ttl) = arg.strip_suffix('s') {
                 ttl.parse()
             } else if let Some(ttl) = arg.strip_suffix('m') {
-                ttl.parse::<u32>().map(|t| t / 60)
+                ttl.parse::<u32>().map(|t| t * 60)
             } else if let Some(ttl) = arg.strip_suffix('h') {
-                ttl.parse::<u32>().map(|t| t / 3600)
+                ttl.parse::<u32>().map(|t| t * 3600)
             } else if let Some(ttl) = arg.strip_suffix('d') {
-                ttl.parse::<u32>().map(|t| t / 86400)
+                ttl.parse::<u32>().map(|t| t * 86400)
             } else if let Some(ttl) = arg.strip_suffix('w') {
-                ttl.parse::<u32>().map(|t| t / 604800)
+                ttl.parse::<u32>().map(|t| t * 604800)
             } else if let Some(ttl) = arg.strip_suffix('M') {
-                ttl.parse::<u32>().map(|t| t / 2629746) // 30.436875 days
+                ttl.parse::<u32>().map(|t| t * 2629746) // 30.436875 days
             } else if let Some(ttl) = arg.strip_suffix('y') {
-                ttl.parse::<u32>().map(|t| t / 31556952) // 365.2425 days
+                ttl.parse::<u32>().map(|t| t * 31556952) // 365.2425 days
             } else {
                 arg.parse()
             }
