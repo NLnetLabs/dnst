@@ -1369,12 +1369,11 @@ impl SignZone {
             ))?;
         let zone_file_len = zone_file
             .metadata()
-            .map_err::<Error, _>(|e| {
+            .map_err(|e| {
                 format!(
                     "error getting metadata from zonefile {}: {e}",
                     zonefile_path.display()
                 )
-                .into()
             })?
             .len();
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
