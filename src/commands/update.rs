@@ -158,6 +158,7 @@ impl Update {
         // 2. If update ordering desired, fetch existing SOA RR from primary
         //      - If updating SOA, must update in serial in positive direction and preserve other
         //      fields, unless intent to change them; serial must never be 0
+        //    (not yet implemented)
         // 3. Order nameserver list, listing primary first
         // 4. Create UPDATE and send to first server in list
         // 5. If response != SERVFAIL | NOTIMP, then return success
@@ -169,12 +170,12 @@ impl Update {
         // 1. If not provided, determine zone apex and fetch name servers
         let (apex, mname, _soa) = match &self.zone {
             Some(zone) => {
-                let tmp = UpdateHelpers::find_mname_and_soa(env, zone)
+                let tmp = update_helpers::find_mname_and_soa(env, zone)
                     .await
                     .context("fetching the SOA record")?;
                 (zone.clone(), tmp.0, tmp.1)
             }
-            None => UpdateHelpers::find_mname_and_zone_and_soa(env, &self.domain)
+            None => update_helpers::find_mname_and_zone_and_soa(env, &self.domain)
                 .await
                 .context("fetching the SOA record and determining the zone apex")?,
         };
@@ -187,11 +188,11 @@ impl Update {
         // let (apex, mname) = match (&self.zone, self.nameservers.is_empty()) {
         //     (Some(zone), true) => (
         //         zone.clone(),
-        //         Some(UpdateHelpers::find_mname(env, &zone).await?),
+        //         Some(update_helpers::find_mname(env, &zone).await?),
         //     ),
         //     (Some(zone), false) => (zone.clone(), None),
         //     (None, _) => {
-        //         let (a, b) = UpdateHelpers::find_mname_and_zone(env, &self.domain).await?;
+        //         let (a, b) = update_helpers::find_mname_and_zone(env, &self.domain).await?;
         //         (a, Some(b))
         //     }
         // };
@@ -203,7 +204,7 @@ impl Update {
         let nsnames = if self.nameservers.is_none() {
             Some(
                 // 3. Order nameserver list, listing primary first
-                UpdateHelpers::determine_nsnames(env, &apex, &mname)
+                update_helpers::determine_nsnames(env, &apex, &mname)
                     .await
                     .context("while fetching the authoritative nameservers for the zone")?,
             )
@@ -897,15 +898,15 @@ impl LdnsUpdate {
         let soa_zone;
         let soa_mname;
         if let Some(zone) = &self.zone {
-            (soa_mname, _) = UpdateHelpers::find_mname_and_soa(env, zone).await?;
+            (soa_mname, _) = update_helpers::find_mname_and_soa(env, zone).await?;
             soa_zone = zone.clone();
         } else {
             let name = self.domain.clone();
             (soa_zone, soa_mname, _) =
-                UpdateHelpers::find_mname_and_zone_and_soa(env, &name).await?;
+                update_helpers::find_mname_and_zone_and_soa(env, &name).await?;
         };
 
-        let nsnames = UpdateHelpers::determine_nsnames(env, &soa_zone, &soa_mname).await?;
+        let nsnames = update_helpers::determine_nsnames(env, &soa_zone, &soa_mname).await?;
         let msg = self.create_update_message(&soa_zone);
 
         self.send_update(env, msg, nsnames).await
@@ -1027,13 +1028,13 @@ impl LdnsUpdate {
     }
 }
 
-//------------ UpdateHelpers -------------------------------------------------
+//------------ update_helpers ------------------------------------------------
 
-struct UpdateHelpers;
+mod update_helpers {
+    use super::*;
 
-impl UpdateHelpers {
     /// Find the MNAME by sending a SOA query for the zone
-    async fn find_mname_and_soa(
+    pub async fn find_mname_and_soa(
         env: &impl Env,
         zone: &Name<Vec<u8>>,
     ) -> Result<(Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
@@ -1061,7 +1062,7 @@ impl UpdateHelpers {
     ///  2. Get the IP addresses for the MNAME
     ///  3. Send a SOA query to that IP address and use the owner as zone
     ///     and the MNAME from that response.
-    async fn find_mname_and_zone_and_soa(
+    pub async fn find_mname_and_zone_and_soa(
         env: &impl Env,
         name: &Name<Vec<u8>>,
     ) -> Result<(Name<Vec<u8>>, Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
@@ -1132,7 +1133,7 @@ impl UpdateHelpers {
     ///
     /// The name server with the given MNAME is put at the start of the list.
     // async fn determine_nsnames(
-    async fn determine_nsnames(
+    pub async fn determine_nsnames(
         env: &impl Env,
         zone: &Name<Vec<u8>>,
         mname: &Name<Vec<u8>>,
