@@ -381,7 +381,7 @@ impl Update {
                 .map_err(|e| format!("Failed to add RRset deletion RR to UPDATE message: {e}"))?,
         }
 
-        // Providing additional data is not yet implemented
+        // TODO: Providing additional data is not yet implemented
         // let mut additional_section = update_section.additional();
 
         Ok(update_section.finish())
