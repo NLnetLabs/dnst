@@ -44,7 +44,7 @@ use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
 use std::fmt::{Debug, Display, Formatter};
-//use std::fs::{remove_file, File};
+use std::ffi::OsStr;
 use std::fs::{remove_file, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
@@ -454,6 +454,44 @@ enum ImportCommands {
         /// The file name of the public key.
         path: PathBuf,
     },
+
+    /// Command for KSK imports.
+    Ksk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+    /// Command for ZSK imports.
+    Zsk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+    /// Command for CSK imports.
+    Csk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum ImportKeyCommands {
+    /// Import public/private key pair from file.
+    File {
+        /// Pathname of the public key.
+        path: PathBuf,
+    },
+}
+
+#[derive(Debug)]
+enum KeyVariant {
+    /// Apply command to KSKs.
+    Ksk,
+    /// Apply command to ZSKs.
+    Zsk,
+    /// Apply command to CSKs.
+    Csk,
 }
 
 // We cannot use RollType because that name is already in use.
@@ -5069,14 +5107,178 @@ fn import_command(
             kss.keyset
                 .set_visible(&public_key_url, UnixTime::now())
                 .expect("should not happen");
-            *state_changed = true;
+        }
+        ImportCommands::Ksk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Ksk, kss)?;
+        }
+        ImportCommands::Zsk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Zsk, kss)?;
+        }
+        ImportCommands::Csk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Csk, kss)?;
         }
     }
+    *state_changed = true;
 
     // Update the DNSKEY RRset if is is not empty. We don't want to create
     // and incomplete DNSKEY RRset.
     if !kss.dnskey_rrset.is_empty() {
         update_dnskey_rrset(ksc, kss, env, true)?;
+    }
+    Ok(())
+}
+
+/// Implement import subcommand for a specific key type.
+fn import_key_command(
+    subcommand: ImportKeyCommands,
+    key_variant: KeyVariant,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    match subcommand {
+        ImportKeyCommands::File { path } => {
+            if path.extension() != Some(OsStr::new("key")) {
+                return Err(format!("public key {} should end in .pub, use --private to specify a private key separately", path.display()).into());
+            }
+            let private_path = path.with_extension("private");
+            dbg!(&private_path);
+            let private_data = std::fs::read_to_string(&private_path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", private_path.display()).into()
+            })?;
+            let secret_key =
+                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
+                    format!(
+                        "unable to parse private key file {}: {e}",
+                        private_path.display()
+                    )
+                    .into()
+                })?;
+            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", path.display()).into()
+            })?;
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                format!("unable to parse public key file {}: {e}", path.display()).into()
+            })?;
+
+            // Check the consistency of the public and private key pair.
+            let _key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                .map_err::<Error, _>(|e| {
+                    format!(
+                        "private key {} and public key {} do not match: {e}",
+                        private_path.display(),
+                        path.display()
+                    )
+                    .into()
+                })?;
+
+            if public_key.owner() != kss.keyset.name() {
+                return Err(format!(
+                    "public key {} has wrong owner name {}, expected {}",
+                    path.display(),
+                    public_key.owner(),
+                    kss.keyset.name()
+                )
+                .into());
+            }
+
+            let path = absolute(&path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", path.display(), e).into()
+            })?;
+            let private_path = absolute(&private_path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", private_path.display(), e).into()
+            })?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            let private_key_url = "file://".to_owned() + &private_path.display().to_string();
+
+            let mut set_at_parent = false;
+            let mut set_rrsig_visible = false;
+            match key_variant {
+                KeyVariant::Ksk => {
+                    kss.keyset
+                        .add_key_ksk(
+                            public_key_url.clone(),
+                            Some(private_key_url.clone()),
+                            public_key.data().algorithm(),
+                            public_key.data().key_tag(),
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
+                                .into()
+                        })?;
+                    let x = kss.keyset.keys();
+                    dbg!(x);
+                    set_at_parent = true;
+                }
+                KeyVariant::Zsk => {
+                    kss.keyset
+                        .add_key_zsk(
+                            public_key_url.clone(),
+                            Some(private_key_url.clone()),
+                            public_key.data().algorithm(),
+                            public_key.data().key_tag(),
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add ZSK {public_key_url}: {e}\n").into()
+                        })?;
+                    set_rrsig_visible = true;
+                }
+                KeyVariant::Csk => {
+                    kss.keyset
+                        .add_key_csk(
+                            public_key_url.clone(),
+                            Some(private_key_url.clone()),
+                            public_key.data().algorithm(),
+                            public_key.data().key_tag(),
+                            UnixTime::now(),
+                            true,
+                        )
+                        .map_err::<Error, _>(|e| {
+                            format!("unable to add CSK {public_key_url}: {e}\n").into()
+                        })?;
+                    set_at_parent = true;
+                    set_rrsig_visible = true;
+                }
+            }
+
+            kss.keyset
+                .set_present(&public_key_url, true)
+                .expect("should not happen");
+
+            // What about visible? We should visible when the DNSKEY
+            // RRset has propagated. But we are not doing a key roll
+            // now. Just set it unconditionally.
+            kss.keyset
+                .set_visible(&public_key_url, UnixTime::now())
+                .expect("should not happen");
+
+            kss.keyset
+                .set_signer(&public_key_url, true)
+                .expect("should not happen");
+
+            if set_at_parent {
+                kss.keyset
+                    .set_at_parent(&public_key_url, true)
+                    .expect("should not happen");
+
+                // What about ds_visible? We should ds_visible when the DS
+                // RRset has propagated. But we are not doing a key roll
+                // now. Just set it unconditionally.
+                kss.keyset
+                    .set_ds_visible(&public_key_url, UnixTime::now())
+                    .expect("should not happen");
+            }
+            if set_rrsig_visible {
+                // We should set rrsig_visible when the zone's RRSIG records
+                // have propagated. But we are not doing a key roll
+                // now. Just set it unconditionally.
+                kss.keyset
+                    .set_rrsig_visible(&public_key_url, UnixTime::now())
+                    .expect("should not happen");
+            }
+        }
     }
     Ok(())
 }
