@@ -74,8 +74,8 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
-    /// Show the manual pages
-    Help(self::help::Help),
+    // /// Show the manual pages
+    // Help(self::help::Help),
 
     /// Report a string to stdout
     ///
@@ -94,7 +94,7 @@ impl Command {
             Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
-            Self::Help(help) => help.execute(),
+            // Self::Help(help) => help.execute(env),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())
