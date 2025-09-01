@@ -73,12 +73,9 @@ pub struct Update {
     #[arg(short = 'y', long = "tsig", value_name = "NAME:KEY[:ALGO]")]
     tsig: Option<TSigInfo>,
 
-    /// RRset exists (value independent). (Optionally) provide this option
-    /// multiple times, with format "<DOMAIN_NAME> <TYPE>" each, to
-    /// build up a list of RR(set)s.
-    ///
-    /// This specifies the prerequisite that at least one RR with a specified
-    /// NAME and TYPE must exist.
+    /// Require that at least one RR with the given NAME and TYPE exists.
+    /// (Optionally) provide this option multiple times, with format
+    /// "<DOMAIN_NAME> <TYPE>" each, to build up a list of RRs.
     ///
     /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
@@ -88,14 +85,10 @@ pub struct Update {
     )]
     rrset_exists: Option<Vec<String>>,
 
-    /// RRset exists (value dependent). (Optionally) provide this option
-    /// multiple times, each with one RR in zonefile format, to build up one
-    /// or more RRsets that is required to exist. CLASS and TTL can be
-    /// omitted.
-    ///
-    /// This specifies the prerequisite that a set of RRs with a specified
-    /// NAME and TYPE exists and has the same members with the same RDATAs as
-    /// the RRset specified.
+    /// Require that an RRset exists and contains exactly the RRs with the given
+    /// NAME, TYPE, and RDATA. (Optionally) provide this option multiple times,
+    /// each with one RR in zonefile format, to build up one or more RRsets that
+    /// is required to exist. CLASS and TTL can be omitted.
     ///
     /// If the domain name is relative, it will be relative to the zone's apex.
     #[arg(
