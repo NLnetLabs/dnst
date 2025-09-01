@@ -355,35 +355,30 @@ impl Update {
                             self.ttl,
                             rdata,
                         ))
-                        .map_err(|e| -> Error {
-                            format!("Failed to add RR to UPDATE message: {e}").into()
-                        })?
+                        .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
                 }
             }
             UpdateAction::Delete { rtype, ref rdata } => {
                 if rdata.is_empty() {
                     update_section
                         .push(Self::create_rrset_deletion(self.domain.clone(), rtype))
-                        .map_err(|e| -> Error {
-                            format!("Failed to add RRset deletion RR to UPDATE message: {e}").into()
+                        .map_err(|e| {
+                            format!("Failed to add RRset deletion RR to UPDATE message: {e}")
                         })?
                 } else {
                     for r in rdata {
                         let rdata = Self::parse_rdata(rtype, r)?;
                         update_section
                             .push(Self::create_rr_deletion(self.domain.clone(), rdata))
-                            .map_err(|e| -> Error {
+                            .map_err(|e| {
                                 format!("Failed to add RR deletion RR to UPDATE message: {e}")
-                                    .into()
                             })?
                     }
                 }
             }
             UpdateAction::Clear => update_section
                 .push(Self::create_all_rrset_deletion(self.domain.clone()))
-                .map_err(|e| -> Error {
-                    format!("Failed to add RRset deletion RR to UPDATE message: {e}").into()
-                })?,
+                .map_err(|e| format!("Failed to add RRset deletion RR to UPDATE message: {e}"))?,
         }
 
         // Providing additional data is not yet implemented
