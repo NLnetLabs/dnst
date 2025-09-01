@@ -10,7 +10,7 @@ description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 keywords = ["DNS", "domain", "ldns"]
-rust-version = "1.79"
+rust-version = "1.80"
 
 [[bin]]
 name = "ldns"
@@ -25,13 +25,16 @@ ring = ["domain/ring"]
 
 # For building in a cargo cross container that lacks openssl-dev so cannot
 # successfully compile the Rust OpenSSL crate.
-static-openssl = ["domain/static-openssl"]
+static-openssl = ["openssl/vendored"]
 
 [dependencies]
 bytes = "1.8.0"
 chrono = "0.4.38"
-clap = { version = "4.3.4", features = ["cargo", "derive"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e", features = [
+clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
+# Until a release of domain is made that includes the features we need, pin
+# to a specific commit of the domain main branch to ensure that the dnst main
+# branch does not get broken if domain main is not stable.
+domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
     "bytes",
     "net",
     "resolv",
@@ -40,13 +43,14 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "bb6bd2b3f45fe
     "unstable-client-transport",
     "unstable-sign",
     "unstable-validator",
-    "unstable-zonetree",
+    "unstable-zonetree"
 ] }
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
 ring = "0.17.8"
 tokio = "1.40.0"
+openssl = { version = "*", features = ["vendored"], optional = true }
 
 # LDNS-xxx mode specific dependencies.
 # TODO: put these behind a feature gate?
@@ -64,7 +68,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "bb6bd2b3f45fea8c00b6ef21e666d268e9d2e37e", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
