@@ -739,7 +739,6 @@ enum UpdateAction {
         /// Each RDATA argument will be parsed as if it was read from a zone file.
         ///
         /// Examples:
-        ///   $ dnst update some.example.com add TLSA '0 0 1 dead beef ...'
         ///   $ dnst update some.example.com add TXT \
         ///       '"Spacious String" "Another string for the same TXT record"' \
         ///       '"This is another TXT RR"'
