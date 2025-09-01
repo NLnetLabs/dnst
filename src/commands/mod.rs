@@ -74,9 +74,6 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
-    // /// Show the manual pages
-    // Help(self::help::Help),
-
     /// Report a string to stdout
     ///
     /// This is used for printing version information and some other
