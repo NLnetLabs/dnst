@@ -56,12 +56,14 @@ pub struct Update {
     class: Class,
 
     /// TTL in seconds or with unit suffix (s, m, h, d, w, M, y).
+    ///
+    /// Is only used by the `add` command and ignored otherwise.
     #[arg(short = 't', long = "ttl", value_parser = Update::parse_ttl, default_value = "3600")]
     ttl: Ttl,
 
-    /// Name server to send the update to (can be provided multiple times)
+    /// Name server to send the update to
     #[arg(short = 's', long = "server", value_name = "IP")]
-    nameservers: Vec<IpAddr>,
+    nameservers: Option<IpAddr>,
 
     /// Zone the domain name belongs to (to skip SOA query)
     #[arg(short = 'z', long = "zone", value_name = "ZONE")]
@@ -198,7 +200,7 @@ impl Update {
         let prerequisites = self.parse_prerequisites(apex.clone().flatten_into())?;
 
         // 1. (Cont.) If not provided, determine zone apex and fetch name servers
-        let nsnames = if self.nameservers.is_empty() {
+        let nsnames = if self.nameservers.is_none() {
             Some(
                 // 3. Order nameserver list, listing primary first
                 UpdateHelpers::determine_nsnames(env, &apex, &mname)
@@ -694,20 +696,22 @@ impl Update {
                 }
             }
         } else {
-            for ip in &self.nameservers {
+            // This is always the case if we reach this branch, but just in case
+            // of later changes we can leave this check in place
+            if let Some(ip) = &self.nameservers {
                 let socket = SocketAddr::new(*ip, 53);
                 let resp = match connect_and_send_request(&env, socket, &msg, &tsig_key).await {
                     Ok(resp) => resp,
                     Err(err) => {
-                        writeln!(env.stderr(), "_ @ {socket}: {err}");
-                        continue;
+                        return Err(format!("Unable to send update to {socket}: {err}").into());
                     }
                 };
 
                 let rcode = resp.header().rcode();
                 if rcode == Rcode::SERVFAIL || rcode == Rcode::NOTIMP {
-                    writeln!(env.stderr(), "Skipping _ @ {socket}: {rcode}");
-                    continue;
+                    return Err(
+                        format!("Name server {socket} was unable to handle the update. Got response: {rcode}").into()
+                    );
                 } else if rcode != Rcode::NOERROR {
                     writeln!(env.stdout(), "UPDATE response was {rcode}");
                 }

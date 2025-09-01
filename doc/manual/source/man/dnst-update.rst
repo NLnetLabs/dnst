@@ -53,17 +53,16 @@ Options:
 
       TTL in seconds or with unit suffix (s, m, h, d, w, M, y).
 
+      Is only used by the :subcmd:`add` command and is otherwise ignored.
+
       Defaults to 3600.
 
 .. option:: -s, --server <IP>
 
-      Name server to send the update to (can be provided multiple times).
+      The name server to send the update to.
 
-      The UPDATE message will be sent to each server in a row until a name server replies with 
-      TODO: 
-
-      By default, the list of name servers to try one-by-one is fetched from
-      the zone's NS RRset.
+      By default, the update will be sent to the list of name servers fetched
+      from the zone's NS RRset as per RFC 2136.
 
 .. option:: -z, --zone <ZONE>
 
