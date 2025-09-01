@@ -43,8 +43,8 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
-use std::fmt::{Debug, Display, Formatter};
 use std::ffi::OsStr;
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::{remove_file, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
@@ -68,6 +68,9 @@ const MAX_KEY_TAG_TRIES: u8 = 10;
 
 /// Wait this amount before retrying for network errors, DNS errors, etc.
 const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
+
+/// The default TTL for creating a new config file.
+const DEFAULT_TTL: Ttl = Ttl::from_secs(3600);
 
 // Types to simplify some HashSet types.
 /// Type for a Name that uses a Vec.
@@ -560,6 +563,7 @@ impl Keyset {
                 cds_signature_lifetime: Duration::from_secs(FOUR_WEEKS),
                 cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
+                default_ttl: DEFAULT_TTL,
                 autoremove: false,
                 update_ds_command: Vec::new(),
             };
@@ -863,6 +867,7 @@ impl Keyset {
                 println!("cds-signature-lifetime: {:?}", ksc.cds_signature_lifetime);
                 println!("cds-remain-time: {:?}", ksc.cds_remain_time);
                 println!("ds-algorithm: {:?}", ksc.ds_algorithm);
+                println!("default-ttl: {:?}", ksc.default_ttl);
                 println!("autoremove: {:?}", ksc.autoremove);
                 println!("update_ds_command: {:?}", ksc.update_ds_command);
             }
@@ -1534,6 +1539,9 @@ struct KeySetConfig {
     /// The DS hash algorithm.
     ds_algorithm: DsAlgorithm,
 
+    /// The TTL to use when creating DNSKEY/CDS/CDNSKEY records.
+    default_ttl: Ttl,
+
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
 
@@ -2016,8 +2024,8 @@ fn update_dnskey_rrset(
                         std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
                             format!("unable read from file {}: {e}", filename.display()).into()
                         })?;
-                    let public_key =
-                        parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
+                        .map_err::<Error, _>(|e| {
                             format!(
                                 "unable to parse public key file {}: {e}",
                                 filename.display()
@@ -2025,6 +2033,7 @@ fn update_dnskey_rrset(
                             .into()
                         })?;
 
+                    public_key.set_ttl(ksc.default_ttl);
                     dnskeys.push(public_key);
                 }
 
@@ -2039,11 +2048,10 @@ fn update_dnskey_rrset(
                                 format!("Failed to fetch public key for KMIP key URL: {err}")
                             })?;
                     let owner: Name<_> = kss.keyset.name().clone().flatten_into();
-                    // TODO: Where does this TTL come from?
                     let record = Record::new(
                         owner,
                         Class::IN,
-                        Ttl::from_days(1),
+                        ksc.default_ttl,
                         key.dnskey(flags).convert(),
                     );
                     dnskeys.push(record);
@@ -2184,31 +2192,25 @@ fn create_cds_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!("unable to open public key file {}: {e}", filename.display()).into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
+                        })?;
+                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
                         .map_err::<Error, _>(|e| {
-                            format!("unable to read zone from file {}: {e}", filename.display())
-                                .into()
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
                         })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
-                        })?;
-
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
-
-                        create_cds_rrset_helper(
-                            digest_alg,
-                            &mut cds_list,
-                            &mut cdnskey_list,
-                            record.flatten_into(),
-                        )?;
-                    }
+                    public_key.set_ttl(ksc.default_ttl);
+                    create_cds_rrset_helper(
+                        digest_alg,
+                        &mut cds_list,
+                        &mut cdnskey_list,
+                        public_key,
+                    )?;
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2220,9 +2222,8 @@ fn create_cds_rrset(
                         domain::crypto::kmip::PublicKey::for_key_url(key_url, conn_pool)
                             .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
                     let dnskey = public_key.dnskey(flags);
-                    let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
                     let owner = kss.keyset.name().clone().flatten_into();
-                    let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey);
+                    let record = Record::new(owner, Class::IN, ksc.default_ttl, dnskey);
                     create_cds_rrset_helper(digest_alg, &mut cds_list, &mut cdnskey_list, record)?;
                 }
 
@@ -2369,13 +2370,10 @@ fn create_cds_rrset_helper(
     digest_alg: DigestAlgorithm,
     cds_list: &mut Vec<Record<Name<Bytes>, Cds<Vec<u8>>>>,
     cdnskey_list: &mut Vec<Record<Name<Bytes>, Cdnskey<Vec<u8>>>>,
-    record: Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+    record: Record<Name<Vec<u8>>, Dnskey<Vec<u8>>>,
 ) -> Result<(), Error> {
-    let owner = record.owner().clone();
-    let ZoneRecordData::Dnskey(dnskey) = record.data() else {
-        return Ok(());
-    };
-    let dnskey: Dnskey<Vec<u8>> = dnskey.clone().convert();
+    let owner: Name<Bytes> = record.owner().to_name();
+    let dnskey = record.data();
     let cdnskey = Cdnskey::new(
         dnskey.flags(),
         dnskey.protocol(),
@@ -2407,11 +2405,13 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
 /// The DS records are generated from all keys where at_parent() returns true.
 /// This RRset is not signed.
 fn update_ds_rrset(
+    ksc: &KeySetConfig,
     kss: &mut KeySetState,
-    digest_alg: DigestAlgorithm,
     env: &impl Env,
     verbose: bool,
 ) -> Result<(), Error> {
+    let digest_alg = ksc.ds_algorithm.to_digest_algorithm();
+
     #[allow(clippy::type_complexity)]
     let mut ds_list: Vec<Record<Name<Vec<u8>>, Ds<Vec<u8>>>> = Vec::new();
     for (k, v) in kss.keyset.keys() {
@@ -2461,7 +2461,7 @@ fn update_ds_rrset(
                     let ds_record = Record::new(
                         public_key.owner().clone().flatten_into(),
                         public_key.class(),
-                        public_key.ttl(),
+                        ksc.default_ttl,
                         ds,
                     );
 
@@ -2548,7 +2548,7 @@ fn handle_actions(
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
                 *run_update_ds_command = true;
-                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env, verbose)?
+                update_ds_rrset(ksc, kss, env, verbose)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
@@ -2911,9 +2911,7 @@ async fn auto_wait_actions(
                                 warn!("Check SOA propagation failed: {e}");
                                 false
                             });
-                            dbg!(format!("got {res} for {serial}"));
                             if res {
-                                dbg!("Setting rrsig to Report");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -2923,7 +2921,6 @@ async fn auto_wait_actions(
                                 continue;
                             } else {
                                 let next = UnixTime::now() + ttl.into();
-                                dbg!("Setting rrsig to WaitSoa");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -3144,9 +3141,7 @@ async fn auto_report_actions(
                                 warn!("Check SOA propagation failed: {e}");
                                 false
                             });
-                            dbg!(format!("got {res} for {serial}"));
                             if res {
-                                dbg!("Setting rrsig to Report");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -3157,7 +3152,6 @@ async fn auto_report_actions(
                                 continue;
                             } else {
                                 let next = UnixTime::now() + ttl.into();
-                                dbg!("Setting rrsig to WaitSoa");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -5140,7 +5134,6 @@ fn import_key_command(
                 return Err(format!("public key {} should end in .pub, use --private to specify a private key separately", path.display()).into());
             }
             let private_path = path.with_extension("private");
-            dbg!(&private_path);
             let private_data = std::fs::read_to_string(&private_path).map_err::<Error, _>(|e| {
                 format!("unable read from file {}: {e}", private_path.display()).into()
             })?;
@@ -5206,8 +5199,6 @@ fn import_key_command(
                             format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
                                 .into()
                         })?;
-                    let x = kss.keyset.keys();
-                    dbg!(x);
                     set_at_parent = true;
                 }
                 KeyVariant::Zsk => {
