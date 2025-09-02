@@ -75,8 +75,8 @@ Options:
 .. option:: --rrset-exists <DOMAIN_NAME_AND_TYPE>
 
       Require that at least one RR with the given NAME and TYPE exists.
-      (Optionally) provide this option multiple times, with format
-      ``<DOMAIN_NAME> <TYPE>`` each, to build up a list of RRs.
+      This option can be provided multiple times, with format ``<DOMAIN_NAME>
+      <TYPE>`` each, to build up a list of RRs.
 
       If the domain name is relative, it will be relative to the zone's apex.
 
@@ -85,9 +85,9 @@ Options:
 .. option:: --rrset-exists-exact <RESOURCE_RECORD>
 
       Require that an RRset exists and contains exactly the RRs with the given
-      NAME, TYPE, and RDATA. (Optionally) provide this option multiple times,
-      each with one RR in zonefile format, to build up one or more RRsets that
-      is required to exist. CLASS and TTL can be omitted.
+      NAME, TYPE, and RDATA. This option can be provided multiple times, each
+      with one RR in zonefile format, to build up one or more RRsets that is
+      required to exist. CLASS and TTL can be omitted.
 
       If the domain name is relative, it will be relative to the zone's apex.
 
@@ -95,8 +95,8 @@ Options:
 
 .. option:: --rrset-non-existent <DOMAIN_NAME_AND_TYPE>
 
-      RRset does not exist. (Optionally) provide this option multiple times,
-      with format ``<DOMAIN_NAME> <TYPE>`` each, to build up a list of RRs that
+      RRset does not exist. This option can be provided multiple times, with
+      format ``<DOMAIN_NAME> <TYPE>`` each, to build up a list of RRs that
       specify that no RRs with a specified NAME and TYPE can exist.
 
       If the domain name is relative, it will be relative to the zone's apex.
@@ -105,9 +105,9 @@ Options:
 
 .. option:: --name-in-use <DOMAIN_NAME>
 
-      Name is in use. (Optionally) provide this option multiple times, with
-      format ``<DOMAIN_NAME>`` each, to collect a list of NAMEs that must own
-      at least one RR.
+      Name is in use. This option can be provided multiple times, with format
+      ``<DOMAIN_NAME>`` each, to collect a list of NAMEs that must own at least
+      one RR.
 
       Note that this prerequisite is NOT satisfied by empty nonterminals.
 
@@ -117,7 +117,7 @@ Options:
 
 .. option:: --name-not-in-use <DOMAIN_NAME>
 
-      Name is not in use. (Optionally) provide this option multiple times, with
+      Name is not in use. This option can be provided multiple times, with
       format ``<DOMAIN_NAME>`` each, to collect a list of NAMEs that must NOT
       own any RRs.
 
