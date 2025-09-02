@@ -191,7 +191,9 @@ impl Update {
         // };
 
         // Parse prerequisites before fetching nameservers, in case parsing fails
-        let prerequisites = self.parse_prerequisites(apex.clone().flatten_into())?;
+        let prerequisites = self
+            .parse_prerequisites(apex.clone().flatten_into())
+            .context("parsing the prerequisite arguments")?;
 
         // 1. (Cont.) If not provided, determine zone apex and fetch name servers
         let nsnames = if self.nameservers.is_none() {
@@ -199,7 +201,7 @@ impl Update {
                 // 3. Order nameserver list, listing primary first
                 update_helpers::determine_nsnames(env, &apex, &mname)
                     .await
-                    .context("while fetching the authoritative nameservers for the zone")?,
+                    .context("fetching the authoritative nameservers for the zone")?,
             )
         } else {
             None
