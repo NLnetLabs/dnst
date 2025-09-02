@@ -15,7 +15,7 @@ use domain::base::{
 };
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
 #[cfg(feature = "kmip")]
-use domain::crypto::{kmip::KeyUrl, sign::SignRaw};
+use domain::crypto::{kmip, kmip::KeyUrl, sign::SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
     self, Action, Key, KeySet, KeyState, KeyType, RollState, RollType, UnixTime,
@@ -484,6 +484,24 @@ enum ImportKeyCommands {
     File {
         /// Pathname of the public key.
         path: PathBuf,
+    },
+    #[cfg(feature = "kmip")]
+    /// Import a KMIP public/private key pair.
+    Kmip {
+        /// The identifier of the KMIP server.
+        server: String,
+
+        /// The KMIP identifier of the public key.
+        public_id: String,
+
+        /// The KMIP identifier of the private key.
+        private_id: String,
+
+        /// The key's DNSSEC security algorithm.
+        algorithm: SecurityAlgorithm,
+
+        /// Value to put in the DNSKEY flags field.
+        flags: u16,
     },
 }
 
@@ -5128,7 +5146,7 @@ fn import_key_command(
     key_variant: KeyVariant,
     kss: &mut KeySetState,
 ) -> Result<(), Error> {
-    match subcommand {
+    let (public_key_url, private_key_url, algorithm, key_tag) = match subcommand {
         ImportKeyCommands::File { path } => {
             if path.extension() != Some(OsStr::new("key")) {
                 return Err(format!("public key {} should end in .pub, use --private to specify a private key separately", path.display()).into());
@@ -5182,94 +5200,122 @@ fn import_key_command(
             let public_key_url = "file://".to_owned() + &path.display().to_string();
             let private_key_url = "file://".to_owned() + &private_path.display().to_string();
 
-            let mut set_at_parent = false;
-            let mut set_rrsig_visible = false;
-            match key_variant {
-                KeyVariant::Ksk => {
-                    kss.keyset
-                        .add_key_ksk(
-                            public_key_url.clone(),
-                            Some(private_key_url.clone()),
-                            public_key.data().algorithm(),
-                            public_key.data().key_tag(),
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
-                                .into()
-                        })?;
-                    set_at_parent = true;
-                }
-                KeyVariant::Zsk => {
-                    kss.keyset
-                        .add_key_zsk(
-                            public_key_url.clone(),
-                            Some(private_key_url.clone()),
-                            public_key.data().algorithm(),
-                            public_key.data().key_tag(),
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add ZSK {public_key_url}: {e}\n").into()
-                        })?;
-                    set_rrsig_visible = true;
-                }
-                KeyVariant::Csk => {
-                    kss.keyset
-                        .add_key_csk(
-                            public_key_url.clone(),
-                            Some(private_key_url.clone()),
-                            public_key.data().algorithm(),
-                            public_key.data().key_tag(),
-                            UnixTime::now(),
-                            true,
-                        )
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to add CSK {public_key_url}: {e}\n").into()
-                        })?;
-                    set_at_parent = true;
-                    set_rrsig_visible = true;
-                }
-            }
-
-            kss.keyset
-                .set_present(&public_key_url, true)
-                .expect("should not happen");
-
-            // What about visible? We should visible when the DNSKEY
-            // RRset has propagated. But we are not doing a key roll
-            // now. Just set it unconditionally.
-            kss.keyset
-                .set_visible(&public_key_url, UnixTime::now())
-                .expect("should not happen");
-
-            kss.keyset
-                .set_signer(&public_key_url, true)
-                .expect("should not happen");
-
-            if set_at_parent {
-                kss.keyset
-                    .set_at_parent(&public_key_url, true)
-                    .expect("should not happen");
-
-                // What about ds_visible? We should ds_visible when the DS
-                // RRset has propagated. But we are not doing a key roll
-                // now. Just set it unconditionally.
-                kss.keyset
-                    .set_ds_visible(&public_key_url, UnixTime::now())
-                    .expect("should not happen");
-            }
-            if set_rrsig_visible {
-                // We should set rrsig_visible when the zone's RRSIG records
-                // have propagated. But we are not doing a key roll
-                // now. Just set it unconditionally.
-                kss.keyset
-                    .set_rrsig_visible(&public_key_url, UnixTime::now())
-                    .expect("should not happen");
-            }
+            (
+                public_key_url,
+                private_key_url,
+                public_key.data().algorithm(),
+                public_key.data().key_tag(),
+            )
         }
+        #[cfg(feature = "kmip")]
+        ImportKeyCommands::Kmip {
+            server,
+            public_id,
+            private_id,
+            algorithm,
+            flags,
+        } => {
+            let pool = kss.kmip.get_pool(&server)?;
+            let keypair =
+                kmip::sign::KeyPair::from_metadata(algorithm, flags, &private_id, &public_id, pool)
+                    .map_err(|e| {
+                        format!("error constructing key pair on KMIP server '{server}': {e}")
+                    })?;
+            let public_key_url = keypair.public_key_url();
+            let private_key_url = keypair.private_key_url();
+            (
+                public_key_url.to_string(),
+                private_key_url.to_string(),
+                keypair.algorithm(),
+                keypair.dnskey().key_tag(),
+            )
+        }
+    };
+    let mut set_at_parent = false;
+    let mut set_rrsig_visible = false;
+    match key_variant {
+        KeyVariant::Ksk => {
+            kss.keyset
+                .add_key_ksk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n").into()
+                })?;
+            set_at_parent = true;
+        }
+        KeyVariant::Zsk => {
+            kss.keyset
+                .add_key_zsk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add ZSK {public_key_url}: {e}\n").into()
+                })?;
+            set_rrsig_visible = true;
+        }
+        KeyVariant::Csk => {
+            kss.keyset
+                .add_key_csk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add CSK {public_key_url}: {e}\n").into()
+                })?;
+            set_at_parent = true;
+            set_rrsig_visible = true;
+        }
+    }
+
+    kss.keyset
+        .set_present(&public_key_url, true)
+        .expect("should not happen");
+
+    // What about visible? We should visible when the DNSKEY
+    // RRset has propagated. But we are not doing a key roll
+    // now. Just set it unconditionally.
+    kss.keyset
+        .set_visible(&public_key_url, UnixTime::now())
+        .expect("should not happen");
+
+    kss.keyset
+        .set_signer(&public_key_url, true)
+        .expect("should not happen");
+
+    if set_at_parent {
+        kss.keyset
+            .set_at_parent(&public_key_url, true)
+            .expect("should not happen");
+
+        // What about ds_visible? We should ds_visible when the DS
+        // RRset has propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_ds_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
+    }
+    if set_rrsig_visible {
+        // We should set rrsig_visible when the zone's RRSIG records
+        // have propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_rrsig_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
     }
     Ok(())
 }
