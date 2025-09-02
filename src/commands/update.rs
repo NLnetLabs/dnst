@@ -1271,7 +1271,7 @@ mod test {
                     algorithm: Algorithm::Sha256,
                 }),
                 ttl: Ttl::from_secs(60),
-                nameservers: vec![[127, 0, 0, 9].into()],
+                nameservers: Some([127, 0, 0, 9].into()),
                 action: UpdateAction::Add {
                     rtype: Rtype::TXT,
                     rdata: vec!["Hallo".into()]
