@@ -228,16 +228,15 @@ impl Update {
                 let typ = Rtype::from_str(typ).map_err(|e| -> Error {
                     format!("Invalid resource record type '{typ}': {e}").into()
                 })?;
-                let uncertain = UncertainName::from_str(name).map_err(|e| -> Error {
+                let uncertain = UncertainName::<Vec<u8>>::from_str(name).map_err(|e| -> Error {
                     format!("Invalid domain name '{name}': {e}").into()
                 })?;
-                let name = match uncertain.as_absolute() {
-                    Some(name) => name.clone(),
-                    None => uncertain
-                        .chain(origin)
-                        .expect("we just checked that its not absolute")
-                        .to_name(),
-                };
+                let name = uncertain
+                    .chain(origin)
+                    .map_err(|_| -> Error {
+                        format!("Combining {name}.{origin} is too long for a domain name").into()
+                    })?
+                    .to_name();
                 records.push((name, typ))
             } else {
                 return Err(format!(
