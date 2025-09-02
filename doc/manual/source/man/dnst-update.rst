@@ -141,7 +141,8 @@ Arguments for :subcmd:`add` and :subcmd:`delete`
 
 .. option:: [RDATA]...
 
-      One or more RDATA arguments (fully optional for :subcmd:`delete`).
+      One or more RDATA arguments for :subcmd:`add`, and zero or more for
+      :subcmd:`delete`.
 
       Each argument corresponds to a single RR's RDATA, so beware of (shell and
       DNS) quoting rules.
