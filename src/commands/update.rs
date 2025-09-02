@@ -28,6 +28,7 @@ use domain::resolv::stub::conf::{ResolvConf, ServerConf, Transport};
 use domain::tsig::Key;
 use domain::utils::base64;
 use domain::zonefile::inplace::{Entry, Zonefile};
+use tracing::{debug, trace};
 
 use crate::env::Env;
 use crate::error::{Context, Error};
@@ -190,6 +191,7 @@ impl Update {
         //     }
         // };
 
+        debug!("Parsing prerequisite arguments");
         // Parse prerequisites before fetching nameservers, in case parsing fails
         let prerequisites = self
             .parse_prerequisites(apex.clone().flatten_into())
@@ -197,6 +199,7 @@ impl Update {
 
         // 1. (Cont.) If not provided, determine zone apex and fetch name servers
         let nsnames = if self.nameservers.is_none() {
+            debug!("Fetching authoritative name servers for {apex}");
             Some(
                 // 3. Order nameserver list, listing primary first
                 update_helpers::determine_nsnames(env, &apex, &mname)
@@ -207,12 +210,14 @@ impl Update {
             None
         };
 
+        debug!("Creating DNS UPDATE message");
         // 4. Create UPDATE and send to first server in list
         // TODO: pass SOA record fetched above to make sure changes to the SOA
         // record by the user adhere to the RFC specifications of e.g. only
         // increasing serial
         let msg = self.create_update_message(&apex, prerequisites)?;
 
+        debug!("Sending DNS UPDATE message");
         self.send_update(env, msg, nsnames).await?;
 
         Ok(())
@@ -326,16 +331,19 @@ impl Update {
         header.set_opcode(Opcode::UPDATE);
         header.set_qr(false);
 
+        trace!("Adding '{zone}' to zone section");
         let mut zone_section = message.question();
         zone_section
             .push(Question::new(zone, Rtype::SOA, Class::IN))
             .unwrap();
 
+        trace!("Adding prerequisites to prerequisites section");
         let mut prereq_section = zone_section.answer();
         Self::insert_prerequisites(prerequisites, &mut prereq_section)?;
 
         let mut update_section = prereq_section.authority();
 
+        trace!("Adding update messages to update section");
         match self.action {
             UpdateAction::Add { rtype, ref rdata } => {
                 if rdata.is_empty() {
@@ -489,6 +497,7 @@ impl Update {
     ) -> Result<(), Error> {
         if let Some(rrset_exists) = prerequisites.rrset_exists {
             for (domain, rtype) in rrset_exists {
+                trace!("Adding prerequisite (RRset exists): RR with name '{domain}' and type '{rtype}'");
                 prereq_section
                     .push(Self::create_prereq_rrset_exists(domain, rtype))
                     .map_err(|e| -> Error {
@@ -498,6 +507,7 @@ impl Update {
         }
         if let Some(rrset_exists_exact) = prerequisites.rrset_exists_exact {
             for rr in rrset_exists_exact {
+                trace!("Adding prerequisite (RRset exists exact): RR '{rr}'");
                 // The ttl is set while parsing the record, but in case that
                 // changes, here an extra check.
                 debug_assert!(rr.ttl() == Ttl::from_secs(0));
@@ -513,6 +523,7 @@ impl Update {
         }
         if let Some(rrset_non_existent) = prerequisites.rrset_non_existent {
             for (domain, rtype) in rrset_non_existent {
+                trace!("Adding prerequisite (RRset does not exist): RR with name '{domain}' and type '{rtype}'");
                 prereq_section
                     .push(Self::create_prereq_rrset_non_existent(domain, rtype))
                     .map_err(|e| -> Error {
@@ -522,6 +533,7 @@ impl Update {
         }
         if let Some(name_in_use) = prerequisites.name_in_use {
             for domain in name_in_use {
+                trace!("Adding prerequisite (Name in use): with name '{domain}'");
                 prereq_section
                     .push(Self::create_prereq_name_in_use(domain))
                     .map_err(|e| -> Error {
@@ -531,6 +543,7 @@ impl Update {
         }
         if let Some(name_not_in_use) = prerequisites.name_not_in_use {
             for domain in name_not_in_use {
+                trace!("Adding prerequisite (Name not in use): with name '{domain}'");
                 prereq_section
                     .push(Self::create_prereq_name_not_in_use(domain))
                     .map_err(|e| -> Error {
@@ -1022,10 +1035,12 @@ mod update_helpers {
     ) -> Result<(Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
         let resolver = env.stub_resolver().await;
 
+        trace!("Querying resolver for SOA of {zone}");
         let response = resolver
             .query(Question::new(&zone, Rtype::SOA, Class::IN))
             .await?;
 
+        trace!("Reading response from resolver");
         let mut answer = response.answer()?.limit_to::<Soa<_>>();
         if let Some(Ok(soa)) = answer.next() {
             Ok((
@@ -1050,11 +1065,13 @@ mod update_helpers {
     ) -> Result<(Name<Vec<u8>>, Name<Vec<u8>>, Soa<Name<Vec<u8>>>), Error> {
         let resolver = env.stub_resolver().await;
 
+        trace!("Querying resolver for SOA of {name}");
         // Step 1 - first find a name server that should know *something*
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
             .await?;
 
+        trace!("Reading response from resolver");
         // We look in both the answer and authority sections.
         // The answer section is used if the domain name is the zone apex,
         // otherwise the SOA is in the authority section.
@@ -1069,6 +1086,7 @@ mod update_helpers {
 
         let soa_mname: Name<Vec<u8>> = soa?.data().mname().to_name();
 
+        trace!("Querying for the IP address of {soa_mname}");
         // Step 2 - find SOA MNAME IP address, add to resolver
         let response = resolver.lookup_host(&soa_mname).await?;
 
@@ -1088,10 +1106,12 @@ mod update_helpers {
         // ordering, or want to update the SOA serial.
         let resolver = env.stub_resolver_from_conf(conf).await;
 
+        trace!("Querying primary name server directly for SOA of {name}");
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
             .await?;
 
+        trace!("Reading response from primary name server");
         // We look in both the answer and authority sections.
         // The answer section is used if the domain name is the zone apex,
         // otherwise the SOA is in the authority section.
@@ -1120,12 +1140,14 @@ mod update_helpers {
         zone: &Name<Vec<u8>>,
         mname: &Name<Vec<u8>>,
     ) -> Result<Vec<Name<Vec<u8>>>, Error> {
+        trace!("Querying {mname} for NS RRset of {zone}");
         let response = env
             .stub_resolver()
             .await
             .query(Question::new(&zone, Rtype::NS, Class::IN))
             .await?;
 
+        trace!("Reading response from {mname}");
         let mut nsnames = response
             .answer()?
             .limit_to_in::<Ns<_>>()
