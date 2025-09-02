@@ -643,6 +643,8 @@ impl Update {
                 Box::new(dgram_connection)
             };
 
+            let msg_dig = Update::update_to_dig_fmt(&msg);
+            trace!("Sending UPDATE:\n{msg_dig}");
             connection
                 .send_request(RequestMessage::new(msg.clone()).unwrap())
                 .get_response()
@@ -785,6 +787,212 @@ impl Update {
             }
         }
         Ok(())
+    }
+
+    fn update_to_dig_fmt(msg: &Message<Vec<u8>>) -> String {
+        fn write_record_item_additional(
+            target: &mut String,
+            item: &domain::base::ParsedRecord<Vec<u8>>,
+        ) {
+            let parsed = item.to_any_record::<AllRecordData<_, _>>();
+
+            if parsed.is_err() {
+                target.push_str("; ");
+            }
+
+            let data = match parsed {
+                Ok(item) => item.data().to_string(),
+                Err(_) => "<invalid data>".into(),
+            };
+
+            target.push_str(&format!(
+                "{}  {}  {}  {}  {}\n",
+                item.owner(),
+                item.ttl().as_secs(),
+                item.class(),
+                item.rtype(),
+                data
+            ))
+        }
+
+        fn write_record_item_update(
+            target: &mut String,
+            item: &domain::base::ParsedRecord<Vec<u8>>,
+            class: Class,
+        ) {
+            let parsed = item.to_any_record::<AllRecordData<_, _>>();
+
+            let data = match parsed {
+                Ok(item) => item.data().to_string(),
+                Err(_) => "<invalid data>".into(),
+            };
+
+            target.push_str("; ");
+            match (
+                item.class(),
+                item.ttl().as_secs(),
+                item.rtype(),
+                item.rdlen(),
+            ) {
+                (Class::ANY, 0, Rtype::ANY, 0) => {
+                    target.push_str(&format!("Clearing domain:  {}\n", item.owner()))
+                }
+                (Class::ANY, 0, _, 0) => target.push_str(&format!(
+                    "Deleting RRset:  {}  {}  {}\n",
+                    item.owner(),
+                    class,
+                    item.rtype()
+                )),
+                (Class::NONE, 0, _, _) => target.push_str(&format!(
+                    "Deleting RR:  {}  {}  {}  {}\n",
+                    item.owner(),
+                    class,
+                    item.rtype(),
+                    data
+                )),
+                (_, _, _, _) => {
+                    target.push_str(&format!("Adding RR:  "));
+                    target.push_str(&format!(
+                        "{}  {}  {}  {}  {}\n",
+                        item.owner(),
+                        item.ttl().as_secs(),
+                        class,
+                        item.rtype(),
+                        data
+                    ));
+                }
+            }
+        }
+
+        fn write_record_item_prerequisite(
+            target: &mut String,
+            item: &domain::base::ParsedRecord<Vec<u8>>,
+            class: Class,
+        ) {
+            let parsed = item.to_any_record::<AllRecordData<_, _>>();
+
+            let data = match parsed {
+                Ok(item) => item.data().to_string(),
+                Err(_) => "<invalid data>".into(),
+            };
+
+            target.push_str("; ");
+            match (
+                item.class(),
+                item.ttl().as_secs(),
+                item.rtype(),
+                item.rdlen(),
+            ) {
+                (Class::ANY, 0, Rtype::ANY, 0) => {
+                    target.push_str(&format!("Name is in use:  {}\n", item.owner()))
+                }
+                (Class::NONE, 0, Rtype::ANY, 0) => target.push_str(&format!(
+                    "Name is NOT in use:  {}\n",
+                    item.owner(),
+                )),
+                (Class::ANY, 0, _, 0) => target.push_str(&format!(
+                    "RRset exists (regardless of content):  {}  {}\n",
+                    item.owner(),
+                    item.rtype()
+                )),
+                (Class::NONE, 0, _, 0) => target.push_str(&format!(
+                    "RRset does not exist:  {}  {}\n",
+                    item.owner(),
+                    item.rtype()
+                )),
+                (_, 0, _, _) => target.push_str(&format!(
+                    "RRset exists with exact members:  {}  {}  {}  {}\n",
+                    item.owner(),
+                    class,
+                    item.rtype(),
+                    data
+                )),
+                (_, _, _, _) => unreachable!("Prerequisites all have a TTL of 0"),
+            }
+        }
+
+        let mut target = String::with_capacity(4096);
+
+        // Header
+        let counts = msg.header_counts();
+
+        target.push_str(&format!(
+            "; ZONE: {}, PREREQUISITE: {}, UPDATE: {}, ADDITIONAL: {}\n",
+            counts.qdcount(),
+            counts.ancount(),
+            counts.nscount(),
+            counts.arcount()
+        ));
+
+        let opt = msg.opt(); // We need it further down ...
+
+        if let Some(opt) = opt.as_ref() {
+            target.push_str("\n;; OPT PSEUDOSECTION:\n");
+            target.push_str(&format!(
+                "; EDNS: version {}, flags: {}; udp: {}\n",
+                opt.version(),
+                if opt.dnssec_ok() { "do" } else { "" },
+                opt.udp_payload_size()
+            ));
+        }
+
+        let mut class = None;
+
+        // Zone section
+        let questions = msg.question();
+        target.push_str(";; ZONE SECTION:\n");
+        // Should only be one...
+        for item in questions {
+            let item = item.expect("we created this message, it should be valid");
+            target.push_str(&format!("; {}\n", item));
+            class = Some(item.qclass());
+        }
+
+        // There is always a zone section in an update and therefore always
+        // a class
+        let class = class.expect("There is always a zone section");
+
+        // Prerequisite section
+        let answer = questions
+            .answer()
+            .expect("We created this message outselves, it should be correct");
+        if counts.ancount() > 0 {
+            target.push_str("\n;; PREREQUISITE SECTION:\n");
+            for item in answer {
+                let item = item.expect("we created this message, it should be valid");
+                write_record_item_prerequisite(&mut target, &item, class);
+            }
+        }
+
+        // Update section
+        let authority = answer
+            .next_section()
+            .expect("we created this message, it should be valid")
+            .unwrap();
+        if counts.nscount() > 0 {
+            target.push_str("\n;; UPDATE SECTION:\n");
+            for item in authority {
+                let item = item.expect("we created this message, it should be valid");
+                write_record_item_update(&mut target, &item, class);
+            }
+        }
+
+        // Additional
+        let additional = authority
+            .next_section()
+            .expect("we created this message, it should be valid")
+            .unwrap();
+        if counts.arcount() > 0 || (opt.is_none() && counts.arcount() > 0) {
+            target.push_str(&format!("\n;; ADDITIONAL SECTION:\n"));
+            for item in additional {
+                let item = item.expect("we created this message, it should be valid");
+                if item.rtype() != Rtype::OPT {
+                    write_record_item_additional(&mut target, &item);
+                }
+            }
+        }
+
+        target
     }
 }
 
