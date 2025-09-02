@@ -10,13 +10,14 @@
 //
 // - No duplicate protection through update ordering with marker RRs
 
+use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use clap::Subcommand;
 use domain::base::iana::{Class, Opcode, Rcode};
-use domain::base::message_builder::AnswerBuilder;
+use domain::base::message_builder::{AnswerBuilder, AuthorityBuilder};
 use domain::base::name::{FlattenInto, UncertainName};
 use domain::base::{
     Message, MessageBuilder, Name, Question, Record, Rtype, ToName, Ttl, UnknownRecordData,
@@ -39,6 +40,9 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
 type ParsedRecord = Record<Name<Vec<u8>>, ZoneRecordData<Vec<u8>, Name<Vec<u8>>>>;
 type NameTypeTuple = (Name<Vec<u8>>, Rtype);
+
+const SERIAL_BITS: u32 = 32;
+const SOA_SERIAL_CUTOFF: u32 = 1u32 << (SERIAL_BITS - 1);
 
 //------------ Update --------------------------------------------------------
 
@@ -162,7 +166,8 @@ impl Update {
         //    list empty; return.
 
         // 1. If not provided, determine zone apex and fetch name servers
-        let (apex, mname, _soa) = match &self.zone {
+        debug!("Determining primary name server name, zone apex, and soa record");
+        let (apex, mname, soa) = match &self.zone {
             Some(zone) => {
                 let tmp = update_helpers::find_mname_and_soa(env, zone)
                     .await
@@ -212,10 +217,7 @@ impl Update {
 
         debug!("Creating DNS UPDATE message");
         // 4. Create UPDATE and send to first server in list
-        // TODO: pass SOA record fetched above to make sure changes to the SOA
-        // record by the user adhere to the RFC specifications of e.g. only
-        // increasing serial
-        let msg = self.create_update_message(&apex, prerequisites)?;
+        let msg = self.create_update_message(&apex, prerequisites, soa)?;
 
         debug!("Sending DNS UPDATE message");
         self.send_update(env, msg, nsnames).await?;
@@ -318,6 +320,7 @@ impl Update {
         &self,
         zone: &Name<Vec<u8>>,
         prerequisites: UpdatePrerequisites,
+        soa: Soa<Name<Vec<u8>>>,
     ) -> Result<Vec<u8>, Error> {
         // UPDATE message sections:
         // Zone Section (= Question),
@@ -346,42 +349,19 @@ impl Update {
         trace!("Adding update messages to update section");
         match self.action {
             UpdateAction::Add { rtype, ref rdata } => {
-                if rdata.is_empty() {
-                    return Err("Provide at least one RDATA item to add".into());
-                }
-                for r in rdata {
-                    let rdata = Self::parse_rdata(rtype, r)?;
-                    update_section
-                        .push(Self::create_rr_addition(
-                            self.domain.clone(),
-                            self.class,
-                            self.ttl,
-                            rdata,
-                        ))
-                        .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
-                }
+                self.insert_add_updates(rtype, rdata, &soa, &mut update_section)?;
             }
             UpdateAction::Delete { rtype, ref rdata } => {
-                if rdata.is_empty() {
-                    update_section
-                        .push(Self::create_rrset_deletion(self.domain.clone(), rtype))
-                        .map_err(|e| {
-                            format!("Failed to add RRset deletion RR to UPDATE message: {e}")
-                        })?
-                } else {
-                    for r in rdata {
-                        let rdata = Self::parse_rdata(rtype, r)?;
-                        update_section
-                            .push(Self::create_rr_deletion(self.domain.clone(), rdata))
-                            .map_err(|e| {
-                                format!("Failed to add RR deletion RR to UPDATE message: {e}")
-                            })?
-                    }
-                }
+                self.insert_delete_updates(rtype, rdata, &mut update_section)?;
             }
-            UpdateAction::Clear => update_section
-                .push(Self::create_all_rrset_deletion(self.domain.clone()))
-                .map_err(|e| format!("Failed to add RRset deletion RR to UPDATE message: {e}"))?,
+            UpdateAction::Clear => {
+                trace!("Inserting update message: clear all RRsets on domain");
+                update_section
+                    .push(Self::create_all_rrset_deletion(self.domain.clone()))
+                    .map_err(|e| {
+                        format!("Failed to add RRset deletion RR to UPDATE message: {e}")
+                    })?
+            }
         }
 
         // TODO: Providing additional data is not yet implemented
@@ -719,6 +699,91 @@ impl Update {
         // we couldn't find anything.
         writeln!(env.stdout(), "No successful responses");
 
+        Ok(())
+    }
+
+    /// Compares two 32-bit serial numbers as defined in [RFC1982]. Returns
+    /// Ordering::Less if a < b, Ordering::Equal if a == b, and
+    /// Ordering::Greater if a > b. The result is undefined if a != b but
+    /// neither is greater or smaller (see [RFC1982] Section 3.2.).
+    /// The maximumm increment for a SOA serial is 2147483647 as per [RFC1982].
+    ///
+    /// [RFC1982]: https://www.rfc-editor.org/rfc/rfc1982.html
+    fn compare_serial(a: u32, b: u32) -> Ordering {
+        // Code from nsd:util.c:compare_serial
+        if a == b {
+            Ordering::Equal
+        } else if (a < b && b - a < SOA_SERIAL_CUTOFF) || (a > b && a - b > SOA_SERIAL_CUTOFF) {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    }
+
+    /// Verify that the SOA serial of the new rdata is within the bounds of an
+    /// allowed increment.
+    fn verify_soa_serial_increment(old: &Soa<Name<Vec<u8>>>, new: &Soa<Name<Vec<u8>>>) -> bool {
+        // The new soa serial should be greater than the old serial
+        Self::compare_serial(new.serial().into_int(), old.serial().into_int()) == Ordering::Greater
+    }
+
+    fn insert_add_updates(
+        &self,
+        rtype: Rtype,
+        rdata: &Vec<String>,
+        soa: &Soa<Name<Vec<u8>>>,
+        update_section: &mut AuthorityBuilder<Vec<u8>>,
+    ) -> Result<(), Error> {
+        if rdata.is_empty() {
+            return Err("Provide at least one RDATA item to add".into());
+        }
+        for r in rdata {
+            trace!("Parsing RDATA '{r}'");
+            let rdata = Self::parse_rdata(rtype, r)?;
+            if let ZoneRecordData::Soa(new_soa) = &rdata {
+                if !Self::verify_soa_serial_increment(soa, new_soa) {
+                    let old_serial = soa.serial();
+                    let new_serial = new_soa.serial();
+                    return Err(
+                        format!(
+                        "SOA serial is only allowed to be incremented (and maximally by {SOA_SERIAL_CUTOFF} at once), got old serial = {old_serial} and new serial = {new_serial}").into()
+                    );
+                }
+            }
+            trace!("Inserting update message: add {rtype} RR with RDATA '{rdata}'");
+            update_section
+                .push(Self::create_rr_addition(
+                    self.domain.clone(),
+                    self.class,
+                    self.ttl,
+                    rdata,
+                ))
+                .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
+        }
+        Ok(())
+    }
+
+    fn insert_delete_updates(
+        &self,
+        rtype: Rtype,
+        rdata: &Vec<String>,
+        update_section: &mut AuthorityBuilder<Vec<u8>>,
+    ) -> Result<(), Error> {
+        if rdata.is_empty() {
+            trace!("Inserting update message: delete the {rtype} RRset");
+            update_section
+                .push(Self::create_rrset_deletion(self.domain.clone(), rtype))
+                .map_err(|e| format!("Failed to add RRset deletion RR to UPDATE message: {e}"))?
+        } else {
+            for r in rdata {
+                trace!("Parsing RDATA '{r}'");
+                let rdata = Self::parse_rdata(rtype, r)?;
+                trace!("Inserting update message: delete {rtype} RR with RDATA '{rdata}'");
+                update_section
+                    .push(Self::create_rr_deletion(self.domain.clone(), rdata))
+                    .map_err(|e| format!("Failed to add RR deletion RR to UPDATE message: {e}"))?
+            }
+        }
         Ok(())
     }
 }
