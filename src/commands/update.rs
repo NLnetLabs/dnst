@@ -55,7 +55,7 @@ pub struct Update {
     #[arg(short = 'c', long = "class", default_value_t = Class::IN)]
     class: Class,
 
-    /// TTL in seconds or with unit suffix (s, m, h, d, w, M, y).
+    /// TTL in seconds or with unit suffix (s, m, h, d).
     ///
     /// Is only used by the `add` command and ignored otherwise.
     #[arg(short = 't', long = "ttl", value_parser = Update::parse_ttl, default_value = "3600")]
@@ -300,12 +300,6 @@ impl Update {
                 ttl.parse::<u32>().map(|t| t * 3600)
             } else if let Some(ttl) = arg.strip_suffix('d') {
                 ttl.parse::<u32>().map(|t| t * 86400)
-            } else if let Some(ttl) = arg.strip_suffix('w') {
-                ttl.parse::<u32>().map(|t| t * 604800)
-            } else if let Some(ttl) = arg.strip_suffix('M') {
-                ttl.parse::<u32>().map(|t| t * 2629746) // 30.436875 days
-            } else if let Some(ttl) = arg.strip_suffix('y') {
-                ttl.parse::<u32>().map(|t| t * 31556952) // 365.2425 days
             } else {
                 arg.parse()
             }

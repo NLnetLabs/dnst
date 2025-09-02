@@ -51,7 +51,7 @@ Options:
 
 .. option:: -t, --ttl <TTL>
 
-      TTL in seconds or with unit suffix (s, m, h, d, w, M, y).
+      TTL in seconds or with unit suffix (s, m, h, d).
 
       Is only used by the :subcmd:`add` command and is otherwise ignored.
 
