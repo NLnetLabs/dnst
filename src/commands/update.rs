@@ -647,7 +647,7 @@ impl Update {
                 Box::new(dgram_connection)
             };
 
-            let msg_dig = Update::update_to_dig_fmt(&msg);
+            let msg_dig = Update::update_to_dig_fmt(msg);
             trace!("Sending UPDATE:\n{msg_dig}");
             connection
                 .send_request(RequestMessage::new(msg.clone()).unwrap())
@@ -863,7 +863,7 @@ impl Update {
                     data
                 )),
                 (_, _, _, _) => {
-                    target.push_str(&format!("Adding RR:  "));
+                    target.push_str("Adding RR:  ");
                     target.push_str(&format!(
                         "{}  {}  {}  {}  {}\n",
                         item.owner(),
@@ -955,7 +955,7 @@ impl Update {
         // Should only be one...
         for item in questions {
             let item = item.expect("we created this message, it should be valid");
-            target.push_str(&format!("; {}\n", item));
+            target.push_str(&format!("; {item}\n"));
             class = Some(item.qclass());
         }
 
@@ -994,7 +994,7 @@ impl Update {
             .expect("we created this message, it should be valid")
             .unwrap();
         if counts.arcount() > 0 || (opt.is_none() && counts.arcount() > 0) {
-            target.push_str(&format!("\n;; ADDITIONAL SECTION:\n"));
+            target.push_str("\n;; ADDITIONAL SECTION:\n");
             for item in additional {
                 let item = item.expect("we created this message, it should be valid");
                 if item.rtype() != Rtype::OPT {
@@ -1011,7 +1011,7 @@ impl Update {
             let parsed = item.to_any_record::<AllRecordData<_, _>>();
 
             if parsed.is_err() {
-                target.push_str(&format!("; "));
+                target.push_str("; ");
             }
 
             let data = match parsed {
@@ -1050,7 +1050,7 @@ impl Update {
         let opt = msg.opt(); // We need it further down ...
 
         if let Some(opt) = opt.as_ref() {
-            target.push_str(&format!("\n;; OPT PSEUDOSECTION:\n"));
+            target.push_str("\n;; OPT PSEUDOSECTION:\n");
             target.push_str(&format!(
                 "; EDNS: version {}, flags: {}; udp: {}\n",
                 opt.version(),
@@ -1062,11 +1062,11 @@ impl Update {
 
                 match option {
                     Ok(opt) => match opt {
-                        Nsid(nsid) => target.push_str(&format!("; NSID: {}\n", nsid)),
-                        Dau(dau) => target.push_str(&format!("; DAU: {}\n", dau)),
-                        Dhu(dhu) => target.push_str(&format!("; DHU: {}\n", dhu)),
-                        N3u(n3u) => target.push_str(&format!("; N3U: {}\n", n3u)),
-                        Expire(expire) => target.push_str(&format!("; EXPIRE: {}\n", expire)),
+                        Nsid(nsid) => target.push_str(&format!("; NSID: {nsid}\n")),
+                        Dau(dau) => target.push_str(&format!("; DAU: {dau}\n")),
+                        Dhu(dhu) => target.push_str(&format!("; DHU: {dhu}\n")),
+                        N3u(n3u) => target.push_str(&format!("; N3U: {n3u}\n")),
+                        Expire(expire) => target.push_str(&format!("; EXPIRE: {expire}\n")),
                         TcpKeepalive(opt) => target.push_str(&format!(
                             "; TCP KEEPALIVE: {}\n",
                             opt.timeout().map_or("".to_string(), |t| format!(
@@ -1074,21 +1074,21 @@ impl Update {
                                 Duration::from(t).as_secs_f64()
                             ))
                         )),
-                        Padding(padding) => target.push_str(&format!("; PADDING: {}\n", padding)),
-                        ClientSubnet(opt) => target.push_str(&format!("; CLIENTSUBNET: {}\n", opt)),
-                        Cookie(cookie) => target.push_str(&format!("; COOKIE: {}\n", cookie)),
-                        Chain(chain) => target.push_str(&format!("; CHAIN: {}\n", chain)),
-                        KeyTag(keytag) => target.push_str(&format!("; KEYTAG: {}\n", keytag)),
+                        Padding(padding) => target.push_str(&format!("; PADDING: {padding}\n")),
+                        ClientSubnet(opt) => target.push_str(&format!("; CLIENTSUBNET: {opt}\n")),
+                        Cookie(cookie) => target.push_str(&format!("; COOKIE: {cookie}\n")),
+                        Chain(chain) => target.push_str(&format!("; CHAIN: {chain}\n")),
+                        KeyTag(keytag) => target.push_str(&format!("; KEYTAG: {keytag}\n")),
                         ExtendedError(extendederror) => {
-                            target.push_str(&format!("; EDE: {}\n", extendederror))
+                            target.push_str(&format!("; EDE: {extendederror}\n"))
                         }
                         Other(other) => {
                             target.push_str(&format!("; {}\n", other.code()));
                         }
-                        _ => target.push_str(&format!("Unknown OPT\n")),
+                        _ => target.push_str("Unknown OPT\n"),
                     },
                     Err(err) => {
-                        target.push_str(&format!("; ERROR: bad option: {}.\n", err));
+                        target.push_str(&format!("; ERROR: bad option: {err}.\n"));
                     }
                 }
             }
@@ -1097,10 +1097,10 @@ impl Update {
         // Question
         let questions = msg.question();
         if counts.qdcount() > 0 {
-            target.push_str(&format!(";; QUESTION SECTION:\n"));
+            target.push_str(";; QUESTION SECTION:\n");
             for item in questions {
                 let item = item.expect("we created this message, it should be valid");
-                target.push_str(&format!(";{}\n", item));
+                target.push_str(&format!(";{item}\n"));
             }
         }
 
@@ -1109,7 +1109,7 @@ impl Update {
             .answer()
             .expect("we created this message, it should be valid");
         if counts.ancount() > 0 {
-            target.push_str(&format!("\n;; ANSWER SECTION:\n"));
+            target.push_str("\n;; ANSWER SECTION:\n");
             for item in section {
                 let item = item.expect("we created this message, it should be valid");
                 write_record_item(target, &item);
@@ -1122,7 +1122,7 @@ impl Update {
             .expect("we created this message, it should be valid")
             .unwrap();
         if counts.nscount() > 0 {
-            target.push_str(&format!("\n;; AUTHORITY SECTION:\n"));
+            target.push_str("\n;; AUTHORITY SECTION:\n");
             for item in section {
                 let item = item.expect("we created this message, it should be valid");
                 write_record_item(target, &item);
@@ -1135,7 +1135,7 @@ impl Update {
             .expect("we created this message, it should be valid")
             .unwrap();
         if counts.arcount() > 1 || (opt.is_none() && counts.arcount() > 0) {
-            target.push_str(&format!("\n;; ADDITIONAL SECTION:\n"));
+            target.push_str("\n;; ADDITIONAL SECTION:\n");
             for item in section {
                 let item = item.expect("we created this message, it should be valid");
                 if item.rtype() != Rtype::OPT {
