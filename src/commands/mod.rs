@@ -79,9 +79,6 @@ pub enum Command {
     #[command(name = "keyset")]
     Keyset(self::keyset::Keyset),
 
-    /// Show the manual pages
-    Help(self::help::Help),
-
     /// Report a string to stdout
     ///
     /// This is used for printing version information and some other
@@ -100,7 +97,7 @@ impl Command {
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
             Self::Keyset(keyset) => keyset.execute(env),
-            Self::Help(help) => help.execute(),
+            // Self::Help(help) => help.execute(env),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())

@@ -16,7 +16,7 @@ use lexopt::Arg;
 use crate::env::Env;
 use crate::error::{Context, Error};
 use crate::parse::parse_name;
-use crate::{util, Args};
+use crate::{util, Args, DISPLAY_KIND};
 
 use super::{parse_os, parse_os_with, Command, LdnsCommand};
 
@@ -36,6 +36,8 @@ pub struct Keygen {
         feature = "openssl",
         doc = " - ED448:              An Ed448 key (algorithm 16)"
     )]
+    ///
+    /// Tip: Using the algorithm number instead of the name is also supported.
     #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'a',
@@ -268,11 +270,11 @@ impl From<Keygen> for Command {
 impl Keygen {
     fn parse_algorithm(value: &str) -> Result<GenerateParams, clap::Error> {
         match value {
-            "RSASHA256" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
-            "ECDSAP256SHA256" => return Ok(GenerateParams::EcdsaP256Sha256),
-            "ECDSAP384SHA384" => return Ok(GenerateParams::EcdsaP384Sha384),
-            "ED25519" => return Ok(GenerateParams::Ed25519),
-            "ED448" => return Ok(GenerateParams::Ed448),
+            "RSASHA256" | "8" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
+            "ECDSAP256SHA256" | "13" => return Ok(GenerateParams::EcdsaP256Sha256),
+            "ECDSAP384SHA384" | "14" => return Ok(GenerateParams::EcdsaP384Sha384),
+            "ED25519" | "15" => return Ok(GenerateParams::Ed25519),
+            "ED448" | "16" => return Ok(GenerateParams::Ed448),
             _ => {}
         }
 
@@ -281,7 +283,7 @@ impl Keygen {
         if let Some((name, params)) = value.split_once(':') {
             #[allow(clippy::single_match)]
             match name {
-                "RSASHA256" => {
+                "RSASHA256" | "8" => {
                     let bits: u32 = params.parse().map_err(|err| {
                         clap::Error::raw(
                             clap::error::ErrorKind::InvalidValue,
@@ -357,7 +359,7 @@ impl Keygen {
         let algorithm = public_key.algorithm();
         let secret_key = secret_key.display_as_bind().to_string();
         let public_key = format!(
-            "{} IN DNSKEY {}",
+            "{} IN DNSKEY {}\n",
             self.name.fmt_with_dot(),
             public_key.display_zonefile(DisplayKind::Simple)
         );
@@ -367,7 +369,7 @@ impl Keygen {
                 self.name.fmt_with_dot(),
                 Ds::new(key_tag, algorithm, digest_alg, digest)
                     .expect("we generated the digest, so don't expect it to be too long")
-                    .display_zonefile(DisplayKind::Simple)
+                    .display_zonefile(DISPLAY_KIND)
             )
         });
 
@@ -470,6 +472,22 @@ mod test {
         // - RSA-SHA256 accepts other key sizes.
         assert_eq!(
             parse(cmd.args(["-a", "RSASHA256:1024", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                ..base.clone()
+            }
+        );
+        // - Specifying the algorithm by number
+        assert_eq!(
+            parse(cmd.args(["-a", "8", "example.org"])),
+            Keygen {
+                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                ..base.clone()
+            }
+        );
+        // - Specifying the algorithm by number incl. keysize
+        assert_eq!(
+            parse(cmd.args(["-a", "8:1024", "example.org"])),
             Keygen {
                 algorithm: GenerateParams::RsaSha256 { bits: 1024 },
                 ..base.clone()
@@ -612,7 +630,7 @@ mod test {
 
         let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
         let public_key_regex =
-            Regex::new(r"^example.org. IN DNSKEY 256 3 15 [A-Za-z0-9/+=]+").unwrap();
+            Regex::new(r"^example.org. IN DNSKEY 256 3 15 [A-Za-z0-9/+=]+\n$").unwrap();
         let secret_key_regex = Regex::new(
             r"^Private-key-format: v1\.2\nAlgorithm: 15 \(ED25519\)\nPrivateKey: [A-Za-z0-9/+=]+\n$",
         )
@@ -644,7 +662,7 @@ mod test {
 
         let name_regex = Regex::new(r"^Kexample\.org\.\+015\+[0-9]{5}$").unwrap();
         let public_key_regex =
-            Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+").unwrap();
+            Regex::new(r"^example.org. IN DNSKEY 257 3 15 [A-Za-z0-9/+=]+\n$").unwrap();
         let digest_key_regex =
             Regex::new(r"^example.org. IN DS [0-9]+ 15 2 [0-9a-fA-F]+\n$").unwrap();
 

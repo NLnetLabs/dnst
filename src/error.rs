@@ -74,11 +74,11 @@ impl Error {
             PrimaryError::Other(error) => error,
         };
 
-        error!("{msg}");
-        let mut err = env.stderr();
+        let mut buf = String::new();
         for context in &self.0.context {
-            writeln!(err, "... while {context}");
+            buf.push_str(&format!("... while {context}\n"));
         }
+        error!("{msg}\n{buf}");
     }
 
     pub fn exit_code(&self) -> u8 {
