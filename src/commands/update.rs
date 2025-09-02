@@ -618,6 +618,8 @@ impl Update {
             msg: &Message<Vec<u8>>,
             tsig_key: &Option<Key>,
         ) -> Result<Message<bytes::Bytes>, domain::net::client::request::Error> {
+            // TODO: Use TCP directly or at least implement TCP fallback
+
             // // Using TCP directly to skip check whether the request fits
             // // in a UDP packet.
             // let tcp_connect = TcpConnect::new(socket);
