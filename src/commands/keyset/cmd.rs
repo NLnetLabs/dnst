@@ -198,6 +198,20 @@ enum Commands {
         subcommand: ImportCommands,
     },
 
+    /// Remove a key from the key set.
+    RemoveKey {
+        /// Force a key to be removed even if the key is not stale.
+        #[arg(long)]
+        force: bool,
+
+        /// Continue when removing the underlying keys fails.
+        #[arg(long = "continue")]
+        continue_flag: bool,
+
+        /// The key to remove.
+        key: String,
+    },
+
     /// Report status, such as key rolls that are in progress, expired
     /// keys, when to call the 'cron' subcommand next.
     Status,
@@ -490,6 +504,10 @@ enum ImportKeyCommands {
         #[arg(long)]
         coupled: bool,
 
+        /// Explicitly pass the name of the file that holds the private key.
+        ///
+        /// Otherwise the name is derived from the name of the file that holds
+        /// the public key.
         #[arg(long)]
         private_key: Option<PathBuf>,
 
@@ -720,6 +738,25 @@ impl Keyset {
 
             Commands::Import { subcommand } => {
                 import_command(subcommand, &ksc, &mut kss, env, &mut state_changed)?
+            }
+
+            Commands::RemoveKey {
+                key,
+                force,
+                continue_flag,
+            } => {
+                remove_key_command(key, force, continue_flag, &mut kss)?;
+                if force {
+                    // If the key was in use then the DNSKEY RRset may be
+                    // affected. Avoid introducing a DNSKEY RRset when there
+                    // was none.
+                    if !kss.dnskey_rrset.is_empty() {
+                        update_dnskey_rrset(&ksc, &mut kss, env, true)?;
+                    }
+
+                    // What about CDS/CDNSKEY/DS?
+                }
+                state_changed = true;
             }
 
             Commands::Status => {
@@ -5354,6 +5391,86 @@ fn import_key_command(
             .expect("should not happen");
     }
     Ok(())
+}
+
+/// Implement the remove-key subcommand.
+fn remove_key_command(
+    key: String,
+    force: bool,
+    continue_flag: bool,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    // The strategy depends on whether the key is decoupled or not.
+    // If the key is decoupled, then just remove the key from the keyset and
+    // leave underlying keys where they are.
+    // If the key is not decoupled, then we also need to remove the underlying
+    // keys. In that case, first check if the key is stale or if force is set.
+    // Then remove the private key (if any). If that fails abort unless
+    // continue is set. Then remove the public key. If that fails and the
+    // private key is remove then just log an error. Finally remove the key
+    // from the keyset.
+    // If force is true, then mark the key stale before removing.
+    let Some(k) = kss.keyset.keys().get(&key) else {
+        return Err(format!("key {key} not found").into());
+    };
+    let k = k.clone();
+    if k.decoupled() {
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    } else {
+        let stale = match k.keytype() {
+            KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Include(keystate) => {
+                keystate.stale()
+            }
+            KeyType::Csk(ksk_keystate, zsk_keystate) => {
+                ksk_keystate.stale() && zsk_keystate.stale()
+            }
+        };
+        if !stale && !force {
+            return Err(format!(
+                "unable to remove key {key}. Key is not stale. Use --force to override"
+            )
+            .into());
+        }
+
+        // If there is a private key then try to remove that one first. We
+        // don't want lingering private key when something else fails.
+        if let Some(privref) = k.privref() {
+            let private_key_url = Url::parse(privref)
+                .map_err(|e| format!("unable to parse {privref} as Url: {e}"))?;
+            let res = remove_key(kss, private_key_url);
+            if !continue_flag {
+                res?;
+            } else if let Err(e) = res {
+                error!("unable to remove key {privref}: {e}");
+            }
+        }
+
+        // Move on to the public key.
+        let public_key_url =
+            Url::parse(&key).map_err(|e| format!("unable to parse {key} as Url: {e}"))?;
+        let res = remove_key(kss, public_key_url);
+        if k.privref().is_some() || continue_flag {
+            // Ignore errors removing a public key if we previously removed
+            // (or tried to remove) a private key. Or if we are told to
+            // continue.
+            if let Err(e) = res {
+                error!("unable to remove key {key}: {e}");
+            }
+        } else {
+            res?;
+        }
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    }
 }
 
 /*
