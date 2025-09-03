@@ -1006,6 +1006,7 @@ impl Update {
         target
     }
 
+    // Code from dnsi:src/output/dig.rs with io:Write replaced with push_str
     fn answer_to_dig_fmt(msg: &Message<bytes::Bytes>, target: &mut String, socket: SocketAddr) {
         fn write_record_item(target: &mut String, item: &domain::base::ParsedRecord<bytes::Bytes>) {
             let parsed = item.to_any_record::<AllRecordData<_, _>>();
