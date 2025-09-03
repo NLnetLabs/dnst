@@ -482,12 +482,28 @@ enum ImportCommands {
 enum ImportKeyCommands {
     /// Import public/private key pair from file.
     File {
+        /// Take ownership of the imported keys.
+        ///
+        /// When the key is removed from the key set, the underlying keys
+        /// are also removed. The default is decoupled when the underlying
+        /// keys are not removed.
+        #[arg(long)]
+        coupled: bool,
+
         /// Pathname of the public key.
         path: PathBuf,
     },
     #[cfg(feature = "kmip")]
     /// Import a KMIP public/private key pair.
     Kmip {
+        /// Take ownership of the imported keys.
+        ///
+        /// When the key is removed from the key set, the underlying keys
+        /// are also removed. The default is decoupled when the underlying
+        /// keys are not removed.
+        #[arg(long)]
+        coupled: bool,
+
         /// The identifier of the KMIP server.
         server: String,
 
@@ -795,6 +811,7 @@ impl Keyset {
                 });
                 for (pubref, key) in keys {
                     println!("\t{} {}", pubref, key.privref().unwrap_or_default(),);
+                    println!("\t\tDecoupled: {}", key.decoupled(),);
                     let (keytype, state, opt_state) = match key.keytype() {
                         KeyType::Ksk(keystate) => ("KSK", keystate, None),
                         KeyType::Zsk(keystate) => ("ZSK", keystate, None),
@@ -5146,8 +5163,8 @@ fn import_key_command(
     key_variant: KeyVariant,
     kss: &mut KeySetState,
 ) -> Result<(), Error> {
-    let (public_key_url, private_key_url, algorithm, key_tag) = match subcommand {
-        ImportKeyCommands::File { path } => {
+    let (public_key_url, private_key_url, algorithm, key_tag, coupled) = match subcommand {
+        ImportKeyCommands::File { path, coupled } => {
             if path.extension() != Some(OsStr::new("key")) {
                 return Err(format!("public key {} should end in .pub, use --private to specify a private key separately", path.display()).into());
             }
@@ -5205,6 +5222,7 @@ fn import_key_command(
                 private_key_url,
                 public_key.data().algorithm(),
                 public_key.data().key_tag(),
+                coupled,
             )
         }
         #[cfg(feature = "kmip")]
@@ -5214,6 +5232,7 @@ fn import_key_command(
             private_id,
             algorithm,
             flags,
+            coupled,
         } => {
             let pool = kss.kmip.get_pool(&server)?;
             let keypair =
@@ -5228,6 +5247,7 @@ fn import_key_command(
                 private_key_url.to_string(),
                 keypair.algorithm(),
                 keypair.dnskey().key_tag(),
+                coupled,
             )
         }
     };
@@ -5295,6 +5315,10 @@ fn import_key_command(
 
     kss.keyset
         .set_signer(&public_key_url, true)
+        .expect("should not happen");
+
+    kss.keyset
+        .set_decoupled(&public_key_url, !coupled)
         .expect("should not happen");
 
     if set_at_parent {
