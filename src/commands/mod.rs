@@ -74,6 +74,13 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
+    /// Send an UPDATE packet ldns compatibility variant
+    ///
+    /// This variant is not a dnst command and only used to provide
+    /// a separate implementation from the dnst update command.
+    #[command(skip)]
+    LdnsUpdate(self::update::LdnsUpdate),
+
     /// Report a string to stdout
     ///
     /// This is used for printing version information and some other
@@ -91,7 +98,7 @@ impl Command {
             Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
-            // Self::Help(help) => help.execute(env),
+            Self::LdnsUpdate(ldnsupdate) => ldnsupdate.execute(env),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())
