@@ -68,12 +68,15 @@ pub enum KmipCommands {
 
     /// Add a KMIP server to use for key generation & signing.
     ///
-    /// If this is the first KMIP server to be configured it will be used to
-    /// generate new keys instead of using Ring/OpenSSL based key generation.
+    /// If this is the first KMIP server to be configured it will be set
+    /// as the default KMIP server which will be used to generate new keys
+    /// instead of using Ring/OpenSSL based key generation.
     ///
-    /// If this is NOT the first KMIP server to be configured, the new server
-    /// will NOT be used to generate keys unless configured to do so by
-    /// using: kmip set-default-server.
+    /// If this is NOT the first KMIP server to be configured, the default
+    /// KMIP server will be left as-is, either unset or set to an existing
+    /// KMIP server.
+    ///
+    /// Use 'kmip set-default-server' to change the default KMIP server.
     AddServer {
         /// An identifier to refer to the KMIP server by.
         ///
@@ -108,6 +111,10 @@ pub enum KmipCommands {
         /// TCP port to connect to the KMIP server on.
         #[arg(help_heading = "Server", long = "port", default_value_t = DEF_KMIP_PORT)]
         port: u16,
+
+        /// Add the server but don't make it the default.
+        #[arg(help_heading = "Server", long = "pending", default_value_t = false, action = clap::ArgAction::SetTrue)]
+        pending: bool,
 
         /// Optional path to a JSON file to read/write username/password credentials from/to.
         ///
@@ -358,6 +365,7 @@ pub fn kmip_command(
             server_id,
             ip_host_or_fqdn,
             port,
+            pending,
             credentials_store_path,
             username,
             password,
@@ -425,6 +433,7 @@ pub fn kmip_command(
                 server_id,
                 ip_host_or_fqdn,
                 port,
+                pending,
                 credentials,
                 client_auth,
                 server_auth,
@@ -658,6 +667,7 @@ fn add_kmip_server(
     server_id: String,
     ip_host_or_fqdn: String,
     port: u16,
+    pending: bool,
     credentials: Option<KmipClientCredentialsConfig>,
     client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
     server_cert_verification: KmipServerTlsCertificateVerificationConfig,
@@ -717,7 +727,7 @@ fn add_kmip_server(
 
     kmip.servers.insert(server_id.clone(), settings);
 
-    if kmip.servers.len() == 1 {
+    if !pending && kmip.servers.len() == 1 {
         kmip.default_server_id = Some(server_id);
     }
 
