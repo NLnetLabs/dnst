@@ -490,6 +490,9 @@ enum ImportKeyCommands {
         #[arg(long)]
         coupled: bool,
 
+        #[arg(long)]
+        private_key: Option<PathBuf>,
+
         /// Pathname of the public key.
         path: PathBuf,
     },
@@ -5164,11 +5167,20 @@ fn import_key_command(
     kss: &mut KeySetState,
 ) -> Result<(), Error> {
     let (public_key_url, private_key_url, algorithm, key_tag, coupled) = match subcommand {
-        ImportKeyCommands::File { path, coupled } => {
-            if path.extension() != Some(OsStr::new("key")) {
-                return Err(format!("public key {} should end in .pub, use --private to specify a private key separately", path.display()).into());
-            }
-            let private_path = path.with_extension("private");
+        ImportKeyCommands::File {
+            path,
+            coupled,
+            private_key,
+        } => {
+            let private_path = match private_key {
+                Some(private_key) => private_key,
+                None => {
+                    if path.extension() != Some(OsStr::new("key")) {
+                        return Err(format!("public key {} should end in .pub, use --private-key to specify a private key separately", path.display()).into());
+                    }
+                    path.with_extension("private")
+                }
+            };
             let private_data = std::fs::read_to_string(&private_path).map_err::<Error, _>(|e| {
                 format!("unable read from file {}: {e}", private_path.display()).into()
             })?;
