@@ -1885,4 +1885,6 @@ mod test {
         );
         assert_eq!(res.stderr, "");
     }
+
+    // TODO: add stelline tests for `dnst update`
 }
