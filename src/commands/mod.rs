@@ -48,6 +48,10 @@ pub enum Command {
     #[command(name = "keygen", verbatim_doc_comment)]
     Keygen(self::keygen::Keygen),
 
+    /// Maintain a set of DNSSEC keys. EXPERIMENTAL.
+    #[command(name = "keyset")]
+    Keyset(self::keyset::Keyset),
+
     /// Generate a DS RR from the DNSKEYS in keyfile
     ///
     /// The following file will be created for each key:
@@ -80,12 +84,12 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
-    /// Maintain a set of DNSSEC keys
-    #[command(name = "keyset")]
-    Keyset(self::keyset::Keyset),
-
-    /// Show the manual pages
-    Help(self::help::Help),
+    /// Send an UPDATE packet ldns compatibility variant
+    ///
+    /// This variant is not a dnst command and only used to provide
+    /// a separate implementation from the dnst update command.
+    #[command(skip)]
+    LdnsUpdate(self::update::LdnsUpdate),
 
     /// Report a string to stdout
     ///
@@ -100,13 +104,14 @@ impl Command {
         match self {
             Self::Key2ds(key2ds) => key2ds.execute(env),
             Self::Keygen(keygen) => keygen.execute(env),
+            Self::Keyset(keyset) => keyset.execute(env),
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Notify(notify) => notify.execute(env),
             Self::Signer(signer) => signer.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
             Self::Update(update) => update.execute(env),
-            Self::Keyset(keyset) => keyset.execute(env),
-            Self::Help(help) => help.execute(),
+            // Self::Help(help) => help.execute(env),
+            Self::LdnsUpdate(ldnsupdate) => ldnsupdate.execute(env),
             Self::Report(s) => {
                 writeln!(env.stdout(), "{s}");
                 Ok(())

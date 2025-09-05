@@ -40,7 +40,3 @@ Options
 
       Print the help text (short summary with ``-h``, long help with
       ``--help``).
-
-.. option:: -V, --version
-
-      Print the version.
