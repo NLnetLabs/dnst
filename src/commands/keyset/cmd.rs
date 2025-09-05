@@ -2,6 +2,23 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
+// TODO:
+// - file locking
+//   - update the state file atomically by writing to a different file and
+//     then renaming. This helps downstream users.
+//   - option: overwrite the config file. This is risky but simplifies locking.
+//   - option: update the config file atomically. This makes locking more
+//     complex.
+// - add a autoremove_delay option. Delete stale keys only some time after
+//   their withdrawn times.
+// - move dnskey_rrset, cds_rrset, ns_rrset into apex_extra (ds_rrset remains).
+//   add apex_remove with a list of Rtype that the signer should remove from
+//   the apex.
+// - create struct State that has KeySetConfig, KeySetState and the
+//   config_changed, state_changed, and run_update_ds_command falgs. This
+//   reduces parameter passing. It also allows KMIP to store its connection
+//   pool in State instead of in KeySetState as it currently does.
+
 use crate::env::Env;
 use crate::error::Error;
 use crate::util;
