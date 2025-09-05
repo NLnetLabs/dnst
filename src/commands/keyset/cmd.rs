@@ -601,8 +601,8 @@ impl Keyset {
             keyset_state,
         } = self.cmd
         {
-            let state_file = absolute(&keyset_state).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", keyset_state.display(), e).into()
+            let state_file = absolute(&keyset_state).map_err(|e| {
+                format!("unable to make {} absolute: {}", keyset_state.display(), e)
             })?;
             let keys_dir = make_parent_dir(state_file.clone());
 
@@ -645,46 +645,40 @@ impl Keyset {
                 update_ds_command: Vec::new(),
             };
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
-            let mut file = File::create(&state_file).map_err::<Error, _>(|e| {
-                format!("unable to create file {}: {e}", state_file.display()).into()
-            })?;
-            write!(file, "{json}").map_err::<Error, _>(|e| {
-                format!("unable to write to file {}: {e}", state_file.display()).into()
-            })?;
+            let mut file = File::create(&state_file)
+                .map_err(|e| format!("unable to create file {}: {e}", state_file.display()))?;
+            write!(file, "{json}")
+                .map_err(|e| format!("unable to write to file {}: {e}", state_file.display()))?;
 
             let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
-            let mut file = File::create(&self.keyset_conf).map_err::<Error, _>(|e| {
-                format!("unable to create file {}: {e}", self.keyset_conf.display()).into()
+            let mut file = File::create(&self.keyset_conf).map_err(|e| {
+                format!("unable to create file {}: {e}", self.keyset_conf.display())
             })?;
-            write!(file, "{json}").map_err::<Error, _>(|e| {
+            write!(file, "{json}").map_err(|e| {
                 format!(
                     "unable to write to file {}: {e}",
                     self.keyset_conf.display()
                 )
-                .into()
             })?;
             return Ok(());
         }
 
-        let file = File::open(self.keyset_conf.clone()).map_err::<Error, _>(|e| {
+        let file = File::open(self.keyset_conf.clone()).map_err(|e| {
             format!(
                 "unable to open config file {}: {e}",
                 self.keyset_conf.display()
             )
-            .into()
         })?;
-        let mut ksc: KeySetConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
-            format!("error loading {:?}: {e}\n", self.keyset_conf).into()
-        })?;
-        let file = File::open(ksc.state_file.clone()).map_err::<Error, _>(|e| {
+        let mut ksc: KeySetConfig = serde_json::from_reader(file)
+            .map_err(|e| format!("error loading {:?}: {e}\n", self.keyset_conf))?;
+        let file = File::open(ksc.state_file.clone()).map_err(|e| {
             format!(
                 "unable to open state file {}: {e}",
                 ksc.state_file.display()
             )
-            .into()
         })?;
         let mut kss: KeySetState = serde_json::from_reader(file)
-            .map_err::<Error, _>(|e| format!("error loading {:?}: {e}\n", ksc.state_file).into())?;
+            .map_err(|e| format!("error loading {:?}: {e}\n", ksc.state_file))?;
 
         let mut config_changed = false;
         let mut state_changed = false;
@@ -1444,24 +1438,22 @@ impl Keyset {
         }
         if config_changed {
             let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
-            let mut file = File::create(&self.keyset_conf).map_err::<Error, _>(|e| {
-                format!("unable to create file {}: {e}", self.keyset_conf.display()).into()
+            let mut file = File::create(&self.keyset_conf).map_err(|e| {
+                format!("unable to create file {}: {e}", self.keyset_conf.display())
             })?;
-            write!(file, "{json}").map_err::<Error, _>(|e| {
+            write!(file, "{json}").map_err(|e| {
                 format!(
                     "unable to write to file {}: {e}",
                     self.keyset_conf.display()
                 )
-                .into()
             })?;
         }
         if state_changed {
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
-            let mut file = File::create(&ksc.state_file).map_err::<Error, _>(|e| {
-                format!("unable to create file {}: {e}", ksc.state_file.display()).into()
-            })?;
-            write!(file, "{json}").map_err::<Error, _>(|e| {
-                format!("unable to write to file {}: {e}", ksc.state_file.display()).into()
+            let mut file = File::create(&ksc.state_file)
+                .map_err(|e| format!("unable to create file {}: {e}", ksc.state_file.display()))?;
+            write!(file, "{json}").map_err(|e| {
+                format!("unable to write to file {}: {e}", ksc.state_file.display())
             })?;
         }
 
@@ -1489,9 +1481,8 @@ impl Keyset {
 fn remove_key(kss: &mut KeySetState, url: Url) -> Result<(), Error> {
     match url.scheme() {
         "file" => {
-            remove_file(url.path()).map_err::<Error, _>(|e| {
-                format!("unable to remove key file {}: {e}\n", url.path()).into()
-            })?;
+            remove_file(url.path())
+                .map_err(|e| format!("unable to remove key file {}: {e}\n", url.path()))?;
         }
 
         #[cfg(feature = "kmip")]
@@ -2085,7 +2076,7 @@ fn new_keys(
                 flags,
                 kmip_conn_pool.clone(),
             )
-            .map_err::<Error, _>(|e| format!("KMIP key generation failed: {e}\n").into())?;
+            .map_err(|e| format!("KMIP key generation failed: {e}\n"))?;
 
             let dnskey = key_pair.dnskey();
 
@@ -2146,7 +2137,7 @@ fn new_keys(
                                 // unexpected. Why would it succeed for one and
                                 // fail for the other?
                                 conn.rename_key(key_pair.private_key_id(), private_key_label)
-                            .map_err::<Error, _>(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()).into())?;
+                            .map_err(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()))?;
                             }
                             Err(err) => {
                                 // Assume that key re-labeling is not supported
@@ -2178,9 +2169,8 @@ fn new_keys(
 
     // Otherwise use Ring/OpenSSL based key generation.
     let (secret_key, public_key, key_tag) = loop {
-        let (secret_key, public_key) =
-            domain::crypto::sign::generate(algorithm.clone(), flags)
-                .map_err::<Error, _>(|e| format!("key generation failed: {e}\n").into())?;
+        let (secret_key, public_key) = domain::crypto::sign::generate(algorithm.clone(), flags)
+            .map_err(|e| format!("key generation failed: {e}\n"))?;
 
         let key_tag = public_key.key_tag();
         if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
@@ -2232,9 +2222,9 @@ fn new_keys(
     let public_key_url = "file://".to_owned() + public_key_path;
 
     let secret_key_url = Url::parse(&secret_key_url)
-        .map_err::<Error, _>(|e| format!("unable to parse {secret_key_url} as URL: {e}").into())?;
+        .map_err(|e| format!("unable to parse {secret_key_url} as URL: {e}"))?;
     let public_key_url = Url::parse(&public_key_url)
-        .map_err::<Error, _>(|e| format!("unable to parse {public_key_url} as URL: {e}").into())?;
+        .map_err(|e| format!("unable to parse {public_key_url} as URL: {e}"))?;
     Ok((public_key_url, secret_key_url, algorithm, key_tag))
 }
 
@@ -2282,8 +2272,7 @@ fn update_dnskey_rrset(
             KeyType::Include(_) => false,
         };
 
-        let rrset = Rrset::new(&dnskeys)
-            .map_err::<Error, _>(|e| format!("unable to create Rrset: {e}\n").into())?;
+        let rrset = Rrset::new(&dnskeys).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
@@ -2292,20 +2281,15 @@ fn update_dnskey_rrset(
             let signing_key = match (priv_url.scheme(), pub_url.scheme()) {
                 ("file", "file") => {
                     let private_data = std::fs::read_to_string(priv_url.path())
-                        .map_err::<Error, _>(|e| {
-                            format!("unable read from file {}: {e}", priv_url.path()).into()
-                        })?;
+                        .map_err(|e| format!("unable read from file {}: {e}", priv_url.path()))?;
                     let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
-                        .map_err::<Error, _>(|e| {
-                            format!("unable to parse private key file {privref}: {e}").into()
-                        })?;
+                        .map_err(|e| format!("unable to parse private key file {privref}: {e}"))?;
 
                     let public_key = public_key_from_url(&pub_url, ksc, kss, env)?;
 
-                    let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                        .map_err::<Error, _>(|e| {
+                    let key_pair =
+                        KeyPair::from_bytes(&secret_key, public_key.data()).map_err(|e| {
                             format!("private key {privref} and public key {k} do not match: {e}")
-                                .into()
                         })?;
                     SigningKey::new(
                         public_key.owner().clone(),
@@ -2338,9 +2322,9 @@ fn update_dnskey_rrset(
 
             // TODO: Should there be a key not found error we can detect here so that we can retry if
             // we believe that the key is simply not registered fully yet in the HSM?
-            let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err::<Error, _>(
-                |e| format!("error signing DNSKEY RRset with private key {privref}: {e}").into(),
-            )?;
+            let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(|e| {
+                format!("error signing DNSKEY RRset with private key {privref}: {e}")
+            })?;
             sigs.push(sig);
         }
     }
@@ -2414,10 +2398,10 @@ fn create_cds_rrset(
             KeyType::Include(_) => false,
         };
 
-        let cds_rrset = Rrset::new(&cds_list)
-            .map_err::<Error, _>(|e| format!("unable to create Rrset: {e}\n").into())?;
-        let cdnskey_rrset = Rrset::new(&cdnskey_list)
-            .map_err::<Error, _>(|e| format!("unable to create Rrset: {e}\n").into())?;
+        let cds_rrset =
+            Rrset::new(&cds_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+        let cdnskey_rrset =
+            Rrset::new(&cdnskey_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
         if dnskey_signer {
             let privref = v.privref().ok_or("missing private key")?;
@@ -2427,28 +2411,24 @@ fn create_cds_rrset(
                 ("file", "file") => {
                     let path = priv_url.path();
                     let filename = env.in_cwd(&path);
-                    let private_data =
-                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                            format!(
-                                "unable to read from private key file {}: {e}",
-                                filename.display()
-                            )
-                            .into()
-                        })?;
-                    let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
-                        .map_err::<Error, _>(|e| {
+                    let private_data = std::fs::read_to_string(&filename).map_err(|e| {
+                        format!(
+                            "unable to read from private key file {}: {e}",
+                            filename.display()
+                        )
+                    })?;
+                    let secret_key =
+                        SecretKeyBytes::parse_from_bind(&private_data).map_err(|e| {
                             format!(
                                 "unable to parse private key file {}: {e}",
                                 filename.display()
                             )
-                            .into()
                         })?;
                     let public_key = public_key_from_url(&pub_url, ksc, kss, env)?;
 
-                    let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                        .map_err::<Error, _>(|e| {
+                    let key_pair =
+                        KeyPair::from_bytes(&secret_key, public_key.data()).map_err(|e| {
                             format!("private key {privref} and public key {k} do not match: {e}")
-                                .into()
                         })?;
                     SigningKey::new(
                         public_key.owner().clone(),
@@ -2479,14 +2459,12 @@ fn create_cds_rrset(
                 }
             };
             let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
-                .map_err::<Error, _>(|e| {
-                    format!("error signing CDS RRset with private key {privref}: {e}").into()
-                })?;
+                .map_err(|e| format!("error signing CDS RRset with private key {privref}: {e}"))?;
             cds_sigs.push(sig);
             let sig =
                 sign_rrset::<_, _, Bytes, _>(&signing_key, &cdnskey_rrset, inception, expiration)
-                    .map_err::<Error, _>(|e| {
-                    format!("error signing CDNSKEY RRset with private key {privref}: {e}").into()
+                    .map_err(|e| {
+                    format!("error signing CDNSKEY RRset with private key {privref}: {e}")
                 })?;
             cdnskey_sigs.push(sig);
         }
@@ -2541,7 +2519,7 @@ fn create_cds_rrset_helper(
     let sec_alg = dnskey.algorithm();
     let digest = dnskey
         .digest(&record.owner(), digest_alg)
-        .map_err::<Error, _>(|e| format!("error creating digest for DNSKEY record: {e}").into())?;
+        .map_err(|e| format!("error creating digest for DNSKEY record: {e}"))?;
     let cds = Cds::new(key_tag, sec_alg, digest_alg, digest.as_ref().to_vec())
         .expect("Infallible because the digest won't be too long since it's a valid digest");
     let cds_record = Record::new(owner, record.class(), record.ttl(), cds);
@@ -2584,9 +2562,7 @@ fn update_ds_rrset(
             let digest = public_key
                 .data()
                 .digest(&public_key.owner(), digest_alg)
-                .map_err::<Error, _>(|e| {
-                    format!("error creating digest for DNSKEY record: {e}").into()
-                })?;
+                .map_err(|e| format!("error creating digest for DNSKEY record: {e}"))?;
 
             let ds = Ds::new(
                 public_key.data().key_tag(),
@@ -2729,10 +2705,10 @@ fn print_actions(actions: &[Action]) {
 pub fn parse_duration(value: &str) -> Result<Duration, Error> {
     let span: Span = value
         .parse()
-        .map_err::<Error, _>(|e| format!("unable to parse {value} as lifetime: {e}\n").into())?;
+        .map_err(|e| format!("unable to parse {value} as lifetime: {e}\n"))?;
     let signeddur = span
         .to_duration(SpanRelativeTo::days_are_24_hours())
-        .map_err::<Error, _>(|e| format!("unable to convert duration: {e}\n").into())?;
+        .map_err(|e| format!("unable to convert duration: {e}\n"))?;
     Duration::try_from(signeddur).map_err(|e| format!("unable to convert duration: {e}\n").into())
 }
 
@@ -3468,18 +3444,16 @@ fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Resu
         if !key_urls.is_empty() {
             for u in key_urls {
                 let (pubref, privref) = &u;
-                kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
-                    format!("unable to remove key {pubref}: {e}\n").into()
-                })?;
+                kss.keyset
+                    .delete_key(pubref)
+                    .map_err(|e| format!("unable to remove key {pubref}: {e}\n"))?;
                 if let Some(privref) = privref {
-                    let priv_url = Url::parse(privref).map_err::<Error, _>(|e| {
-                        format!("unable to parse {privref} as URL: {e}").into()
-                    })?;
+                    let priv_url = Url::parse(privref)
+                        .map_err(|e| format!("unable to parse {privref} as URL: {e}"))?;
                     remove_key(kss, priv_url)?;
                 }
-                let pub_url = Url::parse(pubref).map_err::<Error, _>(|e| {
-                    format!("unable to parse {pubref} as URL: {e}").into()
-                })?;
+                let pub_url = Url::parse(pubref)
+                    .map_err(|e| format!("unable to parse {pubref} as URL: {e}"))?;
                 remove_key(kss, pub_url)?;
             }
             println!();
@@ -3552,7 +3526,7 @@ fn start_ksk_roll(
             UnixTime::now(),
             true,
         )
-        .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
+        .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
 
     let new = [ksk_pub_url.as_ref()];
 
@@ -3560,14 +3534,14 @@ fn start_ksk_roll(
     let actions = match kss
         .keyset
         .start_roll(roll_type, &old, &new)
-        .map_err::<Error, _>(|e| format!("cannot start {roll_type:?}: {e}\n").into())
+        .map_err(|e| format!("cannot start {roll_type:?}: {e}\n"))
     {
         Ok(actions) => actions,
         Err(e) => {
             // Remove the keys we just created.
             remove_key(kss, ksk_priv_url)?;
             remove_key(kss, ksk_pub_url)?;
-            return Err(e);
+            return Err(e.into());
         }
     };
     handle_actions(&actions, ksc, kss, env, verbose, run_update_ds_command)?;
@@ -3641,7 +3615,7 @@ fn start_zsk_roll(
             UnixTime::now(),
             true,
         )
-        .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
+        .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
 
     let new = [zsk_pub_url.as_ref()];
 
@@ -3649,14 +3623,14 @@ fn start_zsk_roll(
     let actions = match kss
         .keyset
         .start_roll(roll_type, &old, &new)
-        .map_err::<Error, _>(|e| format!("cannot start {roll_type:?}: {e}\n").into())
+        .map_err(|e| format!("cannot start {roll_type:?}: {e}\n"))
     {
         Ok(actions) => actions,
         Err(e) => {
             // Remove the keys we just created.
             remove_key(kss, zsk_priv_url)?;
             remove_key(kss, zsk_pub_url)?;
-            return Err(e);
+            return Err(e.into());
         }
     };
 
@@ -3706,7 +3680,7 @@ fn start_csk_roll(
     let actions = match kss
         .keyset
         .start_roll(roll_type, &old, &new)
-        .map_err::<Error, _>(|e| format!("cannot start {roll_type:?}: {e}\n").into())
+        .map_err(|e| format!("cannot start {roll_type:?}: {e}\n"))
     {
         Ok(actions) => actions,
         Err(e) => {
@@ -3714,7 +3688,7 @@ fn start_csk_roll(
             for u in new_urls {
                 remove_key(kss, u)?;
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
 
@@ -3761,7 +3735,7 @@ fn start_algorithm_roll(
     let actions = match kss
         .keyset
         .start_roll(roll_type, &old, &new)
-        .map_err::<Error, _>(|e| format!("cannot start roll: {e}\n").into())
+        .map_err(|e| format!("cannot start roll: {e}\n"))
     {
         Ok(actions) => actions,
         Err(e) => {
@@ -3769,7 +3743,7 @@ fn start_algorithm_roll(
             for u in new_urls {
                 remove_key(kss, u)?;
             }
-            return Err(e);
+            return Err(e.into());
         }
     };
 
@@ -4356,9 +4330,10 @@ where
     let mut req = RequestMessage::new(msg).expect("should not fail");
     req.set_dnssec_ok(true);
     let mut request = udptcp_conn.send_request(req.clone());
-    let response = request.get_response().await.map_err::<Error, _>(|e| {
-        format!("{name}/{rtype} request to {address} failed: {e}").into()
-    })?;
+    let response = request
+        .get_response()
+        .await
+        .map_err(|e| format!("{name}/{rtype} request to {address} failed: {e}"))?;
 
     let mut res = Vec::new();
     for r in response.answer()?.limit_to_in::<T>() {
@@ -4544,9 +4519,8 @@ async fn auto_report_expire_done(
                     // To early.
                     continue;
                 }
-                let actions = actions.map_err::<Error, _>(|e| {
-                    format!("cache_expired[12] failed for state {r:?}: {e}").into()
-                })?;
+                let actions = actions
+                    .map_err(|e| format!("cache_expired[12] failed for state {r:?}: {e}"))?;
                 handle_actions(&actions, ksc, kss, env, false, run_update_ds_command)?;
                 // Report actions
                 *state_changed = true;
@@ -4675,9 +4649,8 @@ fn cron_next_auto_report_expire_done(
                     cron_next.push(Some(UnixTime::now() + remain));
                     continue;
                 }
-                let _ = actions.map_err::<Error, _>(|e| {
-                    format!("cache_expired[12] failed for state {r:?}: {e}").into()
-                })?;
+                let _ = actions
+                    .map_err(|e| format!("cache_expired[12] failed for state {r:?}: {e}"))?;
 
                 // Time to call cron. Report the current time.
                 cron_next.push(Some(UnixTime::now()));
@@ -5084,7 +5057,7 @@ fn new_csk_or_ksk_zsk(
                 UnixTime::now(),
                 true,
             )
-            .map_err::<Error, _>(|e| format!("unable to add CSK {csk_pub_url}: {e}\n").into())?;
+            .map_err(|e| format!("unable to add CSK {csk_pub_url}: {e}\n"))?;
 
         let new = vec![csk_pub_url];
         (new, new_urls)
@@ -5113,7 +5086,7 @@ fn new_csk_or_ksk_zsk(
                 UnixTime::now(),
                 true,
             )
-            .map_err::<Error, _>(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n").into())?;
+            .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
 
         // Create a new ZSK
         let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
@@ -5137,7 +5110,7 @@ fn new_csk_or_ksk_zsk(
                 UnixTime::now(),
                 true,
             )
-            .map_err::<Error, _>(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n").into())?;
+            .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
 
         let new = vec![ksk_pub_url, zsk_pub_url];
         (new, new_urls)
@@ -5167,17 +5140,14 @@ fn import_command(
 ) -> Result<(), Error> {
     match subcommand {
         ImportCommands::PublicKey { path } => {
-            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
-                format!("unable read from file {}: {e}", path.display()).into()
-            })?;
+            let public_data = std::fs::read_to_string(&path)
+                .map_err(|e| format!("unable read from file {}: {e}", path.display()))?;
 
-            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
-                format!("unable to parse public key file {}: {e}", path.display()).into()
-            })?;
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data)
+                .map_err(|e| format!("unable to parse public key file {}: {e}", path.display()))?;
 
-            let path = absolute(&path).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", path.display(), e).into()
-            })?;
+            let path = absolute(&path)
+                .map_err(|e| format!("unable to make {} absolute: {}", path.display(), e))?;
             let public_key_url = "file://".to_owned() + &path.display().to_string();
             kss.keyset
                 .add_public_key(
@@ -5187,9 +5157,7 @@ fn import_command(
                     UnixTime::now(),
                     true,
                 )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add public key {public_key_url}: {e}\n").into()
-                })?;
+                .map_err(|e| format!("unable to add public key {public_key_url}: {e}\n"))?;
             kss.keyset
                 .set_present(&public_key_url, true)
                 .expect("should not happen");
@@ -5242,34 +5210,27 @@ fn import_key_command(
                     path.with_extension("private")
                 }
             };
-            let private_data = std::fs::read_to_string(&private_path).map_err::<Error, _>(|e| {
-                format!("unable read from file {}: {e}", private_path.display()).into()
+            let private_data = std::fs::read_to_string(&private_path)
+                .map_err(|e| format!("unable read from file {}: {e}", private_path.display()))?;
+            let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|e| {
+                format!(
+                    "unable to parse private key file {}: {e}",
+                    private_path.display()
+                )
             })?;
-            let secret_key =
-                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
-                    format!(
-                        "unable to parse private key file {}: {e}",
-                        private_path.display()
-                    )
-                    .into()
-                })?;
-            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
-                format!("unable read from file {}: {e}", path.display()).into()
-            })?;
-            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
-                format!("unable to parse public key file {}: {e}", path.display()).into()
-            })?;
+            let public_data = std::fs::read_to_string(&path)
+                .map_err(|e| format!("unable read from file {}: {e}", path.display()))?;
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data)
+                .map_err(|e| format!("unable to parse public key file {}: {e}", path.display()))?;
 
             // Check the consistency of the public and private key pair.
-            let _key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                .map_err::<Error, _>(|e| {
-                    format!(
-                        "private key {} and public key {} do not match: {e}",
-                        private_path.display(),
-                        path.display()
-                    )
-                    .into()
-                })?;
+            let _key_pair = KeyPair::from_bytes(&secret_key, public_key.data()).map_err(|e| {
+                format!(
+                    "private key {} and public key {} do not match: {e}",
+                    private_path.display(),
+                    path.display()
+                )
+            })?;
 
             if public_key.owner() != kss.keyset.name() {
                 return Err(format!(
@@ -5281,11 +5242,10 @@ fn import_key_command(
                 .into());
             }
 
-            let path = absolute(&path).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", path.display(), e).into()
-            })?;
-            let private_path = absolute(&private_path).map_err::<Error, _>(|e| {
-                format!("unable to make {} absolute: {}", private_path.display(), e).into()
+            let path = absolute(&path)
+                .map_err(|e| format!("unable to make {} absolute: {}", path.display(), e))?;
+            let private_path = absolute(&private_path).map_err(|e| {
+                format!("unable to make {} absolute: {}", private_path.display(), e)
             })?;
             let public_key_url = "file://".to_owned() + &path.display().to_string();
             let private_key_url = "file://".to_owned() + &private_path.display().to_string();
@@ -5337,8 +5297,8 @@ fn import_key_command(
                     UnixTime::now(),
                     true,
                 )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n").into()
+                .map_err(|e| {
+                    format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
                 })?;
             set_at_parent = true;
         }
@@ -5352,9 +5312,7 @@ fn import_key_command(
                     UnixTime::now(),
                     true,
                 )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add ZSK {public_key_url}: {e}\n").into()
-                })?;
+                .map_err(|e| format!("unable to add ZSK {public_key_url}: {e}\n"))?;
             set_rrsig_visible = true;
         }
         KeyVariant::Csk => {
@@ -5367,9 +5325,7 @@ fn import_key_command(
                     UnixTime::now(),
                     true,
                 )
-                .map_err::<Error, _>(|e| {
-                    format!("unable to add CSK {public_key_url}: {e}\n").into()
-                })?;
+                .map_err(|e| format!("unable to add CSK {public_key_url}: {e}\n"))?;
             set_at_parent = true;
             set_rrsig_visible = true;
         }
@@ -5513,17 +5469,14 @@ where
             let path = pub_url.path();
             let filename = env.in_cwd(&path);
 
-            let public_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                format!("unable read from file {}: {e}", filename.display()).into()
+            let public_data = std::fs::read_to_string(&filename)
+                .map_err(|e| format!("unable read from file {}: {e}", filename.display()))?;
+            let mut public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err(|e| {
+                format!(
+                    "unable to parse public key file {}: {e}",
+                    filename.display()
+                )
             })?;
-            let mut public_key =
-                parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
-                    format!(
-                        "unable to parse public key file {}: {e}",
-                        filename.display()
-                    )
-                    .into()
-                })?;
 
             public_key.set_ttl(ksc.default_ttl);
             let public_key = Record::try_octets_from(public_key)

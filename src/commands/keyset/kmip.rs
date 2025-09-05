@@ -1099,22 +1099,20 @@ impl KmipClientCredentialsFile {
             .create(create)
             .truncate(false)
             .open(path)
-            .map_err::<Error, _>(|e| {
+            .map_err(|e| {
                 format!(
                     "unable to open KMIP credentials file {} in {mode} mode: {e}",
                     path.display()
                 )
-                .into()
             })?;
 
         // Determine the length of the file as JSON parsing fails if the file
         // is completely empty.
-        let len = file.metadata().map(|m| m.len()).map_err::<Error, _>(|e| {
+        let len = file.metadata().map(|m| m.len()).map_err(|e| {
             format!(
                 "unable to query metadata of KMIP credentials file {}: {e}",
                 path.display()
             )
-            .into()
         })?;
 
         // Buffer reading as apparently JSON based file reading is extremely
@@ -1123,12 +1121,11 @@ impl KmipClientCredentialsFile {
 
         // Load or create the credential set.
         let credentials: KmipClientCredentialsSet = if len > 0 {
-            serde_json::from_reader(&mut reader).map_err::<Error, _>(|e| {
+            serde_json::from_reader(&mut reader).map_err(|e| {
                 format!(
                     "error loading KMIP credentials file {:?}: {e}\n",
                     path.display()
                 )
-                .into()
             })?
         } else {
             KmipClientCredentialsSet::default()
@@ -1157,15 +1154,12 @@ impl KmipClientCredentialsFile {
         // definitely no longer using the file when we next act on it.
         {
             let mut writer = BufWriter::new(&self.file);
-            serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err::<Error, _>(
-                |e| {
-                    format!(
-                        "error writing KMIP credentials file {}: {e}",
-                        self.path.display()
-                    )
-                    .into()
-                },
-            )?;
+            serde_json::to_writer_pretty(&mut writer, &self.credentials).map_err(|e| {
+                format!(
+                    "error writing KMIP credentials file {}: {e}",
+                    self.path.display()
+                )
+            })?;
 
             // Ensure that the BufWriter is flushed as advised by the
             // BufWriter docs.
