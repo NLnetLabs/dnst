@@ -1,6 +1,6 @@
 [package]
 name = "dnst"
-version = "0.1.1-dev"
+version = "0.1.0-rc2"
 edition = "2021"
 default-run = "dnst"
 readme = "README.md"
@@ -10,16 +10,17 @@ description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 keywords = ["DNS", "domain", "ldns"]
-rust-version = "1.80"
+rust-version = "1.82"
 
 [[bin]]
 name = "ldns"
 path = "src/bin/ldns.rs"
 
 [features]
-default = ["openssl", "ring"]
+default = ["kmip", "openssl", "ring"]
 
 # Cryptographic backends
+kmip = ["domain/kmip", "dep:indenter", "dep:rand"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
@@ -31,10 +32,7 @@ static-openssl = ["openssl/vendored"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
-# Until a release of domain is made that includes the features we need, pin
-# to a specific commit of the domain main branch to ensure that the dnst main
-# branch does not get broken if domain main is not stable.
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "bytes",
     "net",
     "resolv",
@@ -45,9 +43,11 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9
     "unstable-validator",
     "unstable-zonetree"
 ] }
+indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
+rand = { version = "0.9.2", optional = true }
 ring = "0.17.8"
 tokio = "1.40.0"
 openssl = { version = "*", features = ["vendored"], optional = true }
@@ -60,15 +60,19 @@ jiff = { version = "0.2", default-features = false, features = ["alloc", "std"] 
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+serde_json = "1.0.137"
+serde = "1.0.217"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
+url = "2.5.4"
+futures = "0.3.31"
 
 [dev-dependencies]
 const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
