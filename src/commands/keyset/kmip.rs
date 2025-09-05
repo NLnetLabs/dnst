@@ -1625,7 +1625,7 @@ impl KmipState {
             Some(pool) => Ok(pool.clone()),
             None => {
                 let Some(srv_conn_settings) = self.servers.get(id) else {
-                    return Err(format!("No KMIP server config exists for server '{id}").into());
+                    return Err(format!("No KMIP server config exists for server '{id}'").into());
                 };
                 let conn_settings = srv_conn_settings.load(id).map_err(|err| {
                     format!("Unable to prepare KMIP connection settings for server '{id}': {err}")

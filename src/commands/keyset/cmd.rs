@@ -15,7 +15,7 @@ use domain::base::{
 };
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
 #[cfg(feature = "kmip")]
-use domain::crypto::{kmip::KeyUrl, sign::SignRaw};
+use domain::crypto::{kmip, kmip::KeyUrl, sign::SignRaw};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
     self, Action, Key, KeySet, KeyState, KeyType, RollState, RollType, UnixTime,
@@ -36,15 +36,15 @@ use domain::resolv::lookup::lookup_host;
 use domain::resolv::StubResolver;
 #[cfg(feature = "kmip")]
 use domain::utils::base32::encode_string_hex;
-use domain::zonefile::inplace::{Entry, ScannedRecordData, Zonefile};
+use domain::zonefile::inplace::{Entry, Zonefile};
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
+use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
-//use std::fs::{remove_file, File};
 use std::fs::{remove_file, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
@@ -68,6 +68,9 @@ const MAX_KEY_TAG_TRIES: u8 = 10;
 
 /// Wait this amount before retrying for network errors, DNS errors, etc.
 const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
+
+/// The default TTL for creating a new config file.
+const DEFAULT_TTL: Ttl = Ttl::from_secs(3600);
 
 // Types to simplify some HashSet types.
 /// Type for a Name that uses a Vec.
@@ -163,78 +166,52 @@ enum Commands {
     /// Init creates keys for an empty state file.
     Init,
 
-    /// The following should be move to ksk, zsk, etc. subcommands.
-    StartKskRoll,
-    /// XXX
-    StartZskRoll,
-    /// XXX
-    StartCskRoll,
-    /// XXX
-    StartAlgorithmRoll,
-    /// XXX
-    KskPropagation1Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for KSK rolls.
+    Ksk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    KskPropagation2Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for ZSK rolls.
+    Zsk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    ZskPropagation1Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for CSK rolls.
+    Csk {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    ZskPropagation2Complete {
-        /// XXX
-        ttl: u32,
+    /// Command for algorithm rolls.
+    Algorithm {
+        /// The specific key roll subcommand.
+        #[command(subcommand)]
+        subcommand: RollCommands,
     },
-    /// XXX
-    CskPropagation1Complete {
-        /// XXX
-        ttl: u32,
+
+    /// Command for importing existing keys.
+    Import {
+        /// The specific import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportCommands,
     },
-    /// XXX
-    CskPropagation2Complete {
-        /// XXX
-        ttl: u32,
+
+    /// Remove a key from the key set.
+    RemoveKey {
+        /// Force a key to be removed even if the key is not stale.
+        #[arg(long)]
+        force: bool,
+
+        /// Continue when removing the underlying keys fails.
+        #[arg(long = "continue")]
+        continue_flag: bool,
+
+        /// The key to remove.
+        key: String,
     },
-    /// XXX
-    AlgorithmPropagation1Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    AlgorithmPropagation2Complete {
-        /// XXX
-        ttl: u32,
-    },
-    /// XXX
-    KskCacheExpired1,
-    /// XXX
-    KskCacheExpired2,
-    /// XXX
-    ZskCacheExpired1,
-    /// XXX
-    ZskCacheExpired2,
-    /// XXX
-    CskCacheExpired1,
-    /// XXX
-    CskCacheExpired2,
-    /// XXX
-    AlgorithmCacheExpired1,
-    /// XXX
-    AlgorithmCacheExpired2,
-    /// XXX
-    KskRollDone,
-    /// XXX
-    ZskRollDone,
-    /// XXX
-    CskRollDone,
-    /// XXX
-    AlgorithmRollDone,
+
     /// Report status, such as key rolls that are in progress, expired
     /// keys, when to call the 'cron' subcommand next.
     Status,
@@ -463,6 +440,130 @@ enum SetCommands {
     },
 }
 
+#[derive(Clone, Debug, Subcommand)]
+enum RollCommands {
+    /// Start a key roll.
+    StartRoll,
+    /// Report that the first propagation step has completed.
+    Propagation1Complete {
+        /// The TTL that is required to be reported by the Report actions.
+        ttl: u32,
+    },
+    /// Cached information from before Propagation1Complete should have
+    /// expired by now.
+    CacheExpired1,
+    /// Report that the second propagation step has completed.
+    Propagation2Complete {
+        /// The TTL that is required to be reported by the Report actions.
+        ttl: u32,
+    },
+    /// Cached information from before Propagation2Complete should have
+    /// expired by now.
+    CacheExpired2,
+    /// Report that the final changes have propagated and the the roll is done.
+    RollDone,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum ImportCommands {
+    /// Import a public key.
+    PublicKey {
+        /// The file name of the public key.
+        path: PathBuf,
+    },
+
+    /// Command for KSK imports.
+    Ksk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+    /// Command for ZSK imports.
+    Zsk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+    /// Command for CSK imports.
+    Csk {
+        /// The specific key import subcommand.
+        #[command(subcommand)]
+        subcommand: ImportKeyCommands,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum ImportKeyCommands {
+    /// Import public/private key pair from file.
+    File {
+        /// Take ownership of the imported keys.
+        ///
+        /// When the key is removed from the key set, the underlying keys
+        /// are also removed. The default is decoupled when the underlying
+        /// keys are not removed.
+        #[arg(long)]
+        coupled: bool,
+
+        /// Explicitly pass the name of the file that holds the private key.
+        ///
+        /// Otherwise the name is derived from the name of the file that holds
+        /// the public key.
+        #[arg(long)]
+        private_key: Option<PathBuf>,
+
+        /// Pathname of the public key.
+        path: PathBuf,
+    },
+    #[cfg(feature = "kmip")]
+    /// Import a KMIP public/private key pair.
+    Kmip {
+        /// Take ownership of the imported keys.
+        ///
+        /// When the key is removed from the key set, the underlying keys
+        /// are also removed. The default is decoupled when the underlying
+        /// keys are not removed.
+        #[arg(long)]
+        coupled: bool,
+
+        /// The identifier of the KMIP server.
+        server: String,
+
+        /// The KMIP identifier of the public key.
+        public_id: String,
+
+        /// The KMIP identifier of the private key.
+        private_id: String,
+
+        /// The key's DNSSEC security algorithm.
+        algorithm: SecurityAlgorithm,
+
+        /// Value to put in the DNSKEY flags field.
+        flags: u16,
+    },
+}
+
+#[derive(Debug)]
+enum KeyVariant {
+    /// Apply command to KSKs.
+    Ksk,
+    /// Apply command to ZSKs.
+    Zsk,
+    /// Apply command to CSKs.
+    Csk,
+}
+
+// We cannot use RollType because that name is already in use.
+enum RollVariant {
+    /// Apply the subcommand to a KSK roll.
+    Ksk,
+    /// Apply the subcommand to a ZSK roll.
+    Zsk,
+    /// Apply the subcommand to a CSK roll.
+    Csk,
+    /// Apply the subcommand to an algorithm roll.
+    Algorithm,
+}
+
 impl Keyset {
     /// execute the keyset command.
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
@@ -517,6 +618,7 @@ impl Keyset {
                 cds_signature_lifetime: Duration::from_secs(FOUR_WEEKS),
                 cds_remain_time: Duration::from_secs(FOUR_WEEKS / 2),
                 ds_algorithm: DsAlgorithm::Sha256,
+                default_ttl: DEFAULT_TTL,
                 autoremove: false,
                 update_ds_command: Vec::new(),
             };
@@ -597,152 +699,66 @@ impl Keyset {
                 print_actions(&actions);
                 state_changed = true;
             }
-            Commands::StartKskRoll => {
-                let actions =
-                    start_ksk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
+            Commands::Ksk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Ksk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Zsk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Zsk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Csk { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Csk,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
+            Commands::Algorithm { subcommand } => roll_command(
+                subcommand,
+                RollVariant::Algorithm,
+                &ksc,
+                &mut kss,
+                env,
+                &mut state_changed,
+                &mut run_update_ds_command,
+            )?,
 
-                print_actions(&actions);
+            Commands::Import { subcommand } => {
+                import_command(subcommand, &ksc, &mut kss, env, &mut state_changed)?
+            }
+
+            Commands::RemoveKey {
+                key,
+                force,
+                continue_flag,
+            } => {
+                remove_key_command(key, force, continue_flag, &mut kss)?;
+                if force {
+                    // If the key was in use then the DNSKEY RRset may be
+                    // affected. Avoid introducing a DNSKEY RRset when there
+                    // was none.
+                    if !kss.dnskey_rrset.is_empty() {
+                        update_dnskey_rrset(&ksc, &mut kss, env, true)?;
+                    }
+
+                    // What about CDS/CDNSKEY/DS?
+                }
                 state_changed = true;
             }
-            Commands::StartZskRoll => {
-                let actions =
-                    start_zsk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
 
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::StartCskRoll => {
-                let actions =
-                    start_csk_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::StartAlgorithmRoll => {
-                let actions =
-                    start_algorithm_roll(&ksc, &mut kss, env, true, &mut run_update_ds_command)?;
-
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskPropagation1Complete { ttl }
-            | Commands::KskPropagation2Complete { ttl }
-            | Commands::ZskPropagation1Complete { ttl }
-            | Commands::ZskPropagation2Complete { ttl }
-            | Commands::CskPropagation1Complete { ttl }
-            | Commands::CskPropagation2Complete { ttl }
-            | Commands::AlgorithmPropagation1Complete { ttl }
-            | Commands::AlgorithmPropagation2Complete { ttl } => {
-                let actions = match self.cmd {
-                    Commands::KskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::KskRoll, ttl)
-                    }
-                    Commands::KskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::KskRoll, ttl)
-                    }
-                    Commands::ZskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::ZskRoll, ttl)
-                    }
-                    Commands::ZskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::ZskRoll, ttl)
-                    }
-                    Commands::CskPropagation1Complete { ttl: _ } => {
-                        kss.keyset.propagation1_complete(RollType::CskRoll, ttl)
-                    }
-                    Commands::CskPropagation2Complete { ttl: _ } => {
-                        kss.keyset.propagation2_complete(RollType::CskRoll, ttl)
-                    }
-                    Commands::AlgorithmPropagation1Complete { ttl: _ } => kss
-                        .keyset
-                        .propagation1_complete(RollType::AlgorithmRoll, ttl),
-                    Commands::AlgorithmPropagation2Complete { ttl: _ } => kss
-                        .keyset
-                        .propagation2_complete(RollType::AlgorithmRoll, ttl),
-                    _ => unreachable!(),
-                };
-
-                let actions = match actions {
-                    Ok(actions) => actions,
-                    Err(err) => {
-                        return Err(format!("Error reporting propagation complete: {err}\n").into());
-                    }
-                };
-
-                // Handle error
-
-                handle_actions(
-                    &actions,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    true,
-                    &mut run_update_ds_command,
-                )?;
-
-                // Report actions
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskCacheExpired1
-            | Commands::KskCacheExpired2
-            | Commands::ZskCacheExpired1
-            | Commands::ZskCacheExpired2
-            | Commands::CskCacheExpired1
-            | Commands::CskCacheExpired2
-            | Commands::AlgorithmCacheExpired1
-            | Commands::AlgorithmCacheExpired2 => {
-                let actions = match self.cmd {
-                    Commands::KskCacheExpired1 => kss.keyset.cache_expired1(RollType::KskRoll),
-                    Commands::KskCacheExpired2 => kss.keyset.cache_expired2(RollType::KskRoll),
-                    Commands::ZskCacheExpired1 => kss.keyset.cache_expired1(RollType::ZskRoll),
-                    Commands::ZskCacheExpired2 => kss.keyset.cache_expired2(RollType::ZskRoll),
-                    Commands::CskCacheExpired1 => kss.keyset.cache_expired1(RollType::CskRoll),
-                    Commands::CskCacheExpired2 => kss.keyset.cache_expired2(RollType::CskRoll),
-                    Commands::AlgorithmCacheExpired1 => {
-                        kss.keyset.cache_expired1(RollType::AlgorithmRoll)
-                    }
-                    Commands::AlgorithmCacheExpired2 => {
-                        kss.keyset.cache_expired2(RollType::AlgorithmRoll)
-                    }
-                    _ => unreachable!(),
-                };
-
-                let actions = match actions {
-                    Ok(actions) => actions,
-                    Err(err) => {
-                        return Err(format!("Error reporting cache expired: {err}\n").into());
-                    }
-                };
-
-                // Handle error
-
-                handle_actions(
-                    &actions,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    true,
-                    &mut run_update_ds_command,
-                )?;
-
-                // Report actions
-                print_actions(&actions);
-                state_changed = true;
-            }
-            Commands::KskRollDone
-            | Commands::ZskRollDone
-            | Commands::CskRollDone
-            | Commands::AlgorithmRollDone => {
-                let r = match self.cmd {
-                    Commands::KskRollDone => RollType::KskRoll,
-                    Commands::ZskRollDone => RollType::ZskRoll,
-                    Commands::CskRollDone => RollType::CskRoll,
-                    Commands::AlgorithmRollDone => RollType::AlgorithmRoll,
-                    _ => unreachable!(),
-                };
-                do_done(&mut kss, r, ksc.autoremove)?;
-                state_changed = true;
-            }
             Commands::Status => {
                 for (roll, state) in kss.keyset.rollstates().iter() {
                     println!("{roll:?}: {state:?}");
@@ -835,6 +851,7 @@ impl Keyset {
                 });
                 for (pubref, key) in keys {
                     println!("\t{} {}", pubref, key.privref().unwrap_or_default(),);
+                    println!("\t\tDecoupled: {}", key.decoupled(),);
                     let (keytype, state, opt_state) = match key.keytype() {
                         KeyType::Ksk(keystate) => ("KSK", keystate, None),
                         KeyType::Zsk(keystate) => ("ZSK", keystate, None),
@@ -925,13 +942,14 @@ impl Keyset {
                 println!("cds-signature-lifetime: {:?}", ksc.cds_signature_lifetime);
                 println!("cds-remain-time: {:?}", ksc.cds_remain_time);
                 println!("ds-algorithm: {:?}", ksc.ds_algorithm);
+                println!("default-ttl: {:?}", ksc.default_ttl);
                 println!("autoremove: {:?}", ksc.autoremove);
                 println!("update_ds_command: {:?}", ksc.update_ds_command);
             }
             Commands::Cron => {
                 if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
-                    update_dnskey_rrset(&mut kss, &ksc, env, false)?;
+                    update_dnskey_rrset(&ksc, &mut kss, env, false)?;
                     state_changed = true;
                 }
                 if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
@@ -1322,6 +1340,70 @@ fn remove_key(kss: &mut KeySetState, url: Url) -> Result<(), Error> {
     Ok(())
 }
 
+/// Execute the key roll subcommands.
+fn roll_command(
+    cmd: RollCommands,
+    roll_variant: RollVariant,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+    state_changed: &mut bool,
+    run_update_ds_command: &mut bool,
+) -> Result<(), Error> {
+    let actions = match cmd {
+        RollCommands::StartRoll => {
+            let actions = match roll_variant {
+                RollVariant::Ksk => start_ksk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Zsk => start_zsk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Csk => start_csk_roll(ksc, kss, env, true, run_update_ds_command)?,
+                RollVariant::Algorithm => {
+                    start_algorithm_roll(ksc, kss, env, true, run_update_ds_command)?
+                }
+            };
+
+            print_actions(&actions);
+            *state_changed = true;
+            return Ok(());
+        }
+        RollCommands::Propagation1Complete { ttl } => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.propagation1_complete(roll, ttl)
+        }
+        RollCommands::CacheExpired1 => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.cache_expired1(roll)
+        }
+        RollCommands::Propagation2Complete { ttl } => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.propagation2_complete(roll, ttl)
+        }
+        RollCommands::CacheExpired2 => {
+            let roll = roll_variant_to_roll(roll_variant);
+            kss.keyset.cache_expired2(roll)
+        }
+        RollCommands::RollDone => {
+            let roll = roll_variant_to_roll(roll_variant);
+            do_done(kss, roll, ksc.autoremove)?;
+            *state_changed = true;
+            return Ok(());
+        }
+    };
+
+    let actions = match actions {
+        Ok(actions) => actions,
+        Err(err) => {
+            return Err(format!("Error reporting propagation complete: {err}\n").into());
+        }
+    };
+
+    handle_actions(&actions, ksc, kss, env, true, run_update_ds_command)?;
+
+    // Report actions
+    print_actions(&actions);
+    *state_changed = true;
+    Ok(())
+}
+
 /// Implement the get subcommand.
 fn get_command(cmd: GetCommands, ksc: &KeySetConfig, kss: &KeySetState) {
     match cmd {
@@ -1532,6 +1614,9 @@ struct KeySetConfig {
     /// The DS hash algorithm.
     ds_algorithm: DsAlgorithm,
 
+    /// The TTL to use when creating DNSKEY/CDS/CDNSKEY records.
+    default_ttl: Ttl,
+
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
 
@@ -1723,7 +1808,6 @@ fn new_keys(
     #[cfg(feature = "kmip")] kmip: &mut KmipState,
 ) -> Result<(Url, Url, SecurityAlgorithm, u16), Error> {
     // Generate the key.
-    // TODO: Attempt repeated generation to avoid key tag collisions.
     // TODO: Add a high-level operation in 'domain' to select flags?
     let flags = if make_ksk { 257 } else { 256 };
     let mut retries = MAX_KEY_TAG_TRIES;
@@ -1989,8 +2073,8 @@ fn new_keys(
 /// Collect all keys where present() returns true and sign the DNSKEY RRset
 /// with all KSK and CSK (KSK state) where signer() returns true.
 fn update_dnskey_rrset(
-    kss: &mut KeySetState,
     ksc: &KeySetConfig,
+    kss: &mut KeySetState,
     env: &impl Env,
     verbose: bool,
 ) -> Result<(), Error> {
@@ -2010,44 +2094,22 @@ fn update_dnskey_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!(
-                            "update_dnskey_rrset: unable to open public key file {}: {e}",
-                            filename.display()
-                        )
-                        .into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
+                        })?;
+                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
                         .map_err::<Error, _>(|e| {
-                            format!("unable load zone from file {}: {e}", filename.display()).into()
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
                         })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
-                        })?;
 
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
-
-                        // Of the records that we see, we only care about DNSKEY records
-                        let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                            continue;
-                        };
-
-                        let record = Record::new(
-                            record
-                                .owner()
-                                .try_to_name::<Bytes>()
-                                .expect("should not fail"),
-                            record.class(),
-                            record.ttl(),
-                            dnskey.clone(),
-                        );
-
-                        dnskeys.push(record);
-                    }
+                    public_key.set_ttl(ksc.default_ttl);
+                    dnskeys.push(public_key);
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2060,12 +2122,11 @@ fn update_dnskey_rrset(
                             .map_err(|err| {
                                 format!("Failed to fetch public key for KMIP key URL: {err}")
                             })?;
-                    let owner = kss.keyset.name().clone().flatten_into();
-                    // TODO: Where does this TTL come from?
+                    let owner: Name<_> = kss.keyset.name().clone().flatten_into();
                     let record = Record::new(
                         owner,
                         Class::IN,
-                        Ttl::from_days(1),
+                        ksc.default_ttl,
                         key.dnskey(flags).convert(),
                     );
                     dnskeys.push(record);
@@ -2206,31 +2267,25 @@ fn create_cds_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!("unable to open public key file {}: {e}", filename.display()).into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
+                        })?;
+                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
                         .map_err::<Error, _>(|e| {
-                            format!("unable to read zone from file {}: {e}", filename.display())
-                                .into()
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
                         })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
-                        })?;
-
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
-
-                        create_cds_rrset_helper(
-                            digest_alg,
-                            &mut cds_list,
-                            &mut cdnskey_list,
-                            record.flatten_into(),
-                        )?;
-                    }
+                    public_key.set_ttl(ksc.default_ttl);
+                    create_cds_rrset_helper(
+                        digest_alg,
+                        &mut cds_list,
+                        &mut cdnskey_list,
+                        public_key,
+                    )?;
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2242,9 +2297,8 @@ fn create_cds_rrset(
                         domain::crypto::kmip::PublicKey::for_key_url(key_url, conn_pool)
                             .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
                     let dnskey = public_key.dnskey(flags);
-                    let dnskey = ZoneRecordData::Dnskey(dnskey.convert());
                     let owner = kss.keyset.name().clone().flatten_into();
-                    let record = Record::new(owner, Class::IN, Ttl::from_days(1), dnskey);
+                    let record = Record::new(owner, Class::IN, ksc.default_ttl, dnskey);
                     create_cds_rrset_helper(digest_alg, &mut cds_list, &mut cdnskey_list, record)?;
                 }
 
@@ -2391,13 +2445,10 @@ fn create_cds_rrset_helper(
     digest_alg: DigestAlgorithm,
     cds_list: &mut Vec<Record<Name<Bytes>, Cds<Vec<u8>>>>,
     cdnskey_list: &mut Vec<Record<Name<Bytes>, Cdnskey<Vec<u8>>>>,
-    record: Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>,
+    record: Record<Name<Vec<u8>>, Dnskey<Vec<u8>>>,
 ) -> Result<(), Error> {
-    let owner = record.owner().clone();
-    let ZoneRecordData::Dnskey(dnskey) = record.data() else {
-        return Ok(());
-    };
-    let dnskey: Dnskey<Vec<u8>> = dnskey.clone().convert();
+    let owner: Name<Bytes> = record.owner().to_name();
+    let dnskey = record.data();
     let cdnskey = Cdnskey::new(
         dnskey.flags(),
         dnskey.protocol(),
@@ -2429,11 +2480,13 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
 /// The DS records are generated from all keys where at_parent() returns true.
 /// This RRset is not signed.
 fn update_ds_rrset(
+    ksc: &KeySetConfig,
     kss: &mut KeySetState,
-    digest_alg: DigestAlgorithm,
     env: &impl Env,
     verbose: bool,
 ) -> Result<(), Error> {
+    let digest_alg = ksc.ds_algorithm.to_digest_algorithm();
+
     #[allow(clippy::type_complexity)]
     let mut ds_list: Vec<Record<Name<Vec<u8>>, Ds<Vec<u8>>>> = Vec::new();
     for (k, v) in kss.keyset.keys() {
@@ -2450,52 +2503,44 @@ fn update_ds_rrset(
                 "file" => {
                     let path = pub_url.path();
                     let filename = env.in_cwd(&path);
-                    let mut file = File::open(&filename).map_err::<Error, _>(|e| {
-                        format!(
-                            "update_ds_rrset: unable to open public key file {}: {e}",
-                            filename.display()
-                        )
-                        .into()
-                    })?;
-                    let zonefile = domain::zonefile::inplace::Zonefile::load(&mut file)
+                    let public_data =
+                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                            format!("unable read from file {}: {e}", filename.display()).into()
+                        })?;
+                    let public_key =
+                        parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                            format!(
+                                "unable to parse public key file {}: {e}",
+                                filename.display()
+                            )
+                            .into()
+                        })?;
+
+                    let digest = public_key
+                        .data()
+                        .digest(&public_key.owner(), digest_alg)
                         .map_err::<Error, _>(|e| {
-                            format!("unable to read zone from file {}: {e}", filename.display())
-                                .into()
-                        })?;
-                    for entry in zonefile {
-                        let entry = entry.map_err::<Error, _>(|e| {
-                            format!("bad entry in key file {k}: {e}\n").into()
+                            format!("error creating digest for DNSKEY record: {e}").into()
                         })?;
 
-                        // We only care about records in a zonefile
-                        let Entry::Record(record) = entry else {
-                            continue;
-                        };
+                    let ds = Ds::new(
+                        public_key.data().key_tag(),
+                        public_key.data().algorithm(),
+                        digest_alg,
+                        digest.as_ref().to_vec(),
+                    )
+                    .expect(
+                        "Infallible because the digest won't be too long since it's a valid digest",
+                    );
 
-                        // Of the records that we see, we only care about DNSKEY records
-                        let ScannedRecordData::Dnskey(dnskey) = record.data() else {
-                            continue;
-                        };
+                    let ds_record = Record::new(
+                        public_key.owner().clone().flatten_into(),
+                        public_key.class(),
+                        ksc.default_ttl,
+                        ds,
+                    );
 
-                        let digest = dnskey
-                            .digest(&record.owner(), digest_alg)
-                            .map_err::<Error, _>(|e| {
-                                format!("error creating digest for DNSKEY record: {e}").into()
-                            })?;
-
-                        let ds = Ds::new(dnskey.key_tag(), dnskey.algorithm(), digest_alg, digest.as_ref().to_vec()).expect(
-                            "Infallible because the digest won't be too long since it's a valid digest",
-                        );
-
-                        let ds_record = Record::new(
-                            record.owner().clone().flatten_into(),
-                            record.class(),
-                            record.ttl(),
-                            ds,
-                        );
-
-                        ds_list.push(ds_record);
-                    }
+                    ds_list.push(ds_record);
                 }
 
                 #[cfg(feature = "kmip")]
@@ -2567,7 +2612,7 @@ fn handle_actions(
 ) -> Result<(), Error> {
     for action in actions {
         match action {
-            Action::UpdateDnskeyRrset => update_dnskey_rrset(kss, ksc, env, verbose)?,
+            Action::UpdateDnskeyRrset => update_dnskey_rrset(ksc, kss, env, verbose)?,
             Action::CreateCdsRrset => create_cds_rrset(
                 kss,
                 ksc,
@@ -2578,7 +2623,7 @@ fn handle_actions(
             Action::RemoveCdsRrset => remove_cds_rrset(kss),
             Action::UpdateDsRrset => {
                 *run_update_ds_command = true;
-                update_ds_rrset(kss, ksc.ds_algorithm.to_digest_algorithm(), env, verbose)?
+                update_ds_rrset(ksc, kss, env, verbose)?
             }
             Action::UpdateRrsig => (),
             Action::ReportDnskeyPropagated => (),
@@ -2941,9 +2986,7 @@ async fn auto_wait_actions(
                                 warn!("Check SOA propagation failed: {e}");
                                 false
                             });
-                            dbg!(format!("got {res} for {serial}"));
                             if res {
-                                dbg!("Setting rrsig to Report");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -2953,7 +2996,6 @@ async fn auto_wait_actions(
                                 continue;
                             } else {
                                 let next = UnixTime::now() + ttl.into();
-                                dbg!("Setting rrsig to WaitSoa");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -3174,9 +3216,7 @@ async fn auto_report_actions(
                                 warn!("Check SOA propagation failed: {e}");
                                 false
                             });
-                            dbg!(format!("got {res} for {serial}"));
                             if res {
-                                dbg!("Setting rrsig to Report");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -3187,7 +3227,6 @@ async fn auto_report_actions(
                                 continue;
                             } else {
                                 let next = UnixTime::now() + ttl.into();
-                                dbg!("Setting rrsig to WaitSoa");
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -3433,8 +3472,7 @@ fn start_ksk_roll(
     verbose: bool,
     run_update_ds_command: &mut bool,
 ) -> Result<Vec<Action>, Error> {
-    //let roll_type = RollType::KskRoll;
-    let roll_type = RollType::KskDoubleDsRoll;
+    let roll_type = RollType::KskRoll;
 
     assert!(!kss.keyset.keys().is_empty());
 
@@ -5081,6 +5119,358 @@ fn new_csk_or_ksk_zsk(
         (new, new_urls)
     };
     Ok((new_stored, new_urls))
+}
+
+/// Return the right RollType for a RollVariant.
+fn roll_variant_to_roll(roll_variant: RollVariant) -> RollType {
+    // For key type, such as KSK and ZSK, that can have different rolls, we
+    // we should find out which variant is used.
+    match roll_variant {
+        RollVariant::Ksk => RollType::KskRoll,
+        RollVariant::Zsk => RollType::ZskRoll,
+        RollVariant::Csk => RollType::CskRoll,
+        RollVariant::Algorithm => RollType::AlgorithmRoll,
+    }
+}
+
+/// Implementation of the Import subcommands.
+fn import_command(
+    subcommand: ImportCommands,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+    state_changed: &mut bool,
+) -> Result<(), Error> {
+    match subcommand {
+        ImportCommands::PublicKey { path } => {
+            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", path.display()).into()
+            })?;
+
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                format!("unable to parse public key file {}: {e}", path.display()).into()
+            })?;
+
+            let path = absolute(&path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", path.display(), e).into()
+            })?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            kss.keyset
+                .add_public_key(
+                    public_key_url.clone(),
+                    public_key.data().algorithm(),
+                    public_key.data().key_tag(),
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add public key {public_key_url}: {e}\n").into()
+                })?;
+            kss.keyset
+                .set_present(&public_key_url, true)
+                .expect("should not happen");
+
+            // What about visible. We should visible when DNSKEY RRset has
+            // propagated. But we are not doing a key roll now. Just set it
+            // unconditionally.
+            kss.keyset
+                .set_visible(&public_key_url, UnixTime::now())
+                .expect("should not happen");
+        }
+        ImportCommands::Ksk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Ksk, kss)?;
+        }
+        ImportCommands::Zsk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Zsk, kss)?;
+        }
+        ImportCommands::Csk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Csk, kss)?;
+        }
+    }
+    *state_changed = true;
+
+    // Update the DNSKEY RRset if is is not empty. We don't want to create
+    // and incomplete DNSKEY RRset.
+    if !kss.dnskey_rrset.is_empty() {
+        update_dnskey_rrset(ksc, kss, env, true)?;
+    }
+    Ok(())
+}
+
+/// Implement import subcommand for a specific key type.
+fn import_key_command(
+    subcommand: ImportKeyCommands,
+    key_variant: KeyVariant,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    let (public_key_url, private_key_url, algorithm, key_tag, coupled) = match subcommand {
+        ImportKeyCommands::File {
+            path,
+            coupled,
+            private_key,
+        } => {
+            let private_path = match private_key {
+                Some(private_key) => private_key,
+                None => {
+                    if path.extension() != Some(OsStr::new("key")) {
+                        return Err(format!("public key {} should end in .pub, use --private-key to specify a private key separately", path.display()).into());
+                    }
+                    path.with_extension("private")
+                }
+            };
+            let private_data = std::fs::read_to_string(&private_path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", private_path.display()).into()
+            })?;
+            let secret_key =
+                SecretKeyBytes::parse_from_bind(&private_data).map_err::<Error, _>(|e| {
+                    format!(
+                        "unable to parse private key file {}: {e}",
+                        private_path.display()
+                    )
+                    .into()
+                })?;
+            let public_data = std::fs::read_to_string(&path).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", path.display()).into()
+            })?;
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                format!("unable to parse public key file {}: {e}", path.display()).into()
+            })?;
+
+            // Check the consistency of the public and private key pair.
+            let _key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                .map_err::<Error, _>(|e| {
+                    format!(
+                        "private key {} and public key {} do not match: {e}",
+                        private_path.display(),
+                        path.display()
+                    )
+                    .into()
+                })?;
+
+            if public_key.owner() != kss.keyset.name() {
+                return Err(format!(
+                    "public key {} has wrong owner name {}, expected {}",
+                    path.display(),
+                    public_key.owner(),
+                    kss.keyset.name()
+                )
+                .into());
+            }
+
+            let path = absolute(&path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", path.display(), e).into()
+            })?;
+            let private_path = absolute(&private_path).map_err::<Error, _>(|e| {
+                format!("unable to make {} absolute: {}", private_path.display(), e).into()
+            })?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            let private_key_url = "file://".to_owned() + &private_path.display().to_string();
+
+            (
+                public_key_url,
+                private_key_url,
+                public_key.data().algorithm(),
+                public_key.data().key_tag(),
+                coupled,
+            )
+        }
+        #[cfg(feature = "kmip")]
+        ImportKeyCommands::Kmip {
+            server,
+            public_id,
+            private_id,
+            algorithm,
+            flags,
+            coupled,
+        } => {
+            let pool = kss.kmip.get_pool(&server)?;
+            let keypair =
+                kmip::sign::KeyPair::from_metadata(algorithm, flags, &private_id, &public_id, pool)
+                    .map_err(|e| {
+                        format!("error constructing key pair on KMIP server '{server}': {e}")
+                    })?;
+            let public_key_url = keypair.public_key_url();
+            let private_key_url = keypair.private_key_url();
+            (
+                public_key_url.to_string(),
+                private_key_url.to_string(),
+                keypair.algorithm(),
+                keypair.dnskey().key_tag(),
+                coupled,
+            )
+        }
+    };
+    let mut set_at_parent = false;
+    let mut set_rrsig_visible = false;
+    match key_variant {
+        KeyVariant::Ksk => {
+            kss.keyset
+                .add_key_ksk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n").into()
+                })?;
+            set_at_parent = true;
+        }
+        KeyVariant::Zsk => {
+            kss.keyset
+                .add_key_zsk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add ZSK {public_key_url}: {e}\n").into()
+                })?;
+            set_rrsig_visible = true;
+        }
+        KeyVariant::Csk => {
+            kss.keyset
+                .add_key_csk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err::<Error, _>(|e| {
+                    format!("unable to add CSK {public_key_url}: {e}\n").into()
+                })?;
+            set_at_parent = true;
+            set_rrsig_visible = true;
+        }
+    }
+
+    kss.keyset
+        .set_present(&public_key_url, true)
+        .expect("should not happen");
+
+    // What about visible? We should visible when the DNSKEY
+    // RRset has propagated. But we are not doing a key roll
+    // now. Just set it unconditionally.
+    kss.keyset
+        .set_visible(&public_key_url, UnixTime::now())
+        .expect("should not happen");
+
+    kss.keyset
+        .set_signer(&public_key_url, true)
+        .expect("should not happen");
+
+    kss.keyset
+        .set_decoupled(&public_key_url, !coupled)
+        .expect("should not happen");
+
+    if set_at_parent {
+        kss.keyset
+            .set_at_parent(&public_key_url, true)
+            .expect("should not happen");
+
+        // What about ds_visible? We should ds_visible when the DS
+        // RRset has propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_ds_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
+    }
+    if set_rrsig_visible {
+        // We should set rrsig_visible when the zone's RRSIG records
+        // have propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_rrsig_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
+    }
+    Ok(())
+}
+
+/// Implement the remove-key subcommand.
+fn remove_key_command(
+    key: String,
+    force: bool,
+    continue_flag: bool,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    // The strategy depends on whether the key is decoupled or not.
+    // If the key is decoupled, then just remove the key from the keyset and
+    // leave underlying keys where they are.
+    // If the key is not decoupled, then we also need to remove the underlying
+    // keys. In that case, first check if the key is stale or if force is set.
+    // Then remove the private key (if any). If that fails abort unless
+    // continue is set. Then remove the public key. If that fails and the
+    // private key is remove then just log an error. Finally remove the key
+    // from the keyset.
+    // If force is true, then mark the key stale before removing.
+    let Some(k) = kss.keyset.keys().get(&key) else {
+        return Err(format!("key {key} not found").into());
+    };
+    let k = k.clone();
+    if k.decoupled() {
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    } else {
+        let stale = match k.keytype() {
+            KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Include(keystate) => {
+                keystate.stale()
+            }
+            KeyType::Csk(ksk_keystate, zsk_keystate) => {
+                ksk_keystate.stale() && zsk_keystate.stale()
+            }
+        };
+        if !stale && !force {
+            return Err(format!(
+                "unable to remove key {key}. Key is not stale. Use --force to override"
+            )
+            .into());
+        }
+
+        // If there is a private key then try to remove that one first. We
+        // don't want lingering private key when something else fails.
+        if let Some(privref) = k.privref() {
+            let private_key_url = Url::parse(privref)
+                .map_err(|e| format!("unable to parse {privref} as Url: {e}"))?;
+            let res = remove_key(kss, private_key_url);
+            if !continue_flag {
+                res?;
+            } else if let Err(e) = res {
+                error!("unable to remove key {privref}: {e}");
+            }
+        }
+
+        // Move on to the public key.
+        let public_key_url =
+            Url::parse(&key).map_err(|e| format!("unable to parse {key} as Url: {e}"))?;
+        let res = remove_key(kss, public_key_url);
+        if k.privref().is_some() || continue_flag {
+            // Ignore errors removing a public key if we previously removed
+            // (or tried to remove) a private key. Or if we are told to
+            // continue.
+            if let Err(e) = res {
+                error!("unable to remove key {key}: {e}");
+            }
+        } else {
+            res?;
+        }
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    }
 }
 
 /*
