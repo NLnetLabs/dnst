@@ -75,7 +75,7 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
-    /// Maintain a set of DNSSEC keys
+    /// Maintain a set of DNSSEC keys. EXPERIMENTAL.
     #[command(name = "keyset")]
     Keyset(self::keyset::Keyset),
 
