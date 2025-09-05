@@ -16,6 +16,7 @@ use domain::base::{
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
 #[cfg(feature = "kmip")]
 use domain::crypto::{kmip, kmip::KeyUrl, sign::SignRaw};
+use domain::dep::octseq::{FromBuilder, OctetsFrom};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
     self, Action, Key, KeySet, KeyState, KeyType, RollState, RollType, UnixTime,
@@ -214,7 +215,11 @@ enum Commands {
 
     /// Report status, such as key rolls that are in progress, expired
     /// keys, when to call the 'cron' subcommand next.
-    Status,
+    Status {
+        /// Make status verbose.
+        #[arg(short = 'v', long)]
+        verbose: bool,
+    },
     /// Report actions that are associated with the current state of
     /// any key rolls.
     Actions,
@@ -759,31 +764,119 @@ impl Keyset {
                 state_changed = true;
             }
 
-            Commands::Status => {
-                for (roll, state) in kss.keyset.rollstates().iter() {
+            Commands::Status { verbose } => {
+                // This clone is needed because public_key_from_url needs a
+                // mutable reference to kss. Rewrite the kmip code to avoid
+                // that.
+                let rollstates = kss.keyset.rollstates().clone();
+                for (roll, state) in rollstates.iter() {
                     println!("{roll:?}: {state:?}");
-                }
-                if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
-                    println!("DNSKEY RRSIG(s) need to be renewed");
-                }
-                if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
-                    println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
-                }
 
-                // Check for expired keys.
-                for (pubref, k) in kss.keyset.keys() {
-                    let (expired, label) = key_expired(k, &ksc);
-                    if expired {
-                        println!("{label} {pubref} has expired");
+                    if verbose {
+                        let mut keyset = kss.keyset.clone();
+                        let res = match state {
+                            RollState::CacheExpire1(_) => Some(keyset.cache_expired1(*roll)),
+                            RollState::CacheExpire2(_) => Some(keyset.cache_expired2(*roll)),
+                            _ => None,
+                        };
+                        if let Some(res) = res {
+                            if let Err(keyset::Error::Wait(remain)) = res {
+                                println!(
+                                    "Wait until {} to let caches expire",
+                                    UnixTime::now() + remain
+                                );
+                            } else if let Err(e) = res {
+                                return Err(format!(
+                                    "cache_expired[12] failed for state {roll:?}: {e}"
+                                )
+                                .into());
+                            } else {
+                                println!("Caches have expired, continue with the next step");
+                            }
+                        }
+
+                        for action in kss.keyset.actions(*roll) {
+                            match action {
+                                Action::UpdateDnskeyRrset
+                                | Action::CreateCdsRrset
+                                | Action::RemoveCdsRrset
+                                | Action::UpdateDsRrset
+                                | Action::UpdateRrsig => (),
+                                Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
+                                    println!("Check that the following RRset has propagated to all name servers:");
+                                    for r in &kss.dnskey_rrset {
+                                        println!("{r}");
+                                    }
+                                    println!();
+                                }
+                                Action::ReportDsPropagated | Action::WaitDsPropagated => {
+                                    println!("Check that all nameservers of the parent zone have the following RRset (or equivalent):");
+                                    for r in &kss.ds_rrset {
+                                        println!("{r}");
+                                    }
+                                    println!();
+                                }
+                                Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
+                                    println!("Check that all authoritative records in the zone have been signed with the following Key(s) and that all nameservers of the zone serve that version or later:");
+                                    // This clone is needed because
+                                    // public_key_from_url needs a mutable
+                                    // reference to kss. Rewrite the kmip
+                                    // code to avoid that.
+                                    let keys = kss.keyset.keys().clone();
+                                    for (pubref, k) in keys {
+                                        let status = match k.keytype() {
+                                            KeyType::Zsk(status) => status,
+                                            KeyType::Csk(_, zsk_status) => zsk_status,
+                                            KeyType::Ksk(_) | KeyType::Include(_) => continue,
+                                        };
+                                        if status.signer() {
+                                            let url = Url::parse(&pubref).map_err(|e| {
+                                                format!("unable to parse {pubref} as URL: {e}")
+                                            })?;
+                                            let public_key = public_key_from_url::<Vec<u8>>(
+                                                &url, &ksc, &mut kss, env,
+                                            )?;
+                                            println!(
+                                                "{public_key} ; key tag {}",
+                                                public_key.data().key_tag()
+                                            );
+                                        }
+                                    }
+                                    println!();
+                                }
+                            }
+                        }
+
+                        let keyset_cmd = format!("dnst keyset -c {}", self.keyset_conf.display());
+
+                        let (roll_subcommand, auto) = match roll {
+                            RollType::KskRoll => ("ksk", &ksc.auto_ksk),
+                            RollType::KskDoubleDsRoll => ("ksk", &ksc.auto_ksk),
+                            RollType::ZskRoll => ("zsk", &ksc.auto_zsk),
+                            RollType::ZskDoubleSignatureRoll => ("zsk", &ksc.auto_zsk),
+                            RollType::CskRoll => ("csk", &ksc.auto_csk),
+                            RollType::AlgorithmRoll => ("algorithm", &ksc.auto_algorithm),
+                        };
+                        let (state_subcommand, auto) = match state {
+                            RollState::Propagation1 => ("propagation1-complete <ttl>", auto.report),
+                            RollState::CacheExpire1(_) => ("cache-expired1", auto.expire),
+                            RollState::Propagation2 => ("propagation2-complete <ttl>", auto.report),
+                            RollState::CacheExpire2(_) => ("cache-expired2", auto.expire),
+                            RollState::Done => ("roll-done", auto.done),
+                        };
+                        println!("For the next step run:");
+                        println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                        println!(
+                            "\tautomation is {} for this step.",
+                            if auto { "enabled" } else { "disabled" }
+                        );
+                        println!();
                     }
-                }
-                if let Some(cron_next) = &kss.cron_next {
-                    println!("Next time to run the 'cron' subcommand {cron_next}");
                 }
 
                 let mut first = true;
                 for (r, s) in kss.keyset.rollstates() {
-                    let auto_state = kss.internal.get(r).expect("should exit");
+                    let auto_state = kss.internal.get(r).expect("should exist");
                     match s {
                         // Nothing to report.
                         RollState::CacheExpire1(_) | RollState::CacheExpire2(_) => (),
@@ -833,6 +926,66 @@ impl Keyset {
                             show_automatic_roll_state(*r, s, &auto_state, false);
                         }
                     }
+                }
+                if !first {
+                    println!();
+                }
+
+                if sig_renew(&kss.dnskey_rrset, &ksc.dnskey_remain_time) {
+                    println!("DNSKEY RRSIG(s) need to be renewed");
+                }
+                if sig_renew(&kss.cds_rrset, &ksc.cds_remain_time) {
+                    println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
+                }
+
+                // Check for expired keys.
+                if verbose {
+                    for (pubref, k) in kss.keyset.keys() {
+                        let (keystate, validity) = match k.keytype() {
+                            KeyType::Ksk(keystate) => (keystate, Some(ksc.ksk_validity)),
+                            KeyType::Zsk(keystate) => (keystate, Some(ksc.zsk_validity)),
+                            KeyType::Csk(ksk_keystate, _) => (ksk_keystate, Some(ksc.csk_validity)),
+                            KeyType::Include(keystate) => (keystate, None),
+                        };
+                        if keystate.stale() {
+                            println!("key {pubref} is stale");
+                            if ksc.autoremove {
+                                println!("this key will be removed automatically after the next key roll");
+                            } else {
+                                println!("remove manually (autoremove is false)");
+                            }
+                            continue;
+                        }
+
+                        if let Some(opt_validity) = validity {
+                            if let Some(validity) = opt_validity {
+                                let Some(timestamp) = k.timestamps().published() else {
+                                    println!("key {pubref} is not yet published.");
+                                    continue;
+                                };
+                                if timestamp.elapsed() > validity {
+                                    println!("key {pubref} has expired.");
+                                } else {
+                                    println!("key {pubref} expires at {}", timestamp + validity);
+                                }
+                            } else {
+                                println!("key {pubref} does not expire. No validity period is configured for the key type");
+                            }
+                        } else {
+                            println!("key {pubref} does not expire. No validity is defined for this key type.");
+                        }
+                    }
+                    println!();
+                } else {
+                    for (pubref, k) in kss.keyset.keys() {
+                        let (expired, label) = key_expired(k, &ksc);
+                        if expired {
+                            println!("{label} {pubref} has expired");
+                        }
+                    }
+                }
+                if let Some(cron_next) = &kss.cron_next {
+                    println!("Next time to run the 'cron' subcommand {cron_next}");
                 }
             }
             Commands::Actions => {
@@ -2079,7 +2232,9 @@ fn update_dnskey_rrset(
     verbose: bool,
 ) -> Result<(), Error> {
     let mut dnskeys = Vec::new();
-    for (k, v) in kss.keyset.keys() {
+    // Clone needed because of public_key_from_url takes &mut KeySetState.
+    let keys = kss.keyset.keys().clone();
+    for (k, v) in &keys {
         let present = match v.keytype() {
             KeyType::Ksk(key_state) => key_state.present(),
             KeyType::Zsk(key_state) => key_state.present(),
@@ -2087,55 +2242,10 @@ fn update_dnskey_rrset(
             KeyType::Include(key_state) => key_state.present(),
         };
 
-        let pub_url = Url::parse(k).expect("valid URL expected");
-
         if present {
-            match pub_url.scheme() {
-                "file" => {
-                    let path = pub_url.path();
-                    let filename = env.in_cwd(&path);
-
-                    let public_data =
-                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                            format!("unable read from file {}: {e}", filename.display()).into()
-                        })?;
-                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
-                        .map_err::<Error, _>(|e| {
-                            format!(
-                                "unable to parse public key file {}: {e}",
-                                filename.display()
-                            )
-                            .into()
-                        })?;
-
-                    public_key.set_ttl(ksc.default_ttl);
-                    dnskeys.push(public_key);
-                }
-
-                #[cfg(feature = "kmip")]
-                "kmip" => {
-                    let kmip_key_url = KeyUrl::try_from(pub_url)?;
-                    let flags = kmip_key_url.flags();
-                    let kmip_conn_pool = kss.kmip.get_pool(kmip_key_url.server_id())?;
-                    let key =
-                        domain::crypto::kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
-                            .map_err(|err| {
-                                format!("Failed to fetch public key for KMIP key URL: {err}")
-                            })?;
-                    let owner: Name<_> = kss.keyset.name().clone().flatten_into();
-                    let record = Record::new(
-                        owner,
-                        Class::IN,
-                        ksc.default_ttl,
-                        key.dnskey(flags).convert(),
-                    );
-                    dnskeys.push(record);
-                }
-
-                _ => {
-                    panic!("unsupported scheme in {pub_url}");
-                }
-            }
+            let pub_url = Url::parse(k).expect("valid URL expected");
+            let public_key = public_key_from_url::<Vec<u8>>(&pub_url, ksc, kss, env)?;
+            dnskeys.push(public_key);
         }
     }
     let now = Timestamp::now().into_int();
@@ -2143,7 +2253,11 @@ fn update_dnskey_rrset(
     let expiration = (now + ksc.dnskey_signature_lifetime.as_secs() as u32).into();
 
     let mut sigs = Vec::new();
-    for (k, v) in kss.keyset.keys() {
+    for (k, v) in &keys {
+        if dnskeys.is_empty() {
+            // Don't try to sign an empty set.
+            break;
+        }
         let dnskey_signer = match v.keytype() {
             KeyType::Ksk(key_state) => key_state.signer(),
             KeyType::Zsk(_) => false,
@@ -2168,16 +2282,8 @@ fn update_dnskey_rrset(
                         .map_err::<Error, _>(|e| {
                             format!("unable to parse private key file {privref}: {e}").into()
                         })?;
-                    let public_data = if pub_url.scheme() == "file" {
-                        std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
-                            format!("unable read from file {}: {e}", pub_url.path()).into()
-                        })?
-                    } else {
-                        panic!("unsupported URL scheme in {pub_url}");
-                    };
-                    let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
-                        format!("unable to parse public key file {k}: {e}").into()
-                    })?;
+
+                    let public_key = public_key_from_url(&pub_url, ksc, kss, env)?;
 
                     let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
                         .map_err::<Error, _>(|e| {
@@ -2253,7 +2359,9 @@ fn create_cds_rrset(
 ) -> Result<(), Error> {
     let mut cds_list = Vec::new();
     let mut cdnskey_list = Vec::new();
-    for (k, v) in kss.keyset.keys() {
+    // clone needed due to public_key_from_url taking &mut KeySetState.
+    let keys = kss.keyset.keys().clone();
+    for (k, v) in &keys {
         let at_parent = match v.keytype() {
             KeyType::Ksk(key_state) => key_state.at_parent(),
             KeyType::Zsk(key_state) => key_state.at_parent(),
@@ -2263,47 +2371,8 @@ fn create_cds_rrset(
 
         if at_parent {
             let pub_url = Url::parse(k).expect("valid URL expected");
-            match pub_url.scheme() {
-                "file" => {
-                    let path = pub_url.path();
-                    let filename = env.in_cwd(&path);
-                    let public_data =
-                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                            format!("unable read from file {}: {e}", filename.display()).into()
-                        })?;
-                    let mut public_key = parse_from_bind::<Vec<u8>>(&public_data)
-                        .map_err::<Error, _>(|e| {
-                            format!(
-                                "unable to parse public key file {}: {e}",
-                                filename.display()
-                            )
-                            .into()
-                        })?;
-                    public_key.set_ttl(ksc.default_ttl);
-                    create_cds_rrset_helper(
-                        digest_alg,
-                        &mut cds_list,
-                        &mut cdnskey_list,
-                        public_key,
-                    )?;
-                }
-
-                #[cfg(feature = "kmip")]
-                "kmip" => {
-                    let key_url = KeyUrl::try_from(pub_url)?;
-                    let flags = key_url.flags();
-                    let conn_pool = kss.kmip.get_pool(key_url.server_id())?;
-                    let public_key =
-                        domain::crypto::kmip::PublicKey::for_key_url(key_url, conn_pool)
-                            .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
-                    let dnskey = public_key.dnskey(flags);
-                    let owner = kss.keyset.name().clone().flatten_into();
-                    let record = Record::new(owner, Class::IN, ksc.default_ttl, dnskey);
-                    create_cds_rrset_helper(digest_alg, &mut cds_list, &mut cdnskey_list, record)?;
-                }
-
-                _ => panic!("unsupported scheme in {pub_url}"),
-            }
+            let public_key = public_key_from_url(&pub_url, ksc, kss, env)?;
+            create_cds_rrset_helper(digest_alg, &mut cds_list, &mut cdnskey_list, public_key)?;
         }
 
         // Need to sign
@@ -2315,7 +2384,12 @@ fn create_cds_rrset(
 
     let mut cds_sigs = Vec::new();
     let mut cdnskey_sigs = Vec::new();
-    for (k, v) in kss.keyset.keys() {
+    for (k, v) in &keys {
+        if cds_list.is_empty() {
+            // Don't try to sign an empty set. Assume cdnskey_list is empty
+            // as well.
+            break;
+        }
         let dnskey_signer = match v.keytype() {
             KeyType::Ksk(key_state) => key_state.signer(),
             KeyType::Zsk(_) => false,
@@ -2352,19 +2426,7 @@ fn create_cds_rrset(
                             )
                             .into()
                         })?;
-                    let path = pub_url.path();
-                    let filename = env.in_cwd(&path);
-                    let public_data =
-                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                            format!(
-                                "unable to read from public key file {}: {e}",
-                                filename.display()
-                            )
-                            .into()
-                        })?;
-                    let public_key = parse_from_bind(&public_data).map_err::<Error, _>(|e| {
-                        format!("unable to parse public key file {k}: {e}").into()
-                    })?;
+                    let public_key = public_key_from_url(&pub_url, ksc, kss, env)?;
 
                     let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
                         .map_err::<Error, _>(|e| {
@@ -2489,7 +2551,9 @@ fn update_ds_rrset(
 
     #[allow(clippy::type_complexity)]
     let mut ds_list: Vec<Record<Name<Vec<u8>>, Ds<Vec<u8>>>> = Vec::new();
-    for (k, v) in kss.keyset.keys() {
+    // clone needed due to public_key_from_url taking &mut KeySetState.
+    let keys = kss.keyset.keys().clone();
+    for (k, v) in &keys {
         let at_parent = match v.keytype() {
             KeyType::Ksk(key_state) => key_state.at_parent(),
             KeyType::Zsk(key_state) => key_state.at_parent(),
@@ -2499,86 +2563,30 @@ fn update_ds_rrset(
 
         if at_parent {
             let pub_url = Url::parse(k).expect("valid URL expected");
-            match pub_url.scheme() {
-                "file" => {
-                    let path = pub_url.path();
-                    let filename = env.in_cwd(&path);
-                    let public_data =
-                        std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
-                            format!("unable read from file {}: {e}", filename.display()).into()
-                        })?;
-                    let public_key =
-                        parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
-                            format!(
-                                "unable to parse public key file {}: {e}",
-                                filename.display()
-                            )
-                            .into()
-                        })?;
+            let public_key = public_key_from_url::<Vec<u8>>(&pub_url, ksc, kss, env)?;
+            let digest = public_key
+                .data()
+                .digest(&public_key.owner(), digest_alg)
+                .map_err::<Error, _>(|e| {
+                    format!("error creating digest for DNSKEY record: {e}").into()
+                })?;
 
-                    let digest = public_key
-                        .data()
-                        .digest(&public_key.owner(), digest_alg)
-                        .map_err::<Error, _>(|e| {
-                            format!("error creating digest for DNSKEY record: {e}").into()
-                        })?;
+            let ds = Ds::new(
+                public_key.data().key_tag(),
+                public_key.data().algorithm(),
+                digest_alg,
+                digest.as_ref().to_vec(),
+            )
+            .expect("Infallible because the digest won't be too long since it's a valid digest");
 
-                    let ds = Ds::new(
-                        public_key.data().key_tag(),
-                        public_key.data().algorithm(),
-                        digest_alg,
-                        digest.as_ref().to_vec(),
-                    )
-                    .expect(
-                        "Infallible because the digest won't be too long since it's a valid digest",
-                    );
+            let ds_record = Record::new(
+                public_key.owner().clone().flatten_into(),
+                public_key.class(),
+                ksc.default_ttl,
+                ds,
+            );
 
-                    let ds_record = Record::new(
-                        public_key.owner().clone().flatten_into(),
-                        public_key.class(),
-                        ksc.default_ttl,
-                        ds,
-                    );
-
-                    ds_list.push(ds_record);
-                }
-
-                #[cfg(feature = "kmip")]
-                "kmip" => {
-                    let key_url = KeyUrl::try_from(pub_url)?;
-                    let flags = key_url.flags();
-                    let conn_pool = kss.kmip.get_pool(key_url.server_id())?;
-                    let public_key =
-                        domain::crypto::kmip::PublicKey::for_key_url(key_url, conn_pool)
-                            .map_err(|err| format!("Failed to look up KMIP public key: {err}"))?;
-                    let dnskey = public_key.dnskey(flags);
-                    let owner: Name<Vec<u8>> = kss.keyset.name().clone().flatten_into();
-                    let record =
-                        Record::new(owner.clone(), Class::IN, Ttl::from_days(1), dnskey.clone());
-
-                    let digest = dnskey
-                        .digest(&record.owner(), digest_alg)
-                        .map_err::<Error, _>(|e| {
-                            format!("error creating digest for DNSKEY record: {e}").into()
-                        })?;
-
-                    let ds = Ds::new(
-                        dnskey.key_tag(),
-                        dnskey.algorithm(),
-                        digest_alg,
-                        digest.as_ref().to_vec(),
-                    )
-                    .expect(
-                        "Infallible because the digest won't be too long since it's a valid digest",
-                    );
-
-                    let ds_record = Record::new(owner, record.class(), record.ttl(), ds);
-
-                    ds_list.push(ds_record);
-                }
-
-                _ => panic!("unsupported scheme in {pub_url}"),
-            }
+            ds_list.push(ds_record);
         }
     }
 
@@ -3441,7 +3449,6 @@ fn do_done(kss: &mut KeySetState, roll_type: RollType, autoremove: bool) -> Resu
             .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
             .collect();
         if !key_urls.is_empty() {
-            print!("Removing:");
             for u in key_urls {
                 let (pubref, privref) = &u;
                 kss.keyset.delete_key(pubref).map_err::<Error, _>(|e| {
@@ -5470,6 +5477,69 @@ fn remove_key_command(
         kss.keyset
             .delete_key(&key)
             .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    }
+}
+
+/// Take a URL, get the public key and return a Record<_, Dnskey<_>>.
+fn public_key_from_url<Octs>(
+    pub_url: &Url,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+) -> Result<Record<Name<Octs>, Dnskey<Octs>>, Error>
+where
+    Octs: FromBuilder + OctetsFrom<Vec<u8>>,
+    <Octs as OctetsFrom<Vec<u8>>>::Error: Display,
+{
+    match pub_url.scheme() {
+        "file" => {
+            let path = pub_url.path();
+            let filename = env.in_cwd(&path);
+
+            let public_data = std::fs::read_to_string(&filename).map_err::<Error, _>(|e| {
+                format!("unable read from file {}: {e}", filename.display()).into()
+            })?;
+            let mut public_key =
+                parse_from_bind::<Vec<u8>>(&public_data).map_err::<Error, _>(|e| {
+                    format!(
+                        "unable to parse public key file {}: {e}",
+                        filename.display()
+                    )
+                    .into()
+                })?;
+
+            public_key.set_ttl(ksc.default_ttl);
+            let public_key = Record::try_octets_from(public_key)
+                .map_err(|e| format!("try_octets_from failed: {e}"))?;
+            Ok(public_key)
+        }
+
+        #[cfg(feature = "kmip")]
+        "kmip" => {
+            let kmip_key_url = KeyUrl::try_from(pub_url.clone())?;
+            let flags = kmip_key_url.flags();
+            let kmip_conn_pool = kss.kmip.get_pool(kmip_key_url.server_id())?;
+            let key = domain::crypto::kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
+                .map_err(|err| format!("Failed to fetch public key for KMIP key URL: {err}"))?;
+            let owner: Name<Octs> = kss
+                .keyset
+                .name()
+                .clone()
+                .try_flatten_into()
+                .map_err(|e| format!(".try_flatten_into failed: {e}"))?;
+            let record = Record::new(
+                owner,
+                Class::IN,
+                ksc.default_ttl,
+                Dnskey::try_octets_from(key.dnskey(flags))
+                    .map_err(|e| format!("try_octets_from failed: {e}"))?,
+            );
+            Ok(record)
+        }
+
+        _ => {
+            panic!("unsupported scheme in {pub_url}");
+        }
     }
 }
 
