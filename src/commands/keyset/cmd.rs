@@ -1464,11 +1464,21 @@ impl Keyset {
         if run_update_ds_command && !ksc.update_ds_command.is_empty() {
             let output = Command::new(&ksc.update_ds_command[0])
                 .args(&ksc.update_ds_command[1..])
-                .output()?;
+                .output()
+                .map_err(|e| {
+                    format!(
+                        "creating for command for {} failed: {e}",
+                        ksc.update_ds_command[0]
+                    )
+                })?;
             if !output.status.success() {
                 println!("update command failed with: {}", output.status);
-                io::stdout().write_all(&output.stdout)?;
-                io::stderr().write_all(&output.stderr)?;
+                io::stdout()
+                    .write_all(&output.stdout)
+                    .map_err(|e| format!("writing to stdout failed: {e}"))?;
+                io::stderr()
+                    .write_all(&output.stderr)
+                    .map_err(|e| format!("writing to stderr failed: {e}"))?;
             }
         }
 
@@ -3956,7 +3966,10 @@ async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
     let zone = kss.keyset.name();
 
     let resolver = StubResolver::new();
-    let answer = resolver.query((zone, Rtype::SOA)).await?;
+    let answer = resolver
+        .query((zone, Rtype::SOA))
+        .await
+        .map_err(|e| format!("lookup of {zone}/SOA failed: {e}"))?;
     let Some(Ok((mname, mut serial))) = answer
         .answer()?
         .limit_to_in::<Soa<_>>()
@@ -4097,7 +4110,10 @@ async fn addresses_for_zone(zone: &impl ToName) -> Result<HashSet<IpAddr>, Error
 
     let mut nameservers = Vec::new();
     let resolver = StubResolver::new();
-    let answer = resolver.query((zone, Rtype::NS)).await?;
+    let answer = resolver
+        .query((zone, Rtype::NS))
+        .await
+        .map_err(|e| format!("lookup of {}/NS failed: {e}", zone.to_name::<Vec<u8>>()))?;
     let rcode = answer.opt_rcode();
     if rcode != OptRcode::NOERROR {
         return Err(format!("{}/NS query failed: {rcode}", zone.to_name::<Vec<u8>>()).into());
@@ -4138,7 +4154,12 @@ async fn addresses_for_name(
     resolver: &StubResolver,
     name: impl ToName,
 ) -> Result<Vec<IpAddr>, Error> {
-    let res = lookup_host(&resolver, &name).await?;
+    let res = lookup_host(&resolver, &name).await.map_err(|e| {
+        format!(
+            "lookup of addresses for {} failed: {e}",
+            name.to_name::<Vec<u8>>()
+        )
+    })?;
     let res: Vec<_> = res.iter().collect();
     if res.is_empty() {
         return Err(format!("no IP addresses found for {}", name.to_name::<Vec<u8>>()).into());
@@ -4350,7 +4371,10 @@ async fn parent_zone(name: &Name<Vec<u8>>) -> Result<Name<Vec<u8>>, Error> {
         .ok_or_else::<Error, _>(|| format!("unable to get parent of {name}").into())?;
 
     let resolver = StubResolver::new();
-    let answer = resolver.query((&parent, Rtype::SOA)).await?;
+    let answer = resolver
+        .query((&parent, Rtype::SOA))
+        .await
+        .map_err(|e| format!("lookup of {parent}/SOA failed: {e}"))?;
     let rcode = answer.opt_rcode();
     if rcode != OptRcode::NOERROR {
         return Err(format!("{parent}/SOA query failed: {rcode}").into());
@@ -4910,7 +4934,10 @@ fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u
 /// Get the addresses of the primary nameserver of a zone.
 async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Error> {
     let resolver = StubResolver::new();
-    let answer = resolver.query((zone, Rtype::SOA)).await?;
+    let answer = resolver
+        .query((zone, Rtype::SOA))
+        .await
+        .map_err(|e| format!("lookup of {zone}/SOA failed: {e}"))?;
     let Some(Ok(mname)) = answer
         .answer()?
         .limit_to_in::<Soa<_>>()

@@ -1155,7 +1155,9 @@ impl KmipClientCredentialsFile {
     /// Write the credential set back to the file it was loaded from.
     pub fn save(&mut self) -> Result<(), Error> {
         // Ensure that writing happens at the start of the file.
-        self.file.seek(SeekFrom::Start(0))?;
+        self.file
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| format!("seek to start failed: {e}"))?;
 
         // Use a buffered writer as writing JSON to a file directly is
         // apparently very slow, even for small files.
@@ -1173,15 +1175,22 @@ impl KmipClientCredentialsFile {
 
             // Ensure that the BufWriter is flushed as advised by the
             // BufWriter docs.
-            writer.flush()?;
+            writer.flush().map_err(|e| format!("flush failed: {e}"))?;
         }
 
         // Truncate the file to the length of data we just wrote..
-        let pos = self.file.stream_position()?;
-        self.file.set_len(pos)?;
+        let pos = self
+            .file
+            .stream_position()
+            .map_err(|e| format!("unable to get stream position: {e}"))?;
+        self.file
+            .set_len(pos)
+            .map_err(|e| format!("unable to set file length: {e}"))?;
 
         // Ensure that any write buffers are flushed.
-        self.file.flush()?;
+        self.file
+            .flush()
+            .map_err(|e| format!("flush failed: {e}"))?;
 
         Ok(())
     }
@@ -1559,7 +1568,10 @@ impl KmipServerConnectionConfig {
         use std::{fs::File, io::Read};
 
         let mut bytes = Vec::new();
-        File::open(path)?.read_to_end(&mut bytes)?;
+        File::open(path)
+            .map_err(|e| format!("unable to open {}: {e}", path.display()))?
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("reading from {} failed: {e}", path.display()))?;
 
         Ok(bytes)
     }
