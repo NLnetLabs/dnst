@@ -290,8 +290,18 @@ impl Signer {
     }
 
     fn file_modified(filename: impl AsRef<Path>) -> Result<UnixTime, Error> {
-        let md = metadata(filename)?;
-        let modified = md.modified()?;
+        let md = metadata(&filename).map_err(|e| {
+            format!(
+                "unable to get metadata for {}: {e}",
+                filename.as_ref().display()
+            )
+        })?;
+        let modified = md.modified().map_err(|e| {
+            format!(
+                "unable to get the modified time for {}: {e}",
+                filename.as_ref().display()
+            )
+        })?;
         modified
             .try_into()
             .map_err(|e| format!("unable to convert from SystemTime: {e}").into())
@@ -334,8 +344,18 @@ impl Signer {
                 notify_command: Vec::new(),
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
-            let mut file = File::create(self.signer_config)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&self.signer_config).map_err(|e| {
+                format!(
+                    "unable to create file {}: {e}",
+                    self.signer_config.display()
+                )
+            })?;
+            write!(file, "{json}").map_err(|e| {
+                format!(
+                    "unable to write to file {}: {e}",
+                    self.signer_config.display()
+                )
+            })?;
 
             let signer_state = SignerState {
                 config_modified: UNIX_EPOCH.try_into().expect("should not fail"),
@@ -345,8 +365,15 @@ impl Signer {
                 previous_serial: None,
             };
             let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
-            let mut file = File::create(signer_state_file)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&signer_state_file).map_err(|e| {
+                format!("unable to create file {}: {e}", signer_state_file.display())
+            })?;
+            write!(file, "{json}").map_err(|e| {
+                format!(
+                    "unable to write to file {}: {e}",
+                    signer_state_file.display()
+                )
+            })?;
 
             return Ok(());
         }
@@ -355,19 +382,22 @@ impl Signer {
         // avoids race conditions.
         let signer_config_modified = Self::file_modified(self.signer_config.clone())?;
 
-        let file = File::open(self.signer_config.clone())?;
+        let file = File::open(&self.signer_config)
+            .map_err(|e| format!("unable to open file {}: {e}", self.signer_config.display()))?;
         let mut sc: SignerConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.signer_config).into()
         })?;
 
-        let file = File::open(sc.signer_state.clone())?;
+        let file = File::open(&sc.signer_state)
+            .map_err(|e| format!("unable to open file {}: {e}", sc.signer_state.display()))?;
         let mut signer_state: SignerState =
             serde_json::from_reader(file).map_err::<Error, _>(|e| {
                 format!("error loading {:?}: {e}\n", sc.signer_state).into()
             })?;
 
         let keyset_state_modified = Self::file_modified(sc.keyset_state.clone())?;
-        let file = File::open(sc.keyset_state.clone())?;
+        let file = File::open(&sc.keyset_state)
+            .map_err(|e| format!("unable to open file {}: {e}", sc.keyset_state.display()))?;
         let kss: KeySetState = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", sc.keyset_state).into()
         })?;
@@ -447,13 +477,17 @@ impl Signer {
 
         if config_changed {
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
-            let mut file = File::create(self.signer_config)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&self.signer_config)
+                .map_err(|e| format!("unable to create {}: {e}", self.signer_config.display()))?;
+            write!(file, "{json}")
+                .map_err(|e| format!("unable to write to {}: {e}", self.signer_config.display()))?;
         }
         if state_changed {
             let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
-            let mut file = File::create(sc.signer_state)?;
-            write!(file, "{json}")?;
+            let mut file = File::create(&sc.signer_state)
+                .map_err(|e| format!("unable to create {}: {e}", sc.signer_state.display()))?;
+            write!(file, "{json}")
+                .map_err(|e| format!("unable to write to {}: {e}", sc.signer_state.display()))?;
         }
         res
     }
@@ -569,7 +603,12 @@ impl Signer {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
-            let file = File::create(env.in_cwd(&out_file))?;
+            let file = File::create(env.in_cwd(&out_file)).map_err(|e| {
+                format!(
+                    "unable to create file {}: {e}",
+                    env.in_cwd(&out_file).display()
+                )
+            })?;
             let file = BufWriter::new(file);
             FileOrStdout::File(file)
         };
@@ -1073,16 +1112,26 @@ impl Signer {
             }
         }
 
-        writer.flush()?;
+        writer.flush().map_err(|e| format!("flush failed: {e}"))?;
 
         if !sc.notify_command.is_empty() {
             let output = Command::new(&sc.notify_command[0])
                 .args(&sc.notify_command[1..])
-                .output()?;
+                .output()
+                .map_err(|e| {
+                    format!(
+                        "unable to create new Command for {}: {e}",
+                        sc.notify_command[0]
+                    )
+                })?;
             if !output.status.success() {
                 println!("notify command failed with: {}", output.status);
-                io::stdout().write_all(&output.stdout)?;
-                io::stderr().write_all(&output.stderr)?;
+                io::stdout()
+                    .write_all(&output.stdout)
+                    .map_err(|e| format!("unable to write to stdout: {e}"))?;
+                io::stderr()
+                    .write_all(&output.stderr)
+                    .map_err(|e| format!("unable to write to stderr: {e}"))?;
             }
         }
 
@@ -1135,14 +1184,23 @@ impl Signer {
         // bytes than are needed. Instead control the allocation size based on
         // our knowledge of the file size.
         let mut zone_file = File::open(zonefile_path)
-            .map_err(Error::from)
+            .map_err(|e| format!("open failed: {e}").into())
             .context(&format!(
                 "loading zone file from path '{}'",
                 zonefile_path.display(),
             ))?;
-        let zone_file_len = zone_file.metadata()?.len();
+        let zone_file_len = zone_file
+            .metadata()
+            .map_err(|e| {
+                format!(
+                    "unable to get metadata from {}: {e}",
+                    zonefile_path.display()
+                )
+            })?
+            .len();
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
-        std::io::copy(&mut zone_file, &mut buf)?;
+        std::io::copy(&mut zone_file, &mut buf)
+            .map_err(|e| format!("copy to {} failed: {e}", zonefile_path.display()))?;
         let mut reader = buf.into_inner();
 
         reader.set_origin(origin.clone());
