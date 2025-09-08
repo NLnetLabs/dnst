@@ -926,7 +926,8 @@ impl SignZone {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
-            let file = File::create(env.in_cwd(&out_file))?;
+            let file = File::create(env.in_cwd(&out_file))
+                .map_err(|e| format!("unable to create file {}: {e}", out_file.display()))?;
             let file = BufWriter::new(file);
             FileOrStdout::File(file)
         };
@@ -1410,14 +1411,27 @@ impl SignZone {
         // bytes than are needed. Instead control the allocation size based on
         // our knowledge of the file size.
         let mut zone_file = File::open(zonefile_path)
-            .map_err(Error::from)
+            .map_err(|e| format!("error opening file: {e}").into())
             .context(&format!(
                 "loading zone file from path '{}'",
                 zonefile_path.display(),
             ))?;
-        let zone_file_len = zone_file.metadata()?.len();
+        let zone_file_len = zone_file
+            .metadata()
+            .map_err(|e| {
+                format!(
+                    "error getting metadata from zonefile {}: {e}",
+                    zonefile_path.display()
+                )
+            })?
+            .len();
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
-        std::io::copy(&mut zone_file, &mut buf)?;
+        std::io::copy(&mut zone_file, &mut buf).map_err(|e| {
+            format!(
+                "error copying from zonefile {}: {e}",
+                zonefile_path.display()
+            )
+        })?;
         let mut reader = buf.into_inner();
 
         if let Some(origin) = &self.origin {
@@ -1526,7 +1540,7 @@ impl SignZone {
 
     fn load_private_key(key_path: &Path) -> Result<SecretKeyBytes, Error> {
         let private_data = std::fs::read_to_string(key_path)
-            .map_err(Error::from)
+            .map_err(|e| format!("error reading from file: {e}").into())
             .context(&format!(
                 "loading private key from file '{}'",
                 key_path.display(),
@@ -1549,7 +1563,7 @@ impl SignZone {
 
     fn load_public_key(key_path: &Path) -> Result<Record<Name<Bytes>, Dnskey<Bytes>>, Error> {
         let public_data = std::fs::read_to_string(key_path)
-            .map_err(Error::from)
+            .map_err(|e| format!("error reading from file: {e}").into())
             .context(&format!(
                 "loading public key from file '{}'",
                 key_path.display(),
