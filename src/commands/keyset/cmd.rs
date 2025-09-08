@@ -5454,6 +5454,7 @@ fn remove_key_command(
 }
 
 /// Take a URL, get the public key and return a Record<_, Dnskey<_>>.
+#[allow(unused_variables)]
 fn public_key_from_url<Octs>(
     pub_url: &Url,
     ksc: &KeySetConfig,
