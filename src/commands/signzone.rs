@@ -926,9 +926,8 @@ impl SignZone {
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
         } else {
-            let file = File::create(env.in_cwd(&out_file)).map_err::<Error, _>(|e| {
-                format!("unable to create file {}: {e}", out_file.display()).into()
-            })?;
+            let file = File::create(env.in_cwd(&out_file))
+                .map_err(|e| format!("unable to create file {}: {e}", out_file.display()))?;
             let file = BufWriter::new(file);
             FileOrStdout::File(file)
         };
@@ -1427,12 +1426,11 @@ impl SignZone {
             })?
             .len();
         let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
-        std::io::copy(&mut zone_file, &mut buf).map_err::<Error, _>(|e| {
+        std::io::copy(&mut zone_file, &mut buf).map_err(|e| {
             format!(
                 "error copying from zonefile {}: {e}",
                 zonefile_path.display()
             )
-            .into()
         })?;
         let mut reader = buf.into_inner();
 

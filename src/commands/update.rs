@@ -234,16 +234,14 @@ impl Update {
         let mut records = Vec::new();
         for arg in args {
             if let Some((name, typ)) = arg.split_once(' ') {
-                let typ = Rtype::from_str(typ).map_err(|e| -> Error {
-                    format!("Invalid resource record type '{typ}': {e}").into()
-                })?;
-                let uncertain = UncertainName::<Vec<u8>>::from_str(name).map_err(|e| -> Error {
-                    format!("Invalid domain name '{name}': {e}").into()
-                })?;
+                let typ = Rtype::from_str(typ)
+                    .map_err(|e| format!("Invalid resource record type '{typ}': {e}"))?;
+                let uncertain = UncertainName::<Vec<u8>>::from_str(name)
+                    .map_err(|e| format!("Invalid domain name '{name}': {e}"))?;
                 let name = uncertain
                     .chain(origin)
-                    .map_err(|_| -> Error {
-                        format!("Combining {name}.{origin} is too long for a domain name").into()
+                    .map_err(|_| {
+                        format!("Combining {name}.{origin} is too long for a domain name")
                     })?
                     .to_name();
                 records.push((name, typ))
@@ -264,12 +262,10 @@ impl Update {
         let mut names = Vec::new();
         for name in args {
             let uncertain = UncertainName::<Vec<u8>>::from_str(name)
-                .map_err(|e| -> Error { format!("Invalid domain name '{name}': {e}").into() })?;
+                .map_err(|e| format!("Invalid domain name '{name}': {e}"))?;
             let name = uncertain
                 .chain(origin)
-                .map_err(|_| -> Error {
-                    format!("Combining {name}.{origin} is too long for a domain name").into()
-                })?
+                .map_err(|_| format!("Combining {name}.{origin} is too long for a domain name"))?
                 .to_name();
             names.push(name)
         }
@@ -482,9 +478,7 @@ impl Update {
                 debug!("Adding prerequisite (RRset exists): RR with name '{domain}' and type '{rtype}'");
                 prereq_section
                     .push(Self::create_prereq_rrset_exists(domain, rtype))
-                    .map_err(|e| -> Error {
-                        format!("Failed to add RR to UPDATE message: {e}").into()
-                    })?
+                    .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
             }
         }
         if let Some(rrset_exists_exact) = prerequisites.rrset_exists_exact {
@@ -498,9 +492,9 @@ impl Update {
                 // - NAME and TYPE are that of the RRset being denoted.
                 // - CLASS is that of the zone.
                 // - TTL must be specified as zero (0) [...]
-                prereq_section.push(rr).map_err(|e| -> Error {
-                    format!("Failed to add RR to UPDATE message: {e}").into()
-                })?
+                prereq_section
+                    .push(rr)
+                    .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
             }
         }
         if let Some(rrset_non_existent) = prerequisites.rrset_non_existent {
@@ -508,9 +502,7 @@ impl Update {
                 debug!("Adding prerequisite (RRset does not exist): RR with name '{domain}' and type '{rtype}'");
                 prereq_section
                     .push(Self::create_prereq_rrset_non_existent(domain, rtype))
-                    .map_err(|e| -> Error {
-                        format!("Failed to add RR to UPDATE message: {e}").into()
-                    })?
+                    .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
             }
         }
         if let Some(name_in_use) = prerequisites.name_in_use {
@@ -518,9 +510,7 @@ impl Update {
                 debug!("Adding prerequisite (Name in use): with name '{domain}'");
                 prereq_section
                     .push(Self::create_prereq_name_in_use(domain))
-                    .map_err(|e| -> Error {
-                        format!("Failed to add RR to UPDATE message: {e}").into()
-                    })?
+                    .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
             }
         }
         if let Some(name_not_in_use) = prerequisites.name_not_in_use {
@@ -528,9 +518,7 @@ impl Update {
                 debug!("Adding prerequisite (Name not in use): with name '{domain}'");
                 prereq_section
                     .push(Self::create_prereq_name_not_in_use(domain))
-                    .map_err(|e| -> Error {
-                        format!("Failed to add RR to UPDATE message: {e}").into()
-                    })?
+                    .map_err(|e| format!("Failed to add RR to UPDATE message: {e}"))?
             }
         }
         Ok(())
@@ -657,8 +645,10 @@ impl Update {
 
         if let Some(nsnames) = nsnames {
             for name in nsnames {
-                let found_ips = resolver.lookup_host(&name).await
-			.map_err(|e| format!("unable to lookup addresses for {name}: {e}"))?;
+                let found_ips = resolver
+                    .lookup_host(&name)
+                    .await
+                    .map_err(|e| format!("unable to lookup addresses for {name}: {e}"))?;
                 for socket in found_ips.port_iter(53) {
                     let resp = match connect_and_send_request(&env, socket, &msg, &tsig_key).await {
                         Ok(resp) => resp,
@@ -1407,9 +1397,10 @@ impl LdnsUpdate {
             .transpose()?;
 
         for name in nsnames {
-            let found_ips = resolver.lookup_host(&name).await.map_err::<Error, _>(|e| {
-                format!("unable to look up addresses for {name}: {e}").into()
-            })?;
+            let found_ips = resolver
+                .lookup_host(&name)
+                .await
+                .map_err(|e| format!("unable to look up addresses for {name}: {e}"))?;
             for socket in found_ips.port_iter(53) {
                 let local: SocketAddr = if socket.is_ipv4() {
                     ([0u8; 4], 0).into()
@@ -1469,7 +1460,7 @@ mod update_helpers {
         let response = resolver
             .query(Question::new(&zone, Rtype::SOA, Class::IN))
             .await
-	    .map_err(|e| format!("unable to lookup {zone}/SOA: {e}"))?;
+            .map_err(|e| format!("unable to lookup {zone}/SOA: {e}"))?;
 
         debug!("Reading response from resolver");
         let mut answer = response.answer()?.limit_to::<Soa<_>>();
@@ -1501,7 +1492,7 @@ mod update_helpers {
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
             .await
-	    .map_err(|e| format!("unable to lookup {name}/SOA: {e}"))?;
+            .map_err(|e| format!("unable to lookup {name}/SOA: {e}"))?;
 
         debug!("Reading response from resolver");
         // We look in both the answer and authority sections.
@@ -1520,10 +1511,10 @@ mod update_helpers {
 
         debug!("Querying for the IP address of {soa_mname}");
         // Step 2 - find SOA MNAME IP address, add to resolver
-        let response = resolver.lookup_host(&soa_mname).await
-            .map_err::<Error, _>(|e| {
-                format!("unable to look up addresses for {soa_mname}: {e}").into()
-            })?;
+        let response = resolver
+            .lookup_host(&soa_mname)
+            .await
+            .map_err(|e| format!("unable to look up addresses for {soa_mname}: {e}"))?;
 
         let Some(ipaddr) = response.iter().next() else {
             return Err(format!("No A or AAAA record found for {soa_mname}").into());
@@ -1545,7 +1536,7 @@ mod update_helpers {
         let response = resolver
             .query(Question::new(&name, Rtype::SOA, Class::IN))
             .await
-	    .map_err(|e| format!("unable to lookup {name}/SOA: {e}"))?;
+            .map_err(|e| format!("unable to lookup {name}/SOA: {e}"))?;
 
         debug!("Reading response from primary name server");
         // We look in both the answer and authority sections.
@@ -1582,7 +1573,7 @@ mod update_helpers {
             .await
             .query(Question::new(&zone, Rtype::NS, Class::IN))
             .await
-	    .map_err(|e| format!("unable to lookup {zone}/NS: {e}"))?;
+            .map_err(|e| format!("unable to lookup {zone}/NS: {e}"))?;
 
         debug!("Reading response from {mname}");
         let mut nsnames = response
