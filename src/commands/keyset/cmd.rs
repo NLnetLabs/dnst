@@ -687,32 +687,61 @@ impl Keyset {
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
             Commands::Init => {
+                // Assume that dnskey_rrset is a reliable way to tell if
+                // we are initialized or not.
                 // Check for re-init.
-                if !kss.keyset.keys().is_empty() {
+                if !kss.dnskey_rrset.is_empty() {
                     // Avoid re-init.
                     return Err("already initialized\n".into());
                 }
 
-                let (new_stored, _) = new_csk_or_ksk_zsk(&ksc, &mut kss, env)?;
+                // Check if we have any imported keys. Include doesn't count.
+                // if we do, make we sure we have a CSK or a KSK plus a ZSK.
+                // If we have only of a KSK or only a ZSK then fail. Otherwise
+                // Create the dnskey_rrset and the ds_rrset.
+                let mut ksk_present = false;
+                let mut zsk_present = false;
+                let mut csk_present = false;
+                for k in kss.keyset.keys().values() {
+                    match k.keytype() {
+                        KeyType::Ksk(_) => ksk_present = true,
+                        KeyType::Zsk(_) => zsk_present = true,
+                        KeyType::Csk(_, _) => csk_present = true,
+                        KeyType::Include(_) => (),
+                    }
+                }
+                if (ksk_present && zsk_present) || csk_present {
+                    // Start with imported keys.
+                    update_dnskey_rrset(&ksc, &mut kss, env, true)?;
+                    update_ds_rrset(&ksc, &mut kss, env, true)?;
+                } else if ksk_present || zsk_present {
+                    // Incomplete keys
+                    return Err("Cannot start with only a KSK or ZSK.".into());
+                } else {
+                    // No imported keys (except possibly for Include), start
+                    // an algorithm roll.
 
-                let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-                let actions = kss
-                    .keyset
-                    .start_roll(RollType::AlgorithmRoll, &[], &new)
-                    .expect("should not happen");
+                    let (new_stored, _) = new_csk_or_ksk_zsk(&ksc, &mut kss, env)?;
 
-                handle_actions(
-                    &actions,
-                    &ksc,
-                    &mut kss,
-                    env,
-                    true,
-                    &mut run_update_ds_command,
-                )?;
-                kss.internal
-                    .insert(RollType::AlgorithmRoll, Default::default());
+                    let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
+                    let actions = kss
+                        .keyset
+                        .start_roll(RollType::AlgorithmRoll, &[], &new)
+                        .expect("should not happen");
 
-                print_actions(&actions);
+                    handle_actions(
+                        &actions,
+                        &ksc,
+                        &mut kss,
+                        env,
+                        true,
+                        &mut run_update_ds_command,
+                    )?;
+                    kss.internal
+                        .insert(RollType::AlgorithmRoll, Default::default());
+
+                    print_actions(&actions);
+                }
                 state_changed = true;
             }
             Commands::Ksk { subcommand } => roll_command(
