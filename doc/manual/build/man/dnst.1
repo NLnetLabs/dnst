@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST" "1" "Sep 15, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst \- DNS Management Tools
 .SH SYNOPSIS
@@ -42,7 +42,25 @@ managing DNS servers and DNS zones.
 .sp
 Please consult the manual pages for these individual commands for more
 information.
-.SH DNST COMMANDS
+.SH OPTIONS
+.INDENT 0.0
+.TP
+.B \-v, \-\-verbosity <LEVEL>
+Set the verbosity to 0\-5 or a level name (\fBoff\fP, \fBerror\fP, \fBwarn\fP,
+\fBinfo\fP, \fBdebug\fP or \fBtrace\fP). Defaults to \fBwarn\fP\&.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-h, \-\-help
+Print the help text (short summary with \fB\-h\fP, long help with
+\fB\-\-help\fP).
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-V, \-\-version
+Print the version.
+.UNINDENT
+.SH COMMANDS
 .INDENT 0.0
 .TP
 .B \fI\%dnst\-key2ds\fP (1)
