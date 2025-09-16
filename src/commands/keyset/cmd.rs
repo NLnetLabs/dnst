@@ -455,6 +455,12 @@ enum SetCommands {
         opt_duration: OptDuration,
     },
 
+    /// Set the TTL to be used DNSKEY/CDS/CDNSKEY records.
+    DefaultTtl {
+        /// TTL value to set.
+        ttl: u32,
+    },
+
     /// Set the command to run when the DS records at the parent need updating.
     UpdateDsCommand {
         /// Command and arguments.
@@ -1752,6 +1758,9 @@ fn set_command(
         }
         SetCommands::CskValidity { opt_duration } => {
             ksc.csk_validity = opt_duration;
+        }
+        SetCommands::DefaultTtl { ttl } => {
+            ksc.default_ttl = Ttl::from_secs(ttl);
         }
         SetCommands::UpdateDsCommand { args } => {
             ksc.update_ds_command = args;
