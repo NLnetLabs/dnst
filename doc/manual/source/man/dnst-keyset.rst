@@ -30,8 +30,8 @@ The keyset subcommand also maintains state file for each zone.
 The state file lists the keys in the key set, the current key roll state,
 and has the DNSKEY, CDS, and CDNSKEY RRsets.
 
-In addition to the configuration and state files, keyset maintains file for 
-keys that are stored on in the filesystem. 
+In addition to the configuration and state files, keyset maintains file for
+keys that are stored on in the filesystem.
 Additionally, keyset can optionally maintain a credentials file that
 contains user names and passwords for the KMIP connections.
 
@@ -40,7 +40,7 @@ the set of keys together with the keys' properties such as whether a key
 should sign the zone, timestamps when creates are created or become stale.
 The Keyset data type also implements the basics of key rolls.
 
-The keyset subcommand supports importing existing keys, both standalone 
+The keyset subcommand supports importing existing keys, both standalone
 public keys as well as public/private key pairs can be imported.
 A standalone public key can only be import from file whereas public/private
 key pairs can be either files or keys stored in an HSM.
@@ -82,7 +82,7 @@ However, keyset also maintains a field in that state file, called
 ``cron-next``, that specifies when the cron subcommand should be run next.
 Running the cron subcommand early is fine, the current time is compared
 again the ``cron-next`` field and the subcommand exits early if
-``cron-next`` is in the future. 
+``cron-next`` is in the future.
 Running the cron subcommand late may cause signatures to expire.
 
 Create / Init
@@ -112,7 +112,7 @@ either as files or in an HSM and either a CSK or a pair of KSK and ZSK.
 Key Rolls
 ~~~~~~~~~
 
-The keyset subcommand can perform four different types of key rolls: 
+The keyset subcommand can perform four different types of key rolls:
 KSK rolls, ZSK rolls, CSK rolls and algorithm rolls.
 A KSK roll replaces one KSK with a new KSK.
 Similarly, ZSK roll replaces one ZSK with a new ZSK.
@@ -122,7 +122,7 @@ So a CSK roll can also roll from KSK plus ZSK to a new CSK or from a CSK
 to new a KSK and ZSK pair.
 Somewhat surprisingly, a roll from KSK plus ZSK to a new KSK plus ZSK pair
 is also supported.
-Finally, an algorithm roll is similar to a CSK roll, but design in 
+Finally, an algorithm roll is similar to a CSK roll, but design in
 a specific way to handle the case where the new key or keys have an algorithm
 that is different from one used by the current signing keys.
 
@@ -146,13 +146,13 @@ Actions fall in three categories.
 The category consists of actions that require updating the zone or the
 parent zone.
 The second category consist of actions that require checking of changes
-have propagated to all nameservers and require reporting of the 
+have propagated to all nameservers and require reporting of the
 TTLs of the changed RRset as seen at the nameservers.
-Finally, the last category requires waiting for changes to propagate to 
+Finally, the last category requires waiting for changes to propagate to
 all nameservers but there is no need to report the TTL.
 
 Typically, in a list of actions, an action of the first category is paired
-with one from the second of third category. 
+with one from the second of third category.
 For example, ``UpdateDnskeyRrset`` is paired with eiher
 ``ReportDnskeyPropagated`` or ``WaitDnskeyPropagated``.
 
@@ -173,7 +173,7 @@ For each roll type, there are four booleans called``start``, ``report``,
 ``expire`` and ``done``.
 
 When set, ``start`` boolean directs the cron subcommand to start a key roll
-when a relvant key has expired. 
+when a relvant key has expired.
 KSK and ZSK key roll can start automatically if respectively a KSK or a ZSK
 has expired.
 A CSK can start automatically when a CSK has expired but also when a KSK or
@@ -187,7 +187,7 @@ When enabled, the cron subcommand contact the nameservers of the zone or
 (in the case of ``ReportDsPropagated``, the nameservers of the parent zone)
 to check if change have propagated to all nameservers.
 The check obtains the list of nameservers from the apex of the (parent) zone
-and collect all IPv4 and IPv6 address. 
+and collect all IPv4 and IPv6 address.
 For the ReportDnskeyPropagated and ReportDsPropagated action, each address is
 the queried to see if the DNSKEY RRset matches or the DS RRset matches
 the KSKs.
@@ -229,15 +229,15 @@ a public/private key pair from files or a public/private key pair in an HSM.
 A public key can only be import from a file.
 When the key is imported the name of the file is stored in the key set and
 the key will be included in DNSKEY RRset.
-This is useful for certain migration and to manually implement a 
+This is useful for certain migration and to manually implement a
 multi-signer DNSSEC signing setup.
 Note that automation does not work for the case.
 
 A public/private key pair can be imported from files.
 It sufficient to give the name of the file that holds the public key if
 the filename ends in ``.key`` and the filename is the private key is the
-same except that it ends in ``.private``. 
-If this is not the case then the private key filename can be specified 
+same except that it ends in ``.private``.
+If this is not the case then the private key filename can be specified
 separately.
 
 Importing a public/private key on an HSM require specifying the KMIP
@@ -260,6 +260,153 @@ There is a ``--coupled`` option to tell keyset to take ownership of the key.
 
 Migration
 ~~~~~~~~~
+
+The keyset subcommand has no direct support for migration.
+Migration has to be done manually using the import commands.
+The semeantics of the import commands is decribed in the previous section.
+This section focusses on how the import command can be used to perform a
+migration.
+
+There are three migration strategies: 1) importing the existing signer's
+(private) signing keys, 2) a full multi-signer migration and 3)
+a partial multi-signer migration.
+
+Importing the existing signer's signing keys
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Importing the existing signer's public/private keys pairs is the easiest
+migration mechanism.
+The basic process is the following:
+
+* Disable (automatic) key rolls on the existing signer
+
+* Disable automatic key rolls before the executing the create command.
+
+* Import the KSK and ZSK (or CSK) as files or using KMIP between the
+  create and init commands.
+
+* Check with tools such as ldns-verify-zone that the new zone is secure with
+  the existing DS record at the parent.
+
+* Switch the nameservers to the new signer.
+
+* Perform key rolls for the KSK and ZSK (or the CSK).
+
+* (If needed) enable automatic key rolls.
+
+* Remove the zone from the old signer.
+
+Note that after the key roll, to signer have access to the signing keys.
+In case of KMIP keys, the old signer can also delete the keys from the HSM.
+For this reason it is best to perform key rolls of all keys before removing
+the zone from the old signer.
+
+This document describes key management. Care should be taken that other
+parameters, such as the use of NSEC or NSEC3 and NSEC3 parameters are
+the same (to avoid confusion) and that the SOA serial policy is the same
+(to avoid problems with zone transfers).
+
+Full multi-signer migration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The basic idea is the execute the following steps:
+
+* Disable (automatic) key rolls on the existing signer.
+
+* If the parent supports automatic updating the DS record using CDS/CDNSKEY
+  (RFC 8078) then disable the generation of CDS/CDNSKEY records on the
+  existing or disable CDS/CDNSKEY processing for this zone at the parent.
+
+* Issue the create command.
+
+* Disable automatic key rolls.
+
+* (Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+
+* Import the public key of the existing signer's ZSK (or CSK).
+
+* Issue the init command.
+
+* Make sure in the next step to only add a DS record at the parent, not
+  the delete the existing one.
+
+* Complete the initial algorithm roll.
+
+* Verify using tools such as ldns-veridy-zone that the zone is correctly
+  signed.
+
+* Import the public key of the new ZSK (or CSK) in the existing signer.
+
+* Verify that all nameservers that serve the zone have new ZSK in the
+  DNSKEY RRset of the existing signer.
+
+* Transition the nameservers from the existing signer to the new signer.
+
+* Let caches expire for the DNSKEY RRset of the old signer and the
+  zone RRSIGs of the old signer.
+
+* Remove the DS record for the old signer from the parent.
+
+* Remove the imported public key.
+
+* (If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+  records.
+
+Partial multi-signer migration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A partial multi-signer migration is the right approach when the existing
+signer cannot import the new signers ZSK.
+A requirement is that the new signer can transfer the signed zone from the
+existing signer and that the new signer supports to so-called "pass-through"
+mode.
+In pass-through mode a signer leaves signatures for zone records unchanged
+be does replace the DNSKEY, CDS and CDNSKEY RRset with the ones from
+this subcommand.
+
+The basic idea is the execute the following steps:
+
+* Disable (automatic) key rolls on the existing signer.
+
+* If the parent supports automatic updating the DS record using CDS/CDNSKEY
+  (RFC 8078) then disable the generation of CDS/CDNSKEY records on the
+  existing or disable CDS/CDNSKEY processing for this zone at the parent.
+
+* Issue the create command.
+
+* Disable automatic key rolls.
+
+* (Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+
+* Import the public key of the existing signer's ZSK (or CSK).
+
+* Issue the init command.
+
+* Switch the signer to pass-through mode. The signer has to transfer the
+  signed zone from the existing signer.
+
+* Make sure in the next step to only add a DS record at the parent, not
+  the delete the existing one.
+
+* Complete the initial algorithm roll.
+
+* Verify using tools such as ldns-veridy-zone that the zone is correctly
+  signed.
+
+* Transition the nameservers from the existing signer to the new signer.
+
+* Let caches expire for the DNSKEY RRset of the old signer.
+
+* Remove the DS record for the old signer from the parent.
+
+* switch off pass-through mode.
+
+* Let caches expire for the zone RRSIGs of the old signer.
+
+* Remove the imported public key.
+
+* (If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+  records.
 
 Options
 -------

@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Sep 15, 2025" "0.1.0-rc2" "dnst"
+.TH "DNST-KEYSET" "1" "Sep 23, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -271,6 +271,153 @@ When a decoupled key is deleted, only the reference to the key is deleted
 from the key set, the underlying keys are left untouched.
 There is a \fB\-\-coupled\fP option to tell keyset to take ownership of the key.
 .SS Migration
+.sp
+The keyset subcommand has no direct support for migration.
+Migration has to be done manually using the import commands.
+The semeantics of the import commands is decribed in the previous section.
+This section focusses on how the import command can be used to perform a
+migration.
+.sp
+There are three migration strategies: 1) importing the existing signer\(aqs
+(private) signing keys, 2) a full multi\-signer migration and 3)
+a partial multi\-signer migration.
+.SS Importing the existing signer\(aqs signing keys
+.sp
+Importing the existing signer\(aqs public/private keys pairs is the easiest
+migration mechanism.
+The basic process is the following:
+.INDENT 0.0
+.IP \(bu 2
+Disable (automatic) key rolls on the existing signer
+.IP \(bu 2
+Disable automatic key rolls before the executing the create command.
+.IP \(bu 2
+Import the KSK and ZSK (or CSK) as files or using KMIP between the
+create and init commands.
+.IP \(bu 2
+Check with tools such as ldns\-verify\-zone that the new zone is secure with
+the existing DS record at the parent.
+.IP \(bu 2
+Switch the nameservers to the new signer.
+.IP \(bu 2
+Perform key rolls for the KSK and ZSK (or the CSK).
+.IP \(bu 2
+(If needed) enable automatic key rolls.
+.IP \(bu 2
+Remove the zone from the old signer.
+.UNINDENT
+.sp
+Note that after the key roll, to signer have access to the signing keys.
+In case of KMIP keys, the old signer can also delete the keys from the HSM.
+For this reason it is best to perform key rolls of all keys before removing
+the zone from the old signer.
+.sp
+This document describes key management. Care should be taken that other
+parameters, such as the use of NSEC or NSEC3 and NSEC3 parameters are
+the same (to avoid confusion) and that the SOA serial policy is the same
+(to avoid problems with zone transfers).
+.SS Full multi\-signer migration
+.sp
+The basic idea is the execute the following steps:
+.INDENT 0.0
+.IP \(bu 2
+Disable (automatic) key rolls on the existing signer.
+.IP \(bu 2
+If the parent supports automatic updating the DS record using CDS/CDNSKEY
+(RFC 8078) then disable the generation of CDS/CDNSKEY records on the
+existing or disable CDS/CDNSKEY processing for this zone at the parent.
+.IP \(bu 2
+Issue the create command.
+.IP \(bu 2
+Disable automatic key rolls.
+.IP \(bu 2
+(Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+.IP \(bu 2
+Import the public key of the existing signer\(aqs ZSK (or CSK).
+.IP \(bu 2
+Issue the init command.
+.IP \(bu 2
+Make sure in the next step to only add a DS record at the parent, not
+the delete the existing one.
+.IP \(bu 2
+Complete the initial algorithm roll.
+.IP \(bu 2
+Verify using tools such as ldns\-veridy\-zone that the zone is correctly
+signed.
+.IP \(bu 2
+Import the public key of the new ZSK (or CSK) in the existing signer.
+.IP \(bu 2
+Verify that all nameservers that serve the zone have new ZSK in the
+DNSKEY RRset of the existing signer.
+.IP \(bu 2
+Transition the nameservers from the existing signer to the new signer.
+.IP \(bu 2
+Let caches expire for the DNSKEY RRset of the old signer and the
+zone RRSIGs of the old signer.
+.IP \(bu 2
+Remove the DS record for the old signer from the parent.
+.IP \(bu 2
+Remove the imported public key.
+.IP \(bu 2
+(If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+records.
+.UNINDENT
+.SS Partial multi\-signer migration
+.sp
+A partial multi\-signer migration is the right approach when the existing
+signer cannot import the new signers ZSK.
+A requirement is that the new signer can transfer the signed zone from the
+existing signer and that the new signer supports to so\-called \(dqpass\-through\(dq
+mode.
+In pass\-through mode a signer leaves signatures for zone records unchanged
+be does replace the DNSKEY, CDS and CDNSKEY RRset with the ones from
+this subcommand.
+.sp
+The basic idea is the execute the following steps:
+.INDENT 0.0
+.IP \(bu 2
+Disable (automatic) key rolls on the existing signer.
+.IP \(bu 2
+If the parent supports automatic updating the DS record using CDS/CDNSKEY
+(RFC 8078) then disable the generation of CDS/CDNSKEY records on the
+existing or disable CDS/CDNSKEY processing for this zone at the parent.
+.IP \(bu 2
+Issue the create command.
+.IP \(bu 2
+Disable automatic key rolls.
+.IP \(bu 2
+(Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+.IP \(bu 2
+Import the public key of the existing signer\(aqs ZSK (or CSK).
+.IP \(bu 2
+Issue the init command.
+.IP \(bu 2
+Switch the signer to pass\-through mode. The signer has to transfer the
+signed zone from the existing signer.
+.IP \(bu 2
+Make sure in the next step to only add a DS record at the parent, not
+the delete the existing one.
+.IP \(bu 2
+Complete the initial algorithm roll.
+.IP \(bu 2
+Verify using tools such as ldns\-veridy\-zone that the zone is correctly
+signed.
+.IP \(bu 2
+Transition the nameservers from the existing signer to the new signer.
+.IP \(bu 2
+Let caches expire for the DNSKEY RRset of the old signer.
+.IP \(bu 2
+Remove the DS record for the old signer from the parent.
+.IP \(bu 2
+switch off pass\-through mode.
+.IP \(bu 2
+Let caches expire for the zone RRSIGs of the old signer.
+.IP \(bu 2
+Remove the imported public key.
+.IP \(bu 2
+(If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+records.
+.UNINDENT
 .SH OPTIONS
 .INDENT 0.0
 .TP
