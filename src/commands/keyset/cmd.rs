@@ -18,6 +18,8 @@
 //   config_changed, state_changed, and run_update_ds_command falgs. This
 //   reduces parameter passing. It also allows KMIP to store its connection
 //   pool in State instead of in KeySetState as it currently does.
+// - add a -v option to keyset. Remove the -v option from status. Add
+//   verbose output for creation and deletion of keys.
 
 use crate::env::Env;
 use crate::error::Error;
@@ -63,7 +65,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::{remove_file, File};
+use std::fs::{create_dir_all, remove_file, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
@@ -607,10 +609,13 @@ impl Keyset {
             keyset_state,
         } = self.cmd
         {
+            let config_file_dir = make_parent_dir(self.keyset_conf.clone());
+
             let state_file = absolute(&keyset_state).map_err(|e| {
                 format!("unable to make {} absolute: {}", keyset_state.display(), e)
             })?;
-            let keys_dir = make_parent_dir(state_file.clone());
+            let state_file_dir = make_parent_dir(state_file.clone());
+            let keys_dir = state_file_dir.clone();
 
             let ks = KeySet::new(domain_name);
             let kss = KeySetState {
@@ -650,6 +655,21 @@ impl Keyset {
                 autoremove: false,
                 update_ds_command: Vec::new(),
             };
+
+            // Create the parent directies.
+            create_dir_all(&state_file_dir).map_err(|e| {
+                format!(
+                    "unable to create directory '{}': {e}",
+                    state_file_dir.display()
+                )
+            })?;
+            create_dir_all(&config_file_dir).map_err(|e| {
+                format!(
+                    "unable to create directory '{}': {e}",
+                    config_file_dir.display()
+                )
+            })?;
+
             let json = serde_json::to_string_pretty(&kss).expect("should not fail");
             let mut file = File::create(&state_file)
                 .map_err(|e| format!("unable to create file {}: {e}", state_file.display()))?;
