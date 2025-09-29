@@ -718,7 +718,8 @@ impl Keyset {
                 // Check for re-init.
                 if !kss.dnskey_rrset.is_empty() {
                     // Avoid re-init.
-                    return Err("already initialized\n".into());
+                    println!("Already initialized, skipping");
+                    return Ok(());
                 }
 
                 // Check if we have any imported keys. Include doesn't count.
