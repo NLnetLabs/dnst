@@ -884,7 +884,7 @@ impl Keyset {
                                     println!();
                                 }
                                 Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
-                                    println!("Check that all authoritative records in the zone have been signed with the following Key(s) and that all nameservers of the zone serve that version or later:");
+                                    println!("Check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
                                     // This clone is needed because
                                     // public_key_from_url needs a mutable
                                     // reference to kss. Rewrite the kmip
