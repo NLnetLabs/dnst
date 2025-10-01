@@ -35,20 +35,27 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC signing keys.
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
-The \fBkeyset\fP subcommand manages keys and generates a signed DNSKEY RRset.
-A separate zone signer is expected to use the zone signing keys in the key set,
-signed the zone and include the DNSKEY RRset (as well as the CDS and CDNSKEY
+The \fBkeyset\fP subcommand manages signing keys and generates a signed DNSKEY RRset.
+A separate zone signer (not part of dnst) is expected to use the zone
+signing keys in the key set,
+sign the zone and include the DNSKEY RRset (as well as the CDS and CDNSKEY
 RRsets).
-The keyset subcommand supports keys stored in files and, which the dnst
-program is build with the kmip feature flag, keys stored in a
-Hardware Securiy Module (HSM) that can be accessed using the
+The keyset subcommand supports keys stored in files and, when the dnst
+program is built with the kmip feature flag, keys stored in a
+Hardware Security Module (HSM) that can be accessed using the
 Key Management Interoperability Protocol (KMIP).
 .sp
 The keyset subcommand operates on one zone at a time.
 For each zone, keyset
-maintain a configuration file, that stores configuration parameters for
+maintains a configuration file that stores configuration parameters for
+key generation (which algorithm to use, whether to use a CSK or a
+KSK and ZSK pair), parameters for key rolls (whether key rolls are automatic
+or not), the lifetimes of keys and signatures, etc.
+The keyset subcommand also maintains a state file for each zone.
+The state file lists the keys in the key set, the current key roll state,
+and has the DNSKEY, CDS, and CDNSKEY RRsets.
 key generation (which algorithm to use, whether to use a CSK and a
 KSK and a ZSK), parameters for key rolls (whether key rolls are automatic
 or not), the lifetimes of keys and signatures, etc.
@@ -74,7 +81,7 @@ Note that the public and private key either need to be both files or both
 stored in an HSM.
 .SS Signer
 .sp
-The zone signer is expect to read the state file that is maintained by
+The zone signer is expected to read the state file that is maintained by
 keyset to find the current zone signing keys, to find the signed
 DNSKEY/CDS/CDNSKEY RRset and to find the KMIP configuration.
 .sp
@@ -85,8 +92,8 @@ If the signer is in full control of running keyset, then the state file needs
 to be checked for changes after running keyset with commands the can
 potientially change the state file (status subcommands, etc. do not change
 the state file).
-If keyset can be invoke independently of the signer then the signer needs
-to periodically check for changes, for example, at least very hour.
+If however keyset can be invoked independently of the signer then the signer needs
+to periodically check for changes, for example, at least every hour.
 .SS Cron
 .sp
 The signatures of the DNSKEY, CDS and CDNSKEY RRsets need to updated
@@ -97,10 +104,10 @@ executing.
 .sp
 For this purpose, keyset has a cron subcommand.
 This subcommand handles any house keeping work that needs to be done.
-The cron subcommand can either be executed at regular times, for example,
+The cron subcommand can be executed at regular times, for example,
 once an hour from the cron(1) utility.
 .sp
-However, keyset also maintains a field in that state file, called
+However, keyset also maintains a field in the state file, called
 \fBcron\-next\fP, that specifies when the cron subcommand should be run next.
 Running the cron subcommand early is fine, the current time is compared
 again the \fBcron\-next\fP field and the subcommand exits early if
@@ -110,7 +117,7 @@ Running the cron subcommand late may cause signatures to expire.
 .sp
 The initialisation of a key set for a zone consists of two steps.
 First the create subcommand create a configuration file with mostly default
-values and state file without any keys.
+values and a state file without any keys.
 The init subcommand finishes the initialisation.
 .sp
 This two step procedure allows configuration parameters to be set between
@@ -118,11 +125,11 @@ the create and the init subcommand, for example, the algorithm to use.
 It also allows existing public/private key pairs to be imported.
 .sp
 The init subcommand checks if any public/private key pairs have been imported.
-If so, init checks if both a both rolls (KSK and ZSK) are present.
+If so, init checks if both a both roles (KSK and ZSK) are present.
 A single CSK combines both rolls.
-Absent a CSK, both a KSK and a ZSK need to present otherwise the init command
+Absent a CSK, both a KSK and a ZSK need to be present otherwise the init command
 fails.
-Any import public keys are ignored by init.
+Any imported public keys are ignored by init.
 .sp
 If no public/private key pairs have been imported then the init subcommand
 will start an algorithm roll.
@@ -151,7 +158,7 @@ when a CSK or algorithm roll is in progress.
 A KSK roll cannot start either when the current signing key is a CSK or
 when the configuration specifies that the new signing key has to be a CSK.
 Finally, KSK rolls are also prevented when the algorithm for new keys is
-different from the one use by the current key.
+different from the one used by the current key.
 Similar limitations apply to the other roll types. Note however that an
 algorithm roll can be started even when it is not needed.
 .sp
@@ -161,9 +168,9 @@ A key roll consists of six steps: \fBstart\-roll\fP, \fBpropagation1\-complete\f
 For each key roll these six steps follow in the same order.
 Associated which each step is a (possibly empty) list of actions.
 Actions fall in three categories.
-The category consists of actions that require updating the zone or the
+The first category consists of actions that require updating the zone or the
 parent zone.
-The second category consist of actions that require checking of changes
+The second category consists of actions that require checking if changes
 have propagated to all nameservers and require reporting of the
 TTLs of the changed RRset as seen at the nameservers.
 Finally, the last category requires waiting for changes to propagate to
@@ -174,20 +181,20 @@ with one from the second of third category.
 For example, \fBUpdateDnskeyRrset\fP is paired with eiher
 \fBReportDnskeyPropagated\fP or \fBWaitDnskeyPropagated\fP\&.
 .sp
-A key roll start with the \fBstart\-roll\fP step, which creates new keys.
+A key roll starts with the \fBstart\-roll\fP step, which creates new keys.
 The next step, \fBpropagation1\-complete\fP has a TTL argument which is the
 maximum of the TTLs of the Report actions.
 The \fBcache\-expired1\fP and \fBcache\-expired2\fP have no associated actions.
 They simply require waiting for the TTL (in seconds) reported by the
 previous \fBpropagation1\-complete\fP or \fBpropagation2\-complete\fP\&.
-The \fBpropagation2\-complete\fP is similar to \fBpropagation1\-complete\fP\&.
+The \fBpropagation2\-complete\fP step is similar to the \fBpropagation1\-complete\fP step.
 Finally, the \fBroll\-done\fP step typically has associated Wait actions.
 These actions are cleanup actions and are harmless but confusing if they
 are skipped.
 .sp
 The keyset subcommand provides fine grained control over automation.
 Automation is configured separately for each of the four roll types.
-For each roll type, there are four booleans called\(ga\(gastart\(ga\(ga, \fBreport\fP,
+For each roll type, there are four booleans called \fBstart\fP, \fBreport\fP,
 \fBexpire\fP and \fBdone\fP\&.
 .sp
 When set, \fBstart\fP boolean directs the cron subcommand to start a key roll
@@ -222,15 +229,15 @@ Automation of \fBcache\-expired1\fP and \fBcache\-expired2\fP is enabled by the
 When enabled, the cron subcommand simply checks if enough time has passed
 to invoke \fBcache\-expired1\fP or \fBcache\-expired2\fP\&.
 .sp
-Finally the \fBdone\fP boolean enabled automation of the \fBroll\-done\fP step.
+Finally the \fBdone\fP boolean enables automation of the \fBroll\-done\fP step.
 This automation is very similar to the \fBreport\fP automation.
-This only difference is that the Wait actions are automated so propagation
-is track but no TTL is reported.
+The only difference is that the Wait actions are automated so propagation
+is tracked but no TTL is reported.
 .sp
 Fine grained control of over automation makes it possible to automate
-KSK or algorithm except that they are start manually.
+KSK or algorithm without starting them automatically.
 Or let a key roll progress automatically except that the \fBcache\-expired\fP
-steps are manual to be able insert extra manual steps.
+steps must be done manually in order to be able to insert extra manual steps.
 .sp
 The \fBreport\fP and \fBdone\fP automations require that keyset has network access
 to all nameservers of the zone and all nameservers of the parent.
@@ -321,17 +328,21 @@ same except that it ends in \fB\&.private\fP\&.
 If this is not the case then the private key filename can be specified
 separately.
 .sp
-Importing a public/private key on an HSM require specifying the KMIP
+In order to use keys stored in a HSM the \fBdnst keyset kmip add\-server\fP subcommand must first be used to associate the KMIP server connection settings with a user defined server ID.
+.sp
+The first server defined becomes the default. if a default KMIP server has been defined it will be used to generate all future keys, unless the \fBdnst keyset kmip disable\fP command is issued. If more than one KMIP server is defined, only one can be the default server at any time. Use the \fBdnst keyset kmip set\-default\fP command to change which KMIP server will be used to generate future keys. Note that like all \fBdnst keyset\(ga subcommands, the KMIP subcommands set behaviour for a single zone. Additionally there are \(ga\(galist\-servers\fP, \fBget\-server\fP, \fBmodify\-server\fP and \fBremove\-server\fP subcommands for inspecting and altering the configured KMIP server settings.
+.sp
+Importing a public/private key stored in an HSM requires specifying the KMIP
 server ID, the ID of the public key, the ID of the private key, the
 DNSSEC algorithm of the key and the flags (typically 256 for a ZSK and
 257 for a KSK).
 .sp
-Normally, keyset assumes ownership of any keys it hold.
-This mean that when a key is deleted from the key set, the keyset subcommand
-will also delete the files that hold the public and private or delete the
-key from the HSM.
+Normally, keyset assumes ownership of any keys it holds.
+This means that when a key is deleted from the key set, the keyset subcommand
+will also delete the files that hold the public and private keys or delete the
+keys from the HSM that was used to create them.
 .sp
-For an import public/private key pair this is considered too dangerous
+For an imported public/private key pair this is considered too dangerous
 because another signer may need the keys.
 For this reason keys are imported in so\-called \fBdecoupled\fP state.
 When a decoupled key is deleted, only the reference to the key is deleted
@@ -341,8 +352,8 @@ There is a \fB\-\-coupled\fP option to tell keyset to take ownership of the key.
 .sp
 The keyset subcommand has no direct support for migration.
 Migration has to be done manually using the import commands.
-The semeantics of the import commands is decribed in the previous section.
-This section focusses on how the import command can be used to perform a
+The semantics of the import commands are decribed in the previous section.
+This section focuses on how the import command can be used to perform a
 migration.
 .sp
 There are three migration strategies: 1) importing the existing signer\(aqs
@@ -355,9 +366,10 @@ migration mechanism.
 The basic process is the following:
 .INDENT 0.0
 .IP \(bu 2
-Disable (automatic) key rolls on the existing signer
+Disable (automatic) key rolls on the existing signer.
 .IP \(bu 2
-Disable automatic key rolls before the executing the create command.
+Disable automatic key rolls before executing the create command.
+For example by setting the KSK, ZSK, and CSK validities to \fBoff\fP\&.
 .IP \(bu 2
 Import the KSK and ZSK (or CSK) as files or using KMIP between the
 create and init commands.
@@ -365,47 +377,50 @@ create and init commands.
 Check with tools such as ldns\-verify\-zone that the new zone is secure with
 the existing DS record at the parent.
 .IP \(bu 2
-Switch the nameservers to the new signer.
+Switch the downstream secondaries that serve the zone to receive the
+signed zone from the new signer.
 .IP \(bu 2
 Perform key rolls for the KSK and ZSK (or the CSK).
 .IP \(bu 2
-(If needed) enable automatic key rolls.
+(If wanted) enable automatic key rolls.
 .IP \(bu 2
 Remove the zone from the old signer.
 .UNINDENT
 .sp
-Note that after the key roll, to signer have access to the signing keys.
+Note that after the key roll, the signer has to make sure that it
+keeps access to signing keys.
 In case of KMIP keys, the old signer can also delete the keys from the HSM.
 For this reason it is best to perform key rolls of all keys before removing
 the zone from the old signer.
 .sp
 This document describes key management. Care should be taken that other
-parameters, such as the use of NSEC or NSEC3 and NSEC3 parameters are
+parameters, such as the use of NSEC or NSEC3, are
 the same (to avoid confusion) and that the SOA serial policy is the same
 (to avoid problems with zone transfers).
 .SS Full multi\-signer migration
 .sp
-The basic idea is the execute the following steps:
+The basic idea is to execute the following steps:
 .INDENT 0.0
 .IP \(bu 2
 Disable (automatic) key rolls on the existing signer.
 .IP \(bu 2
-If the parent supports automatic updating the DS record using CDS/CDNSKEY
+If the parent supports automatic updating of the DS record using CDS/CDNSKEY
 (RFC 8078) then disable the generation of CDS/CDNSKEY records on the
-existing or disable CDS/CDNSKEY processing for this zone at the parent.
+existing signer or disable CDS/CDNSKEY processing for this zone at the parent.
 .IP \(bu 2
 Issue the create command.
 .IP \(bu 2
 Disable automatic key rolls.
 .IP \(bu 2
-(Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+(Disable CDS/CDNSKEY generation. Keyset cannot disable CDS/CDNSKEY generation at the moment)
 .IP \(bu 2
-Import the public key of the existing signer\(aqs ZSK (or CSK).
+Import the public key of the existing signer\(aqs ZSK (or CSK) use the
+\fBkeyset import public\-key\fP subcommand.
 .IP \(bu 2
 Issue the init command.
 .IP \(bu 2
 Make sure in the next step to only add a DS record at the parent, not
-the delete the existing one.
+delete the existing one.
 .IP \(bu 2
 Complete the initial algorithm roll.
 .IP \(bu 2
@@ -414,7 +429,7 @@ signed.
 .IP \(bu 2
 Import the public key of the new ZSK (or CSK) in the existing signer.
 .IP \(bu 2
-Verify that all nameservers that serve the zone have new ZSK in the
+Verify that all nameservers that serve the zone have the new ZSK in the
 DNSKEY RRset of the existing signer.
 .IP \(bu 2
 Transition the nameservers from the existing signer to the new signer.
@@ -426,7 +441,7 @@ Remove the DS record for the old signer from the parent.
 .IP \(bu 2
 Remove the imported public key.
 .IP \(bu 2
-(If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+(If wanted) enable automatic key rolls and generation of CDS/CDNSKEY
 records.
 .UNINDENT
 .SS Partial multi\-signer migration
@@ -434,32 +449,32 @@ records.
 A partial multi\-signer migration is the right approach when the existing
 signer cannot import the new signers ZSK.
 A requirement is that the new signer can transfer the signed zone from the
-existing signer and that the new signer supports to so\-called \(dqpass\-through\(dq
+existing signer and that the new signer supports so\-called \(dqpass\-through\(dq
 mode.
 In pass\-through mode a signer leaves signatures for zone records unchanged
-be does replace the DNSKEY, CDS and CDNSKEY RRset with the ones from
+but does replace the DNSKEY, CDS and CDNSKEY RRset with the ones from
 this subcommand.
 .sp
-The basic idea is the execute the following steps:
+The basic idea is to execute the following steps:
 .INDENT 0.0
 .IP \(bu 2
 Disable (automatic) key rolls on the existing signer.
 .IP \(bu 2
-If the parent supports automatic updating the DS record using CDS/CDNSKEY
-(RFC 8078) then disable the generation of CDS/CDNSKEY records on the
-existing or disable CDS/CDNSKEY processing for this zone at the parent.
+If the parent supports automatic updating of the DS record using CDS/CDNSKEY
+(RFC 8078) then disable the generation of CDS/CDNSKEY records in the
+existing signer or disable CDS/CDNSKEY processing for this zone at the parent.
 .IP \(bu 2
 Issue the create command.
 .IP \(bu 2
 Disable automatic key rolls.
 .IP \(bu 2
-(Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+(Disable CDS/CDNSKEY generation. Keyset cannot disable CDS/CDNSKEY generation at the moment)
 .IP \(bu 2
 Import the public key of the existing signer\(aqs ZSK (or CSK).
 .IP \(bu 2
 Issue the init command.
 .IP \(bu 2
-Switch the signer to pass\-through mode. The signer has to transfer the
+Switch the new signer to pass\-through mode. The signer has to transfer the
 signed zone from the existing signer.
 .IP \(bu 2
 Make sure in the next step to only add a DS record at the parent, not
@@ -476,13 +491,13 @@ Let caches expire for the DNSKEY RRset of the old signer.
 .IP \(bu 2
 Remove the DS record for the old signer from the parent.
 .IP \(bu 2
-switch off pass\-through mode.
+Switch off pass\-through mode.
 .IP \(bu 2
 Let caches expire for the zone RRSIGs of the old signer.
 .IP \(bu 2
 Remove the imported public key.
 .IP \(bu 2
-(If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+(If wanted) enable automatic key rolls and generation of CDS/CDNSKEY
 records.
 .UNINDENT
 .SH OPTIONS
