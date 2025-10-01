@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 
-use clap::{arg, Subcommand};
+use clap::Subcommand;
 use domain::{
     base::{name::ToLabelIter, Name, NameBuilder},
     crypto::kmip::{ClientCertificate, ConnectionSettings, KeyUrl},
