@@ -220,6 +220,71 @@ to all nameservers of the zone and all nameservers of the parent.
 HSM Support (KMIP)
 ~~~~~~~~~~~~~~~~~~
 
+The keyset subcommand supports key in Hardware Security Modules (HSM) through 
+the KMIP protocol.
+The most common way to access keys in HSMs is through the PKCS #11 interface.
+The PKCS #11 interface involves loading a shared library into the process
+that needs to access the HSM.
+This is unattractive for two reasons:
+
+1) Loading an arbitrary (binary) shared libary negates the memory security
+   features of an application written in Rust. A mistake in the shared library
+   could corrupt memory that is used by the application. For this reason it is
+   attractive to load the shared library into a separate process.
+
+2) Setting up the run-time environment of the shared library is often complex.
+   The library may require specific environment variables or access to specific
+   files or devices. This complexity impacts every application that wants
+   to use the shared library.
+
+For these reasons it was decided to write a separate program, called
+kmip2kpcs11, that uses the PKCS #11 standard to have access to an HSM and
+provides a KMIP server interface. This makes it possible to contain both
+the configuration complexity and the possibility of memory corruption in 
+a single program.
+Other programs, such as the keyset subcommand then use the KMIP protocol to
+indirectly access the HSM via the kmip2kpcs11 program.
+
+The keyset subcommand stores two pieces of KMIP configuration.
+The first is a list of KMIP servers.
+Each KMIP server has a ``server ID`` that is used in key reference to specify
+in which server the key is stored.
+A server also has a DNS name or IP address and a port to connect to the server.
+The second piece of configuration is the ID of the server to be used for
+creating new keys.
+It is possible to specify that no server is to be used for new keys, in that
+case new keys will be created by keyset and stored as files.
+
+Authentication can be done either with a user name and password or with
+a client-side certification.
+The user name and password a KMIP concepts that are mapped by the kmip2pkcs11
+server to a PKCS #11 slot or token name and the PIN.
+With this approach the kmip2pkcs11 server des not have to store and secrets 
+that provide access to the HSM.
+User names and passwords are stored in a separate file to avoid storing 
+secrets in the keyset configuration or state files. 
+
+Unlike other configuration, the list of KMIP servers is stored in the state
+file.
+The reason for doing that is that signers also need the same KMIP server list
+to be able to sign a zone.
+By stored the server list in the state file, a signer has to read only the
+state file to be able to use KMIP keys.
+
+Options that can be configured for a server include not checking the
+server's certificate, specifying the server's certificate or certificate
+authority, various connection parameters such as connect timeout, read
+timeout, write timeout and maximum response size.
+
+When generating new keys, the label of the key can have a user supplied prefix.
+This can be used, for example, to show that a key is for
+development or testing.
+Finally, some HSMs allow longer labels than others. 
+On HSMs that allow longer labels than the 32 character default, raising the
+maximum label length can avoid truncation for longer domain names.
+On HSMs that have a limit that is lower than the default, setting the correct
+length avoids errors when creating keys.
+
 Importing Keys
 ~~~~~~~~~~~~~~
 
