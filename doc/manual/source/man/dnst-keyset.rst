@@ -9,16 +9,19 @@ Synopsis
 Description
 -----------
 
-The **keyset** subcommand manages a set of DNSSEC signing keys.
+The **keyset** subcommand manages a set of DNSSEC (`RFC 9364`_) signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
 The **keyset** subcommand manages signing keys and generates a signed DNSKEY RRset.
-A separate zone signer is expected to use the zone signing keys in the key set,
+A separate zone signer (not part of dnst) is expected to use the zone
+signing keys in the key set,
 sign the zone and include the DNSKEY RRset (as well as the CDS and CDNSKEY
 RRsets).
 The keyset subcommand supports keys stored in files and, when the dnst
 program is built with the kmip feature flag, keys stored in a
 Hardware Security Module (HSM) that can be accessed using the
 Key Management Interoperability Protocol (KMIP).
+
+.. _RFC 9364: https://www.rfc-editor.org/rfc/rfc9364
 
 The keyset subcommand operates on one zone at a time.
 For each zone, keyset
@@ -81,7 +84,7 @@ executing.
 
 For this purpose, keyset has a cron subcommand.
 This subcommand handles any house keeping work that needs to be done.
-The cron subcommand can either be executed at regular times, for example,
+The cron subcommand can be executed at regular times, for example,
 once an hour from the cron(1) utility.
 
 However, keyset also maintains a field in the state file, called
@@ -104,7 +107,7 @@ the create and the init subcommand, for example, the algorithm to use.
 It also allows existing public/private key pairs to be imported.
 
 The init subcommand checks if any public/private key pairs have been imported.
-If so, init checks if both a both rolls (KSK and ZSK) are present.
+If so, init checks if both a both roles (KSK and ZSK) are present.
 A single CSK combines both rolls.
 Absent a CSK, both a KSK and a ZSK need to be present otherwise the init command
 fails.
@@ -357,6 +360,7 @@ The basic process is the following:
 * Disable (automatic) key rolls on the existing signer.
 
 * Disable automatic key rolls before executing the create command.
+  For example by setting the KSK, ZSK, and CSK validities to ``off``.
 
 * Import the KSK and ZSK (or CSK) as files or using KMIP between the
   create and init commands.
@@ -364,21 +368,23 @@ The basic process is the following:
 * Check with tools such as ldns-verify-zone that the new zone is secure with
   the existing DS record at the parent.
 
-* Switch the nameservers to the new signer.
+* Switch the downstream secondaries that serve the zone to receive the
+  signed zone from the new signer.
 
 * Perform key rolls for the KSK and ZSK (or the CSK).
 
-* (If needed) enable automatic key rolls.
+* (If wanted) enable automatic key rolls.
 
 * Remove the zone from the old signer.
 
-Note that after the key roll, to signer have access to the signing keys.
+Note that after the key roll, the signer has to make sure that it
+keeps access to signing keys.
 In case of KMIP keys, the old signer can also delete the keys from the HSM.
 For this reason it is best to perform key rolls of all keys before removing
 the zone from the old signer.
 
 This document describes key management. Care should be taken that other
-parameters, such as the use of NSEC or NSEC3 and NSEC3 parameters are
+parameters, such as the use of NSEC or NSEC3, are
 the same (to avoid confusion) and that the SOA serial policy is the same
 (to avoid problems with zone transfers).
 
@@ -397,9 +403,10 @@ The basic idea is to execute the following steps:
 
 * Disable automatic key rolls.
 
-* (Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+* (Disable CDS/CDNSKEY generation. Keyset cannot disable CDS/CDNSKEY generation at the moment)
 
-* Import the public key of the existing signer's ZSK (or CSK).
+* Import the public key of the existing signer's ZSK (or CSK) use the 
+  ``keyset import public-key`` subcommand.
 
 * Issue the init command.
 
@@ -425,7 +432,7 @@ The basic idea is to execute the following steps:
 
 * Remove the imported public key.
 
-* (If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+* (If wanted) enable automatic key rolls and generation of CDS/CDNSKEY
   records.
 
 Partial multi-signer migration
@@ -452,7 +459,7 @@ The basic idea is to execute the following steps:
 
 * Disable automatic key rolls.
 
-* (Disable CDS/CDNSKEY generation. Keyset does not have that at the moment)
+* (Disable CDS/CDNSKEY generation. Keyset cannot disable CDS/CDNSKEY generation at the moment)
 
 * Import the public key of the existing signer's ZSK (or CSK).
 
@@ -481,7 +488,7 @@ The basic idea is to execute the following steps:
 
 * Remove the imported public key.
 
-* (If needed) enable automatic key rolls and generation of CDS/CDNSKEY
+* (If wanted) enable automatic key rolls and generation of CDS/CDNSKEY
   records.
 
 Options
