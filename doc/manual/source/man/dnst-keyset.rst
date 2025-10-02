@@ -256,7 +256,7 @@ indirectly access the HSM via the kmip2kpcs11 program.
 
 The keyset subcommand stores two pieces of KMIP configuration.
 The first is a list of KMIP servers.
-Each KMIP server has a ``server ID`` that is used in key reference to specify
+Each KMIP server has a ``server ID`` that is used in key references to specify
 in which server the key is stored.
 A server also has a DNS name or IP address and a port to connect to the server.
 The second piece of configuration is the ID of the server to be used for
@@ -265,8 +265,8 @@ It is possible to specify that no server is to be used for new keys, in that
 case new keys will be created by keyset and stored as files.
 
 Authentication can be done either with a user name and password or with
-a client-side certification.
-The user name and password a KMIP concepts that are mapped by the kmip2pkcs11
+a client-side certificate.
+The user name and password are KMIP concepts that are mapped by the kmip2pkcs11
 server to a PKCS #11 slot or token name and the PIN.
 With this approach the kmip2pkcs11 server des not have to store and secrets
 that provide access to the HSM.
@@ -277,7 +277,7 @@ Unlike other configuration, the list of KMIP servers is stored in the state
 file.
 The reason for doing that is that signers also need the same KMIP server list
 to be able to sign a zone.
-By stored the server list in the state file, a signer has to read only the
+By storing the server list in the state file, a signer has to read only the
 state file to be able to use KMIP keys.
 
 Options that can be configured for a server include not checking the
