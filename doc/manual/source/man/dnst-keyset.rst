@@ -39,20 +39,20 @@ The keyset subcommand also maintains state file for each zone.
 The state file lists the keys in the key set, the current key roll state,
 and has the DNSKEY, CDS, and CDNSKEY RRsets.
 
-In addition to the configuration and state files, keyset maintains file for
+In addition to the configuration and state files, keyset maintains files for
 keys that are stored on in the filesystem.
 Additionally, keyset can optionally maintain a credentials file that
 contains user names and passwords for the KMIP connections.
 
-The keyset subcommand uses the Keyset type from the Domain crate to store
-the set of keys together with the keys' properties such as whether a key
-should sign the zone, timestamps when creates are created or become stale.
-The Keyset data type also implements the basics of key rolls.
+The keyset subcommand uses the Keyset type from the Rust Domain crate to store
+the set of keys together with their properties such as whether a key
+should sign the zone, timestamps when keys are created or become stale.
+The Keyset data type also implements the basic logic of key rolls.
 
 The keyset subcommand supports importing existing keys, both standalone
 public keys as well as public/private key pairs can be imported.
-A standalone public key can only be import from file whereas public/private
-key pairs can be either files or keys stored in an HSM.
+A standalone public key can only be imported from a file whereas public/private
+key pairs can be either files or references to keys stored in an HSM.
 Note that the public and private key either need to be both files or both
 stored in an HSM.
 
@@ -124,14 +124,14 @@ Key Rolls
 The keyset subcommand can perform four different types of key rolls:
 KSK rolls, ZSK rolls, CSK rolls and algorithm rolls.
 A KSK roll replaces one KSK with a new KSK.
-Similarly, ZSK roll replaces one ZSK with a new ZSK.
-A CSK roll also replaces a CSK with a new CSK but the roll also treat a
+Similarly, a ZSK roll replaces one ZSK with a new ZSK.
+A CSK roll also replaces a CSK with a new CSK but the roll also treats a
 pair of KSK and ZSK keys as equivalent to a CSK.
 So a CSK roll can also roll from KSK plus ZSK to a new CSK or from a CSK
 to new a KSK and ZSK pair.
-Somewhat surprisingly, a roll from KSK plus ZSK to a new KSK plus ZSK pair
+Note that a roll from KSK plus ZSK to a new KSK plus ZSK pair
 is also supported.
-Finally, an algorithm roll is similar to a CSK roll, but design in
+Finally, an algorithm roll is similar to a CSK roll, but designed in
 a specific way to handle the case where the new key or keys have an algorithm
 that is different from one used by the current signing keys.
 
@@ -181,32 +181,32 @@ Automation is configured separately for each of the four roll types.
 For each roll type, there are four booleans called ``start``, ``report``,
 ``expire`` and ``done``.
 
-When set, ``start`` boolean directs the cron subcommand to start a key roll
-when a relvant key has expired.
-KSK and ZSK key roll can start automatically if respectively a KSK or a ZSK
+When set, the ``start`` boolean directs the cron subcommand to start a key roll
+when a relevant key has expired.
+A KSK or a ZSK key roll can start automatically if respectively a KSK or a ZSK
 has expired.
-A CSK can start automatically when a CSK has expired but also when a KSK or
+A CSK roll can start automatically when a CSK has expired but also when a KSK or
 ZSK has expired and the new key will be a CSK.
-Finally, an algorithm roll start automatically when the new algorithm is
+Finally, an algorithm roll can start automatically when the new algorithm is
 different from the one used by the existing keys and any key has expired.
 
 The ``report`` flags control the automation of the ``propagation1-complete``
 and ``propagation2-complete`` steps.
-When enabled, the cron subcommand contact the nameservers of the zone or
+When enabled, the cron subcommand contacts the nameservers of the zone or
 (in the case of ``ReportDsPropagated``, the nameservers of the parent zone)
-to check if change have propagated to all nameservers.
+to check if changes have propagated to all nameservers.
 The check obtains the list of nameservers from the apex of the (parent) zone
-and collect all IPv4 and IPv6 address.
-For the ReportDnskeyPropagated and ReportDsPropagated action, each address is
-the queried to see if the DNSKEY RRset matches or the DS RRset matches
+and collects all IPv4 and IPv6 addresses.
+For the ``ReportDnskeyPropagated`` and ``ReportDsPropagated`` actions, each address is
+the queried to see if the DNSKEY RRset or DS RRset match
 the KSKs.
-The ReportRrsigPropagated action is more complex.
-First the entire zone is transfer from the primary nameserver listed in the
+The ``ReportRrsigPropagated`` action is more complex.
+First the entire zone is transferred from the primary nameserver listed in the
 SOA record.
 Then all relevant signatures are checked if they have the expected key tags.
 The maximum TTL in the zone is recorded to be reported.
 Finally, all addresses of listed nameservers are checked to see if they
-have a SOA serial that is greater or equal to the one that was checked.
+have a SOA serial that is greater than or equal to the one that was checked.
 
 Automation of ``cache-expired1`` and ``cache-expired2`` is enabled by the
 ``expire`` boolean.
@@ -229,7 +229,7 @@ to all nameservers of the zone and all nameservers of the parent.
 HSM Support (KMIP)
 ~~~~~~~~~~~~~~~~~~
 
-The keyset subcommand supports key in Hardware Security Modules (HSM) through
+The keyset subcommand supports keys in Hardware Security Modules (HSM) through
 the KMIP protocol.
 The most common way to access keys in HSMs is through the PKCS #11 interface.
 The PKCS #11 interface involves loading a shared library into the process
@@ -253,6 +253,8 @@ the configuration complexity and the possibility of memory corruption in
 a single program.
 Other programs, such as the keyset subcommand then use the KMIP protocol to
 indirectly access the HSM via the kmip2kpcs11 program.
+Support for the KMIP protocol also makes it possible to directly connect to
+KMIP capable HSMs.
 
 The keyset subcommand stores two pieces of KMIP configuration.
 The first is a list of KMIP servers.
@@ -268,7 +270,7 @@ Authentication can be done either with a user name and password or with
 a client-side certificate.
 The user name and password are KMIP concepts that are mapped by the kmip2pkcs11
 server to a PKCS #11 slot or token name and the PIN.
-With this approach the kmip2pkcs11 server des not have to store and secrets
+With this approach the kmip2pkcs11 server des not have to store secrets
 that provide access to the HSM.
 User names and passwords are stored in a separate file to avoid storing
 secrets in the keyset configuration or state files.
@@ -300,18 +302,18 @@ Importing Keys
 There are three basic ways to import exiting keys: public-key,
 a public/private key pair from files or a public/private key pair in an HSM.
 
-A public key can only be import from a file.
-When the key is imported the name of the file is stored in the key set and
-the key will be included in DNSKEY RRset.
-This is useful for certain migration and to manually implement a
+A public key can only be imported from a file.
+When the key is imported the name of the file is converted to a URL and stored in the key set and
+the key will be included in the DNSKEY RRset.
+This is useful for certain migrations and to manually implement a
 multi-signer DNSSEC signing setup.
-Note that automation does not work for the case.
+Note that automation does not work for this case.
 
 A public/private key pair can be imported from files.
-It sufficient to give the name of the file that holds the public key if
-the filename ends in ``.key`` and the filename is the private key is the
+It is sufficient to give the name of the file that holds the public key if
+the filename ends in ``.key`` and the filename of the private key is the
 same except that it ends in ``.private``.
-If this is not the case then the private key filename can be specified
+If this is not the case then the private key filename must be specified
 separately.
 
 In order to use keys stored in a HSM the ``dnst keyset kmip add-server`` subcommand must first be used to associate the KMIP server connection settings with a user defined server ID.
