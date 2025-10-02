@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Oct 01, 2025" "0.1.0-rc2" "dnst"
+.TH "DNST-KEYSET" "1" "Oct 02, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -503,8 +503,8 @@ records.
 .SH OPTIONS
 .INDENT 0.0
 .TP
-.B \-v
-Enable verbose output.
+.B \-c
+Configuration file.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -514,7 +514,429 @@ Print the help text (short summary with \fB\-h\fP, long help with
 .UNINDENT
 .SH COMMANDS
 .sp
-Here come the commands.
+The keyset subcommand provides the following commands:
+.INDENT 0.0
+.IP \(bu 2
+create
+.sp
+Create empty configuration and state files for a domain.
+.INDENT 2.0
+.TP
+.B \-n
+The name of the domain
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-s
+The name of the state file.
+.UNINDENT
+.IP \(bu 2
+init
+.sp
+Initialize the keyset.
+If a KSK and ZSK (or a CSK) have been imported then the DNSKEY RRset will
+be created and signed.
+If there are no keys, then a KSK and a ZSK will be created (unless the
+use\-csk option is set to true) and an algorithm roll will be started.
+The init command will fail if the keyset has been initialized already.
+.IP \(bu 2
+ksk, zsk, csk, and algorithm
+.sp
+The ksk, zsk, csk, and algorithm commands perform manual key roll steps.
+These commands have the following subcommands:
+.INDENT 2.0
+.IP \(bu 2
+start\-roll
+.sp
+Start a key roll of the type specified by the command.
+.IP \(bu 2
+propagation1\-complete <TTL>
+.sp
+Inform keyset that the changed RRsets and signatures have propagated.
+Report the maximum TTL of the report actions.
+.IP \(bu 2
+cache\-expired1
+.sp
+Inform keyset that enough time has passed that caches should have expired.
+Note that this command will fail if invoked too early.
+.IP \(bu 2
+propgation2\-complete <TTL>
+.sp
+This command is similar to propagation1\-complete.
+.IP \(bu 2
+cache\-expired2
+.sp
+This command is similar to <TTL>
+.IP \(bu 2
+roll\-done
+.sp
+Inform keyset that the changed RRsets and signatures have propagated
+and that any wait actions have been executed successfully.
+.UNINDENT
+.IP \(bu 2
+import
+.sp
+The import command can either import a public key in a file or a
+public/private key pair in either files or as KMIP references.
+.INDENT 2.0
+.IP \(bu 2
+public\-key <PATH>
+.sp
+A reference to a public key in <PATH> is added to the keyset.
+Imported public keys are added to the DNSKEY RRset.
+.IP \(bu 2
+ksk, zsk, csk
+.sp
+A key pair is imported as a KSK, ZSK, or CSK.
+When a key is imported, there is the question what to do when the
+imported key is later deleted.
+By default, keyset imports keys in \fBdecoupled\fP state.
+When a decoupled key is later removed, only the reference is deleted from
+the key set.
+The file that contains the key is not deleted and the key is not deleted
+from an HSM.
+Passing the option \fB\-\-coupled\fP when importing a key, direct keyset to
+take ownership of the key.
+.sp
+The key pair can be imported in two ways:
+.INDENT 2.0
+.IP \(bu 2
+file <PATH>
+.sp
+The <PATH> argument refers to the public key. The filename of the
+private key is derived from the public key unless the \fB\-\-private\-key\fP
+option is used to specify the filename that holds the private key.
+.INDENT 2.0
+.TP
+.B \-\-coupled
+Take ownership of the imported keys.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-private\-key <PATH>
+Explicitly pass the name of the file that holds the private key.
+.UNINDENT
+.IP \(bu 2
+kmip <SERVER> <PUBLIC_ID> <PRIVATE_ID> <ALGORITHM> <FLAGS>
+.sp
+The <SERVER> argument specifies one of the KMIP servers that has been
+configured using the \fBkmip add\-server\fP command.
+The <PUBLIC_ID> and <PRIVATE_ID> arguments are the KMIP identifiers of
+respectively the public key and the private key.
+The DNSSEC algorithm is specified using the <ALGORITHM> argument and
+finally the <FLAGS> argument (usually 256 or 257) is the value of the
+flags field in the DNSKEY record for the public key.
+.INDENT 2.0
+.TP
+.B \-\-coupled
+Take ownership of the imported keys.
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.IP \(bu 2
+remove\-key <KEY>
+.sp
+Remove a key or key pair from the key set.
+The <KEY> argument is the URL of the public key.
+If the key is \fBcoupled\fP then the files that hold the keys are also removed
+or, in case of KMIP keys, the keys are remove from the HSM.
+Normally, keys are only removed when they are stale.
+.INDENT 2.0
+.TP
+.B \-\-force
+Force a key to be removed even if the key is not stale.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-continue
+Continue when removing a key file fails or when a key cannot be removed
+from an HSM.
+.UNINDENT
+.IP \(bu 2
+status
+.sp
+Provide status information about key rolls, key expiration and signature
+expiration.
+.INDENT 2.0
+.TP
+.B \-v \-\-verbose
+Make status verbose.
+.UNINDENT
+.IP \(bu 2
+actions
+.sp
+Show the actions that have to be executed for any key rolls.
+.IP \(bu 2
+keys
+.sp
+Give detailed information about all keys in the key set.
+.IP \(bu 2
+get
+.sp
+The the values of the following configuration variables: use\-csk,
+autoremove, algorithm, ds\-algorithm, dnskey\-lifetime, cds\-lifetime.
+This is a subset of all configuration variables.
+.sp
+Additionally, the dnskey argument returns the current DNSKEY RRset plus
+signatures, cds returns the CDS and CDNSKEY RRsets plus signatures and
+ds returns DS records that should be added to the parent zone.
+.IP \(bu 2
+set
+.sp
+Set configuation variables.
+Note that setting configuration variables after the create command
+but before the init command can be used to affect the initial key creation.
+.INDENT 2.0
+.IP \(bu 2
+use\-csk <BOOLEAN>
+.sp
+When true, new keys will be created as CSK otherwise a KSK and a ZSK
+will be created.
+.IP \(bu 2
+autoremove <BOOLEAN>
+.sp
+When true, keys that are stale will be removed automatically.
+Currently there is no delay in removing keys.
+.IP \(bu 2
+algorithm <ALGORITHM>
+.sp
+Set the algorithm to be used when creating new keys. Supported values
+are RSASHA256, RSASHA512, ECDSAP256SHA256, ECDSAP384SHA384, ED25519,
+and ED448.
+Not all values are supported for KMIP keys.
+.INDENT 2.0
+.TP
+.B \-b <BITS>
+For RSA keys, the length of the key in bits.
+.UNINDENT
+.IP \(bu 2
+auto\-ksk, auto\-zsk, auto\-csk, auto\-algorithm
+.sp
+These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.
+When set to true, the corresponding step or steps of the key roll specified
+by the command is executed automatically.
+.sp
+For example, \fBauto\-csk true false true false\fP means that
+CSK rolls will start automatically, that the propagation1\-complete,
+propagation2\-complete, and roll\-done need to be executed manually.
+The cache\-expired1 and cache\-expired2 steps are executed automatically.
+.IP \(bu 2
+ds\-algorithm <ALGORITHM>
+.sp
+Set the hash algorithm to be used for generating DS records.
+Possible values are \fBSHA\-256\fP and \fBSHA\-384\fP\&.
+.IP \(bu 2
+dnskey\-lifetime <DURATION>, cds\-lifetime <DURATION>
+.sp
+When a DNSKEY RRset is signed (dnskey\-lifetime) or when CDS or CDNSKEY
+RRsets are signed (cds\-lifetime), how far in the future are the signatures
+set to expire.
+The duration is an integer followed by a suffix, \fBs\fP or \fBsecs\fP for
+seconds, \fBm\fP or \fBmins\fP for minutes, \fBh\fP or \fBhours\fP, \fBd\fP or \fBdays\fP, \fBw\fP or \fBweeks\fP\&.
+.IP \(bu 2
+dnskey\-remain\-time <DURATION>, cds\-remain\-time <DURATION>
+.sp
+The minimum amount of remaining time that signatures for the DNSKEY RRset
+(dnskey\-remain\-time) or the CDS or CDNSKEY RRsets (cds\-remain\-time) have
+to be valid.
+New signatures are generated when the remaining time drops below the
+specified duration.
+For the syntax of <DURATION> see \fBdnskey\-lifetime\fP\&.
+.IP \(bu 2
+dnskey\-inception\-offset <DURATION>, cds\-inception\-offset <DURATION>
+.sp
+When generating signatures for the DNSKEY RRset (dnskey\-inception\-offset)
+or the CDS and CDNSKEY RRsets (cds\-inception\-offset), set the inception
+timestamp this amount in the past to compensate for clocks that are a
+bit off or in the wrong time zone.
+For the syntax of <DURATION> see \fBdnskey\-lifetime\fP\&.
+.IP \(bu 2
+ksk\-validity <DURATION> | \fBoff\fP, zsk\-validity <DURATION> | \fBoff\fP, csk\-validity <DURATION> | \fBoff\fP
+.sp
+Set how long a KSK, ZSK, or CSK is considered valid.
+The special value \fBoff\fP means that no limit has been set.
+For the syntax of <DURATION> see \fBdnskey\-lifetime\fP\&.
+.sp
+When a key is no longer considered valid and automatic starting of the
+appropriate key roll has been enabled then a key roll will start at the
+next invocation of the cron command.
+.sp
+The status command shows which keys are no longer valid or when their
+validity will end.
+.IP \(bu 2
+update\-ds\-command
+.sp
+Set a command to to run when the DS records in the parent zone need
+to be updated.
+This command can, for example, alert to operator or use an API provided
+by the parent zone to update the DS records automatically.
+.UNINDENT
+.IP \(bu 2
+show
+.sp
+Show all configuration variable.
+.IP \(bu 2
+cron
+.sp
+Execute any automatic steps such a refreshing signatures or automatic steps
+in key rolls.
+.IP \(bu 2
+kmip
+.sp
+The kmip command manages the list of configured KMIP servers and the
+default server to use for generating new keys.
+The kmip command has the following subcommands:
+.INDENT 2.0
+.IP \(bu 2
+disable
+.sp
+Disable use of KMIP for generating new keys.
+.IP \(bu 2
+add\-server <SERVER\-ID> <NAME\-OR\-IP>
+.sp
+Add a KMIP server with name <SERVER\-ID> and DNS name or IP address
+<NAME\-OR\-IP>.
+The name of the server is used in a key reference to identify which KMIP
+server holds the key.
+.INDENT 2.0
+.TP
+.B \-\-port <PORT>
+TCP port to connect to the KMIP server on. The default port is 5696.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-pending
+Add the server but don\(aqt make it the default.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-credential\-store <CREDENTIALS_STORE_PATH>
+Optional path to a JSON file to read/write username/password
+credentials from/to.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-username <USERNAME>
+Optional username to authenticate to the KMIP server as.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-password <PASSWORD>
+Optional password to authenticate to the KMIP server with.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-client\-cert <CLIENT_CERT_PATH>
+.INDENT 7.0
+.TP
+.B Optional path to a TLS certificate to authenticate to the KMIP server
+with.
+.UNINDENT
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-client\-key <CLIENT_KEY_PATH>
+Optional path to a private key for client certificate authentication.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-insecure
+Whether or not to accept the KMIP server TLS certificate without
+verifying it.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-server\-cert <SERVER_CERT_PATH>
+Optional path to a TLS PEM certificate for the server.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-ca\-cert <CA_CERT_PATH>
+Optional path to a TLS PEM certificate for a Certificate Authority.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-connect\-timeout <CONNECT_TIMEOUT>
+TCP connect timeout. Default 3 seconds.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-read\-timeout <READ_TIMEOUT>
+TCP response read timeout. Default 30 seconds.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-write\-timeout <WRITE_TIMEOUT>
+TCP request write timeout. Default 3 seconds.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-max\-response\-bytes <MAX_RESPONSE_BYTES>
+Maximum KMIP response size to accept (in bytes). Default 8192 bytes.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-key\-label\-prefix <KEY_LABEL_PREFIX>
+Can be used to denote the s/w that created the key, and/or to indicate
+which installation/environment it belongs to, e.g. dev, test, prod,
+etc.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-key\-label\-max\-bytes <KEY_LABEL_MAX_BYTES>
+Maximum label length (in bytes) permitted by the HSM. Default 32 bytes.
+.UNINDENT
+.IP \(bu 2
+modify\-server <SERVER\-ID>
+.sp
+Modify the settings of the server with ID <SERVER\-ID>. This subcommand
+takes most of the options documented at \fBkmip add\-server\fP\&.
+Some options have the same name but are slightly different.
+There are also a few additional options.
+The new and modified options are listed below.
+.INDENT 2.0
+.TP
+.B \-\-address <IP_HOST_OR_FQDN>
+Modify the hostname or IP address of the KMIP server.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-no\-credentials
+Disable use of username / password authentication.
+Note: This will remove any credentials from the credential\-store for
+this server id.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-no\-client\-auth
+Disable use of TLS client certificate authentication.
+.UNINDENT
+.INDENT 2.0
+.TP
+.B \-\-insecure <BOOLEAN>
+Modify whether or not to accept the KMIP server TLS certificate
+without verifying it.
+.UNINDENT
+.IP \(bu 2
+remove\-server <SERVER\-ID>
+.sp
+Remove an existing non\-default KMIP server.
+To remove the default KMIP server use \fIkmip disable\fP first.
+A server cannot be removed if there are keys that reference it.
+.IP \(bu 2
+set\-default\-server <SERVER\-ID>
+.sp
+Set the default KMIP server to use for key generation.
+.IP \(bu 2
+get\-server <SERVER\-ID>
+.sp
+Get the details of an existing KMIP server.
+.IP \(bu 2
+list\-servers
+.sp
+List all configured KMIP servers.
+.UNINDENT
+.UNINDENT
 .SH AUTHOR
 NLnet Labs
 .SH COPYRIGHT

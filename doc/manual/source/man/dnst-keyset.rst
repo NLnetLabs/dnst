@@ -229,7 +229,7 @@ to all nameservers of the zone and all nameservers of the parent.
 HSM Support (KMIP)
 ~~~~~~~~~~~~~~~~~~
 
-The keyset subcommand supports key in Hardware Security Modules (HSM) through 
+The keyset subcommand supports key in Hardware Security Modules (HSM) through
 the KMIP protocol.
 The most common way to access keys in HSMs is through the PKCS #11 interface.
 The PKCS #11 interface involves loading a shared library into the process
@@ -249,7 +249,7 @@ This is unattractive for two reasons:
 For these reasons it was decided to write a separate program, called
 kmip2kpcs11, that uses the PKCS #11 standard to have access to an HSM and
 provides a KMIP server interface. This makes it possible to contain both
-the configuration complexity and the possibility of memory corruption in 
+the configuration complexity and the possibility of memory corruption in
 a single program.
 Other programs, such as the keyset subcommand then use the KMIP protocol to
 indirectly access the HSM via the kmip2kpcs11 program.
@@ -268,10 +268,10 @@ Authentication can be done either with a user name and password or with
 a client-side certification.
 The user name and password a KMIP concepts that are mapped by the kmip2pkcs11
 server to a PKCS #11 slot or token name and the PIN.
-With this approach the kmip2pkcs11 server des not have to store and secrets 
+With this approach the kmip2pkcs11 server des not have to store and secrets
 that provide access to the HSM.
-User names and passwords are stored in a separate file to avoid storing 
-secrets in the keyset configuration or state files. 
+User names and passwords are stored in a separate file to avoid storing
+secrets in the keyset configuration or state files.
 
 Unlike other configuration, the list of KMIP servers is stored in the state
 file.
@@ -288,7 +288,7 @@ timeout, write timeout and maximum response size.
 When generating new keys, the label of the key can have a user supplied prefix.
 This can be used, for example, to show that a key is for
 development or testing.
-Finally, some HSMs allow longer labels than others. 
+Finally, some HSMs allow longer labels than others.
 On HSMs that allow longer labels than the 32 character default, raising the
 maximum label length can avoid truncation for longer domain names.
 On HSMs that have a limit that is lower than the default, setting the correct
@@ -405,7 +405,7 @@ The basic idea is to execute the following steps:
 
 * (Disable CDS/CDNSKEY generation. Keyset cannot disable CDS/CDNSKEY generation at the moment)
 
-* Import the public key of the existing signer's ZSK (or CSK) use the 
+* Import the public key of the existing signer's ZSK (or CSK) use the
   ``keyset import public-key`` subcommand.
 
 * Issue the init command.
@@ -494,9 +494,14 @@ The basic idea is to execute the following steps:
 Options
 -------
 
-.. option:: -v
+.. option:: -c
 
-      Enable verbose output.
+      Configuration file.
+
+..
+	.. option:: -v
+
+	      Enable verbose output.
 
 .. option:: -h, --help
 
@@ -506,4 +511,384 @@ Options
 Commands
 --------
 
-Here come the commands.
+The keyset subcommand provides the following commands:
+
+* create
+
+  Create empty configuration and state files for a domain.
+
+  .. option:: -n
+
+      The name of the domain
+
+  .. option:: -s
+
+      The name of the state file.
+
+
+* init
+
+  Initialize the keyset.
+  If a KSK and ZSK (or a CSK) have been imported then the DNSKEY RRset will
+  be created and signed.
+  If there are no keys, then a KSK and a ZSK will be created (unless the
+  use-csk option is set to true) and an algorithm roll will be started.
+  The init command will fail if the keyset has been initialized already.
+
+* ksk, zsk, csk, and algorithm
+
+  The ksk, zsk, csk, and algorithm commands perform manual key roll steps.
+  These commands have the following subcommands:
+
+  * start-roll
+
+    Start a key roll of the type specified by the command.
+
+  * propagation1-complete <TTL>
+
+    Inform keyset that the changed RRsets and signatures have propagated.
+    Report the maximum TTL of the report actions.
+
+  * cache-expired1
+
+    Inform keyset that enough time has passed that caches should have expired.
+    Note that this command will fail if invoked too early.
+
+  * propgation2-complete <TTL>
+
+    This command is similar to propagation1-complete.
+
+  * cache-expired2
+
+    This command is similar to <TTL>
+
+  * roll-done
+
+    Inform keyset that the changed RRsets and signatures have propagated
+    and that any wait actions have been executed successfully.
+
+* import
+
+  The import command can either import a public key in a file or a
+  public/private key pair in either files or as KMIP references.
+
+  * public-key <PATH>
+
+    A reference to a public key in <PATH> is added to the keyset.
+    Imported public keys are added to the DNSKEY RRset.
+
+  * ksk, zsk, csk
+
+    A key pair is imported as a KSK, ZSK, or CSK.
+    When a key is imported, there is the question what to do when the
+    imported key is later deleted.
+    By default, keyset imports keys in ``decoupled`` state.
+    When a decoupled key is later removed, only the reference is deleted from
+    the key set.
+    The file that contains the key is not deleted and the key is not deleted
+    from an HSM.
+    Passing the option ``--coupled`` when importing a key, direct keyset to
+    take ownership of the key.
+
+    The key pair can be imported in two ways:
+
+    * file <PATH>
+
+      The <PATH> argument refers to the public key. The filename of the
+      private key is derived from the public key unless the ``--private-key``
+      option is used to specify the filename that holds the private key.
+
+      .. option:: --coupled
+
+         Take ownership of the imported keys.
+
+      .. option:: --private-key <PATH>
+
+         Explicitly pass the name of the file that holds the private key.
+
+    * kmip <SERVER> <PUBLIC_ID> <PRIVATE_ID> <ALGORITHM> <FLAGS>
+
+      The <SERVER> argument specifies one of the KMIP servers that has been
+      configured using the ``kmip add-server`` command.
+      The <PUBLIC_ID> and <PRIVATE_ID> arguments are the KMIP identifiers of
+      respectively the public key and the private key.
+      The DNSSEC algorithm is specified using the <ALGORITHM> argument and
+      finally the <FLAGS> argument (usually 256 or 257) is the value of the
+      flags field in the DNSKEY record for the public key.
+
+      .. option:: --coupled
+
+         Take ownership of the imported keys.
+
+* remove-key <KEY>
+
+  Remove a key or key pair from the key set.
+  The <KEY> argument is the URL of the public key.
+  If the key is ``coupled`` then the files that hold the keys are also removed
+  or, in case of KMIP keys, the keys are remove from the HSM.
+  Normally, keys are only removed when they are stale.
+
+  .. option:: --force
+
+     Force a key to be removed even if the key is not stale.
+
+  .. option:: --continue
+
+     Continue when removing a key file fails or when a key cannot be removed
+     from an HSM.
+
+* status
+
+  Provide status information about key rolls, key expiration and signature
+  expiration.
+
+  .. option:: -v --verbose
+
+     Make status verbose.
+
+* actions
+
+  Show the actions that have to be executed for any key rolls.
+
+* keys
+
+  Give detailed information about all keys in the key set.
+
+* get
+
+  The the values of the following configuration variables: use-csk,
+  autoremove, algorithm, ds-algorithm, dnskey-lifetime, cds-lifetime.
+  This is a subset of all configuration variables.
+
+  Additionally, the dnskey argument returns the current DNSKEY RRset plus
+  signatures, cds returns the CDS and CDNSKEY RRsets plus signatures and
+  ds returns DS records that should be added to the parent zone.
+
+* set
+
+  Set configuation variables.
+  Note that setting configuration variables after the create command
+  but before the init command can be used to affect the initial key creation.
+
+  * use-csk <BOOLEAN>
+
+    When true, new keys will be created as CSK otherwise a KSK and a ZSK
+    will be created.
+
+  * autoremove <BOOLEAN>
+
+    When true, keys that are stale will be removed automatically.
+    Currently there is no delay in removing keys.
+
+  * algorithm <ALGORITHM>
+
+    Set the algorithm to be used when creating new keys. Supported values
+    are RSASHA256, RSASHA512, ECDSAP256SHA256, ECDSAP384SHA384, ED25519,
+    and ED448.
+    Not all values are supported for KMIP keys.
+
+    .. option:: -b <BITS>
+
+       For RSA keys, the length of the key in bits.
+
+  * auto-ksk, auto-zsk, auto-csk, auto-algorithm
+
+    These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.
+    When set to true, the corresponding step or steps of the key roll specified
+    by the command is executed automatically.
+
+    For example, ``auto-csk true false true false`` means that
+    CSK rolls will start automatically, that the propagation1-complete,
+    propagation2-complete, and roll-done need to be executed manually.
+    The cache-expired1 and cache-expired2 steps are executed automatically.
+
+  * ds-algorithm <ALGORITHM>
+
+    Set the hash algorithm to be used for generating DS records.
+    Possible values are ``SHA-256`` and ``SHA-384``.
+
+  * dnskey-lifetime <DURATION>, cds-lifetime <DURATION>
+
+    When a DNSKEY RRset is signed (dnskey-lifetime) or when CDS or CDNSKEY
+    RRsets are signed (cds-lifetime), how far in the future are the signatures
+    set to expire.
+    The duration is an integer followed by a suffix, ``s`` or ``secs`` for
+    seconds, ``m`` or ``mins`` for minutes, ``h`` or ``hours``, ``d`` or ``days``, ``w`` or ``weeks``.
+
+  * dnskey-remain-time <DURATION>, cds-remain-time <DURATION>
+
+    The minimum amount of remaining time that signatures for the DNSKEY RRset
+    (dnskey-remain-time) or the CDS or CDNSKEY RRsets (cds-remain-time) have
+    to be valid.
+    New signatures are generated when the remaining time drops below the
+    specified duration.
+    For the syntax of <DURATION> see ``dnskey-lifetime``.
+
+  * dnskey-inception-offset <DURATION>, cds-inception-offset <DURATION>
+
+    When generating signatures for the DNSKEY RRset (dnskey-inception-offset)
+    or the CDS and CDNSKEY RRsets (cds-inception-offset), set the inception
+    timestamp this amount in the past to compensate for clocks that are a
+    bit off or in the wrong time zone.
+    For the syntax of <DURATION> see ``dnskey-lifetime``.
+
+  * ksk-validity <DURATION> | ``off``, zsk-validity <DURATION> | ``off``, csk-validity <DURATION> | ``off``
+
+    Set how long a KSK, ZSK, or CSK is considered valid.
+    The special value ``off`` means that no limit has been set.
+    For the syntax of <DURATION> see ``dnskey-lifetime``.
+
+    When a key is no longer considered valid and automatic starting of the
+    appropriate key roll has been enabled then a key roll will start at the
+    next invocation of the cron command.
+
+    The status command shows which keys are no longer valid or when their
+    validity will end.
+
+  * update-ds-command
+
+    Set a command to to run when the DS records in the parent zone need
+    to be updated.
+    This command can, for example, alert to operator or use an API provided
+    by the parent zone to update the DS records automatically.
+
+* show
+
+  Show all configuration variable.
+
+* cron
+
+  Execute any automatic steps such a refreshing signatures or automatic steps
+  in key rolls.
+
+* kmip
+
+  The kmip command manages the list of configured KMIP servers and the
+  default server to use for generating new keys.
+  The kmip command has the following subcommands:
+
+  * disable
+
+    Disable use of KMIP for generating new keys.
+
+  * add-server <SERVER-ID> <NAME-OR-IP>
+
+    Add a KMIP server with name <SERVER-ID> and DNS name or IP address
+    <NAME-OR-IP>.
+    The name of the server is used in a key reference to identify which KMIP
+    server holds the key.
+
+    .. option:: --port <PORT>
+
+       TCP port to connect to the KMIP server on. The default port is 5696.
+
+    .. option:: --pending
+
+       Add the server but don't make it the default.
+
+    .. option:: --credential-store <CREDENTIALS_STORE_PATH>
+
+       Optional path to a JSON file to read/write username/password
+       credentials from/to.
+
+    .. option:: --username <USERNAME>
+
+       Optional username to authenticate to the KMIP server as.
+
+    .. option:: --password <PASSWORD>
+
+       Optional password to authenticate to the KMIP server with.
+
+    .. option:: --client-cert <CLIENT_CERT_PATH>
+
+       Optional path to a TLS certificate to authenticate to the KMIP server
+          with.
+
+
+    .. option:: --client-key <CLIENT_KEY_PATH>
+
+       Optional path to a private key for client certificate authentication.
+
+    .. option:: --insecure
+
+       Whether or not to accept the KMIP server TLS certificate without
+       verifying it.
+
+    .. option:: --server-cert <SERVER_CERT_PATH>
+
+       Optional path to a TLS PEM certificate for the server.
+
+    .. option:: --ca-cert <CA_CERT_PATH>
+
+       Optional path to a TLS PEM certificate for a Certificate Authority.
+
+    .. option:: --connect-timeout <CONNECT_TIMEOUT>
+
+       TCP connect timeout. Default 3 seconds.
+
+    .. option:: --read-timeout <READ_TIMEOUT>
+
+       TCP response read timeout. Default 30 seconds.
+
+    .. option:: --write-timeout <WRITE_TIMEOUT>
+
+       TCP request write timeout. Default 3 seconds.
+
+    .. option:: --max-response-bytes <MAX_RESPONSE_BYTES>
+
+       Maximum KMIP response size to accept (in bytes). Default 8192 bytes.
+
+    .. option:: --key-label-prefix <KEY_LABEL_PREFIX>
+
+       Can be used to denote the s/w that created the key, and/or to indicate
+       which installation/environment it belongs to, e.g. dev, test, prod,
+       etc.
+
+    .. option:: --key-label-max-bytes <KEY_LABEL_MAX_BYTES>
+
+       Maximum label length (in bytes) permitted by the HSM. Default 32 bytes.
+
+  * modify-server <SERVER-ID>
+
+    Modify the settings of the server with ID <SERVER-ID>. This subcommand
+    takes most of the options documented at ``kmip add-server``.
+    Some options have the same name but are slightly different.
+    There are also a few additional options.
+    The new and modified options are listed below.
+
+    .. option:: --address <IP_HOST_OR_FQDN>
+
+       Modify the hostname or IP address of the KMIP server.
+
+    .. option:: --no-credentials
+
+       Disable use of username / password authentication.
+       Note: This will remove any credentials from the credential-store for
+       this server id.
+
+    .. option:: --no-client-auth
+
+       Disable use of TLS client certificate authentication.
+
+    .. option:: --insecure <BOOLEAN>
+
+       Modify whether or not to accept the KMIP server TLS certificate
+       without verifying it.
+
+  * remove-server <SERVER-ID>
+
+    Remove an existing non-default KMIP server.
+    To remove the default KMIP server use `kmip disable` first.
+    A server cannot be removed if there are keys that reference it.
+
+  * set-default-server <SERVER-ID>
+
+    Set the default KMIP server to use for key generation.
+
+  * get-server <SERVER-ID>
+
+    Get the details of an existing KMIP server.
+
+  * list-servers
+
+    List all configured KMIP servers.
