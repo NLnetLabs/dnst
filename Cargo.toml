@@ -94,7 +94,7 @@ assets = [
 #    ["target/release/dnst", "usr/bin/", "755"],
     # Install into the Cascade directory, and name separately to dnst, to
     # avoid collisions with the real dnst package and binary.
-    ["target/release/dnst", "var/lib/cascade/bin/cascade-dnst", "755"],
+    ["target/release/dnst", "usr/libexec/cascade/cascade-dnst", "755"],
     ["README.md", "usr/share/doc/cascade-dnst/", "644"],
     # TODO: Extend Ploutos to generate the man pages from sources.
     # Don't install the normal dnst man pages in case the user actually does
