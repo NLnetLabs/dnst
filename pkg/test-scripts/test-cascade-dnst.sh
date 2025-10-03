@@ -11,10 +11,10 @@ case $1 in
     # dnst nsec3-hash nlnetlabs.nl
     # ldns-nsec3-hash nlnetlabs.nl
     /var/lib/cascade/bin/cascade-dnst keyset --help
-    man dnst
+    man cascade-dnst
     # man dnst-keygen
     # man ldns-keygen
-    man dnst-keyset
+    man cascade-dnst-keyset
     ;;
 
   post-upgrade)
@@ -25,10 +25,10 @@ case $1 in
     # dnst nsec3-hash nlnetlabs.nl
     # ldns-nsec3-hash nlnetlabs.nl
     /var/lib/cascade/bin/cascade-dnst keyset --help
-    man dnst
+    man cascade-dnst
     # man dnst
     # man dnst-keygen
     # man ldns-keygen
-    man dnst-keyset
+    man cascade-dnst-keyset
     ;;
 esac
