@@ -2,7 +2,7 @@
 # workflow inputs.
 ---
 pkg:
-  - 'dnst-cascade'
+  - 'cascade-dnst'
 image:
   - "ubuntu:focal"    # ubuntu/20.04
   - "ubuntu:jammy"    # ubuntu/22.04
@@ -19,17 +19,17 @@ target:
 include:
   # package for the Raspberry Pi 4b as an ARMv7 cross compiled variant of the Debian Bullseye upon which
   # Raspbian 11 is based.
-  - pkg: 'dnst-cascade'
+  - pkg: 'cascade-dnst'
     image: 'debian:bullseye'
     target: 'armv7-unknown-linux-musleabihf'
 
   # package for the Raspberry Pi 1b as an ARMv6 cross compiled variant of the Debian Buster upon which
   # Raspbian 10 is based.
-  - pkg: 'dnst-cascade'
+  - pkg: 'cascade-dnst'
     image: 'debian:buster'
     target: 'arm-unknown-linux-musleabihf'
 
   # package for the ROCK64 as an AARCH64 cross compiled variant of Debian Buster upon which Armbian 21 is based.
-  - pkg: 'dnst-cascade'
+  - pkg: 'cascade-dnst'
     image: 'debian:buster'
     target: 'aarch64-unknown-linux-musl'
