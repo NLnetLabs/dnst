@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Oct 02, 2025" "0.1.0-rc2" "dnst"
+.TH "DNST-KEYSET" "1" "Oct 03, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys.
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
 The \fBkeyset\fP subcommand manages signing keys and generates a signed DNSKEY RRset.
 A separate zone signer (not part of dnst) is expected to use the zone
