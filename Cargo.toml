@@ -99,7 +99,7 @@ assets = [
     # TODO: Extend Ploutos to generate the man pages from sources.
     # Don't install the normal dnst man pages in case the user actually does
     # have the real dnst package installed.
-    #["doc/manual/build/man/dnst.1", "/usr/share/man/man1/dnst.1", "644"],
+    ["doc/manual/build/man/dnst.1", "/usr/share/man/man1/cascade-dnst.1", "644"],
     #["doc/manual/build/man/dnst-key2ds.1", "/usr/share/man/man1/dnst-key2ds.1", "644"],
     #["doc/manual/build/man/dnst-keygen.1", "/usr/share/man/man1/dnst-keygen.1", "644"],
     ["doc/manual/build/man/dnst-keyset.1", "/usr/share/man/man1/cascade-dnst-keyset.1", "644"],
@@ -127,7 +127,7 @@ name = "cascade-dnst" # see explanation above in the cargo-deb section.
 assets = [
     { source = "target/release/dnst", dest = "/usr/bin/dnst", mode = "755" },
     # TODO: Extend Ploutos to generate the man pages from sources.
-    #{ source = "doc/manual/build/man/dnst.1", dest = "/usr/share/man/man1/dnst.1", mode = "644", doc = true },
+    { source = "doc/manual/build/man/dnst.1", dest = "/usr/share/man/man1/cascade-dnst.1", mode = "644", doc = true },
     #{ source = "doc/manual/build/man/dnst-key2ds.1", dest = "/usr/share/man/man1/dnst-key2ds.1", mode = "644", doc = true },
     #{ source = "doc/manual/build/man/dnst-keygen.1", dest = "/usr/share/man/man1/dnst-keygen.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-keyset.1", dest = "/usr/share/man/man1/cascade-dnst-keyset.1", mode = "644", doc = true },
