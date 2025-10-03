@@ -27,15 +27,17 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-SIGNZONE" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-SIGNZONE" "1" "Sep 15, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-signzone \- Sign the zone with the given key(s)
 .SH SYNOPSIS
 .sp
-\fBdnst signzone\fP \fB[OPTIONS]\fP \fB<ZONEFILE>\fP \fB<KEY>...\fP
+\fBdnst signzone\fP \fB[OPTIONS]\fP \fB\-o <ORIGIN>\fP \fB<ZONEFILE>\fP \fB<KEY>...\fP
 .SH DESCRIPTION
 .sp
 \fBdnst signzone\fP signs the zonefile with the given key(s).
+.sp
+Signing a zone adds DNS Security Extensions (DNSSEC)  resource records
 .sp
 Keys must be specified by their base name (usually \fBK<name>+<alg>+<id>\fP),
 i.e. WITHOUT the \fB\&.private\fP or \fB\&.key\fP extension. Both \fB\&.private\fP and
@@ -79,7 +81,7 @@ Set the inception date of signatures to this date (see
 .INDENT 0.0
 .TP
 .B \-o <DOMAIN>
-Set the origin for the zone. Mandatory.
+Use this owner name as the apex of the zone. Mandatory.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -171,11 +173,6 @@ Output YYYYMMDDHHmmSS RRSIG timestamps instead of seconds since epoch.
 .sp
 The following options can be used with \fB\-n\fP to override the default NSEC3
 settings used.
-.INDENT 0.0
-.TP
-.B \-a <ALGORITHM NUMBER OR MNEMONIC>
-Specify the hashing algorithm. Defaults to SHA\-1.
-.UNINDENT
 .INDENT 0.0
 .TP
 .B \-s <STRING>

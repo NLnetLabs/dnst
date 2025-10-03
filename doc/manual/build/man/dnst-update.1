@@ -27,53 +27,168 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-UPDATE" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-UPDATE" "1" "Sep 15, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-update \- Send a dynamic update packet to update an IP (or delete all existing IPs) for a domain name
 .SH SYNOPSIS
 .sp
-\fBdnst update\fP \fB<DOMAIN NAME>\fP \fB[ZONE]\fP \fB<IP>\fP
-\fB[<TSIG KEY NAME> <TSIG ALGORITHM> <TSIG KEY DATA>]\fP
+\fBdnst update\fP \fB[OPTIONS]\fP \fB<DOMAIN NAME>\fP \fB<COMMAND>\fP
+.sp
+\fBdnst update\fP \fB[OPTIONS]\fP \fB<DOMAIN NAME>\fP \fBadd\fP \fB<RRTYPE>\fP \fB[RDATA]...\fP
+.sp
+\fBdnst update\fP \fB[OPTIONS]\fP \fB<DOMAIN NAME>\fP \fBdelete\fP \fB<RRTYPE>\fP \fB[RDATA]...\fP
+.sp
+\fBdnst update\fP \fB[OPTIONS]\fP \fB<DOMAIN NAME>\fP \fBclear\fP \fB<RRTYPE>\fP
 .SH DESCRIPTION
 .sp
-\fBdnst update\fP sends a dynamic update packet to update an IP (or delete all
-existing IPs) for a domain name.
+\fBdnst update\fP sends an RFC 2136 Dynamic Update message to the name servers
+for a zone to add, update, or delete arbitrary Resource Records for a domain
+name.
+.sp
+The message to be sent can be optionally authenticated using a given TSIG key.
+.sp
+\fBdnst update [...] add\fP adds the given RRs to the domain.
+.sp
+\fBdnst update [...] delete\fP deletes the given RRs from the domain. It can be
+used to delete individual RRs or a whole RRset.
+.sp
+\fBdnst update [...] clear\fP clears (deletes) all RRs of any type from the
+domain name.
 .SH ARGUMENTS
 .INDENT 0.0
 .TP
 .B <DOMAIN NAME>
-The domain name to update the IP address of
+The domain name of the RR(s) to update.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B <ZONE>
-The zone to send the update to (if omitted, derived from SOA record)
+.B <COMMAND>
+Which action to take: add, delete, or clear.
+.UNINDENT
+.SH OPTIONS:
+.INDENT 0.0
+.TP
+.B \-c, \-\-class <CLASS>
+Class
+.sp
+Defaults to IN.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B <IP>
-The IP to update the domain with (\fBnone\fP to remove any existing IPs)
+.B \-t, \-\-ttl <TTL>
+TTL in seconds or with unit suffix (s, m, h, d).
+.sp
+Is only used by the \fBadd\fP command and is otherwise ignored.
+.sp
+Defaults to 3600.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B <TSIG KEY NAME>
-TSIG key name
+.B \-s, \-\-server <IP>
+The name server to send the update to.
+.sp
+By default, the update will be sent to the list of name servers fetched
+from the zone\(aqs NS RRset as per RFC 2136.
 .UNINDENT
 .INDENT 0.0
 .TP
-.B <TSIG ALGORITHM>
-TSIG algorithm (e.g. \(dqhmac\-sha256\(dq)
+.B \-z, \-\-zone <ZONE>
+The zone the domain name belongs to (to skip a SOA query)
 .UNINDENT
 .INDENT 0.0
 .TP
-.B <TSIG KEY DATA>
-Base64 encoded TSIG key data.
+.B \-y, \-\-tsig <NAME:KEY[:ALGO]>
+TSIG credentials for the UPDATE packet
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-rrset\-exists <DOMAIN_NAME_AND_TYPE>
+Require that at least one RR with the given NAME and TYPE exists.
+This option can be provided multiple times, with format \fB<DOMAIN_NAME>
+<TYPE>\fP each, to build up a list of RRs.
+.sp
+If the domain name is relative, it will be relative to the zone\(aqs apex.
+.sp
+[aliases: \-\-rrset]
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-rrset\-exists\-exact <RESOURCE_RECORD>
+Require that an RRset exists and contains exactly the RRs with the given
+NAME, TYPE, and RDATA. This option can be provided multiple times, each
+with one RR in zonefile format, to build up one or more RRsets that is
+required to exist. CLASS and TTL can be omitted.
+.sp
+If the domain name is relative, it will be relative to the zone\(aqs apex.
+.sp
+[aliases: \-\-rrset\-exact]
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-rrset\-non\-existent <DOMAIN_NAME_AND_TYPE>
+RRset does not exist. This option can be provided multiple times, with
+format \fB<DOMAIN_NAME> <TYPE>\fP each, to build up a list of RRs that
+specify that no RRs with a specified NAME and TYPE can exist.
+.sp
+If the domain name is relative, it will be relative to the zone\(aqs apex.
+.sp
+[aliases: \-\-rrset\-empty]
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-name\-in\-use <DOMAIN_NAME>
+Name is in use. This option can be provided multiple times, with format
+\fB<DOMAIN_NAME>\fP each, to collect a list of NAMEs that must own at least
+one RR.
+.sp
+Note that this prerequisite is NOT satisfied by empty nonterminals.
+.sp
+If the domain name is relative, it will be relative to the zone\(aqs apex.
+.sp
+[aliases: \-\-name\-used]
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-name\-not\-in\-use <DOMAIN_NAME>
+Name is not in use. This option can be provided multiple times, with
+format \fB<DOMAIN_NAME>\fP each, to collect a list of NAMEs that must NOT
+own any RRs.
+.sp
+Note that this prerequisite IS satisfied by empty nonterminals.
+.sp
+If the domain name is relative, it will be relative to the zone\(aqs apex.
+.sp
+[aliases: \-\-name\-unused]
 .UNINDENT
 .INDENT 0.0
 .TP
 .B \-h, \-\-help
 Print the help text (short summary with \fB\-h\fP, long help with
-\fB\-\-help\fP).
+\fB\-\-help\fP). Can also be used on the individual sub commands.
+.UNINDENT
+.SH ARGUMENTS FOR ADD AND DELETE
+.INDENT 0.0
+.TP
+.B <RRTYPE>
+The RR type to add or delete.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B [RDATA]...
+One or more RDATA arguments for \fBadd\fP, and zero or more for
+\fBdelete\fP\&.
+.sp
+Each argument corresponds to a single RR\(aqs RDATA, so beware of (shell and
+DNS) quoting rules.
+.sp
+Each RDATA argument will be parsed as if it was read from a zone file.
+.nf
+Examples:
+\fBdnst update some.example.com add AAAA ::1 2001:db8::\fP
+\fBdnst update some.example.com add TXT \(aq\(dqSpacious String\(dq \(dqAnother
+string for the same TXT record\(dq\(aq \(aq\(dqThis is another TXT RR\(dq\(aq\fP
+.fi
+.sp
 .UNINDENT
 .SH AUTHOR
 NLnet Labs
