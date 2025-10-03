@@ -125,7 +125,7 @@ maintainer-scripts = "pkg/debian"
 [package.metadata.generate-rpm]
 name = "cascade-dnst" # see explanation above in the cargo-deb section.
 assets = [
-    { source = "target/release/dnst", dest = "/usr/bin/dnst", mode = "755" },
+    { source = "target/release/dnst", dest = "/var/lib/cascade/bin/cascade-dnst", mode = "755" },
     # TODO: Extend Ploutos to generate the man pages from sources.
     { source = "doc/manual/build/man/dnst.1", dest = "/usr/share/man/man1/cascade-dnst.1", mode = "644", doc = true },
     #{ source = "doc/manual/build/man/dnst-key2ds.1", dest = "/usr/share/man/man1/dnst-key2ds.1", mode = "644", doc = true },
