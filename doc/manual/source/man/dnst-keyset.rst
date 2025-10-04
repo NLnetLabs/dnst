@@ -319,7 +319,7 @@ In order to use keys stored in a HSM the ``dnst keyset kmip add-server``
 subcommand must first be used to associate the KMIP server connection settings
 with a user defined server ID.
 
-The first server defined becomes the default. if a default KMIP server has
+The first server defined becomes the default. If a default KMIP server has
 been defined it will be used to generate all future keys, unless the ``dnst
 keyset kmip disable`` command is issued. If more than one KMIP server is
 defined, only one can be the default server at any time. Use the ``dnst
