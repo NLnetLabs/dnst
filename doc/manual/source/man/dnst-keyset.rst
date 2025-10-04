@@ -21,9 +21,10 @@ program is built with the kmip feature flag, keys stored in a
 Hardware Security Module (HSM) that can be accessed using the
 Key Management Interoperability Protocol (KMIP).
 
-.. _RFC 9364: https://www.rfc-editor.oreeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeand operates on one zone at a time.
-For each zone, keyset
-maintains a configuration file that stores configuration parameters for
+https://www.rfc-editor.org/rfc/rfc9364
+
+The keyset subcommand operates on one zone at a time.
+For each zone, keyset maintains a configuration file that stores configuration parameters for
 key generation (which algorithm to use, whether to use a CSK or a
 KSK and ZSK pair), parameters for key rolls (whether key rolls are automatic
 or not), the lifetimes of keys and signatures, etc.
