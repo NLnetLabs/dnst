@@ -623,7 +623,7 @@ The keyset subcommand provides the following commands:
       the public key and the private key respectively.
       The DNSSEC algorithm is specified using the <ALGORITHM> argument and
       finally the <FLAGS> argument (usually 256 or 257) is the value of 
-      flags field in the DNSKEY record for the public key.
+      the flags field in the DNSKEY record for the public key.
 
       .. option:: --coupled
 
