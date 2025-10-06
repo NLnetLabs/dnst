@@ -353,7 +353,7 @@ Migration
 
 The keyset subcommand has no direct support for migration.
 Migration has to be done manually using the import commands.
-The semantics of the import commands are decribed in the previous section.
+The semantics of the import commands are described in the previous section.
 This section focuses on how the import command can be used to perform a
 migration.
 
