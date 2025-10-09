@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-NSEC3-HASH" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-NSEC3-HASH" "1" "Oct 03, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-nsec3-hash \- Print out the NSEC3 hash of a domain name
 .SH SYNOPSIS
@@ -36,6 +36,12 @@ dnst-nsec3-hash \- Print out the NSEC3 hash of a domain name
 .SH DESCRIPTION
 .sp
 \fBdnst nsec3\-hash\fP prints the NSEC3 hash of a given domain name.
+.SH ARGUMENTS
+.INDENT 0.0
+.TP
+.B <DOMAIN NAME>
+The domain name to generate an NSEC3 hash for.
+.UNINDENT
 .SH OPTIONS
 .INDENT 0.0
 .TP
@@ -60,11 +66,6 @@ in hexadecimal format. Defaults to an empty salt.
 .B \-h, \-\-help
 Print the help text (short summary with \fB\-h\fP, long help with
 \fB\-\-help\fP).
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-V, \-\-version
-Print the version.
 .UNINDENT
 .SH AUTHOR
 NLnet Labs

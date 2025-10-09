@@ -26,6 +26,7 @@ It depends on OpenSSL for its cryptography related functions.
    man/dnst
    man/dnst-key2ds
    man/dnst-keygen
+   man/dnst-keyset
    man/dnst-notify
    man/dnst-nsec3-hash
    man/dnst-signzone
