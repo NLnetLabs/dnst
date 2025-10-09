@@ -5290,7 +5290,7 @@ fn import_key_command(
                 Some(private_key) => private_key,
                 None => {
                     if path.extension() != Some(OsStr::new("key")) {
-                        return Err(format!("public key {} should end in .pub, use --private-key to specify a private key separately", path.display()).into());
+                        return Err(format!("public key {} should end in .key, use --private-key to specify a private key separately", path.display()).into());
                     }
                     path.with_extension("private")
                 }
