@@ -62,6 +62,7 @@ jiff = { version = "0.2", default-features = false, features = ["alloc", "std"] 
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
+supports-color = "3.0.2"
 
 [dev-dependencies]
 const_format = " 0.2.33"
