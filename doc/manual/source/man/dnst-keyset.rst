@@ -426,7 +426,7 @@ The basic idea is to execute the following steps:
 
 * Complete the initial algorithm roll.
 
-* Verify using tools such as ldns-veridy-zone that the zone is correctly
+* Verify using tools such as ldns-verify-zone that the zone is correctly
   signed.
 
 * Import the public key of the new ZSK (or CSK) in the existing signer.
@@ -484,7 +484,7 @@ The basic idea is to execute the following steps:
 
 * Complete the initial algorithm roll.
 
-* Verify using tools such as ldns-veridy-zone that the zone is correctly
+* Verify using tools such as ldns-verify-zone that the zone is correctly
   signed.
 
 * Transition the nameservers from the existing signer to the new signer.
