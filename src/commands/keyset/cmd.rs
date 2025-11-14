@@ -5564,6 +5564,494 @@ fn show_automatic_roll_state(
     }
 }
 
+/// Create a new CSK key or KSK and ZSK keys if use_csk is false.
+fn new_csk_or_ksk_zsk(
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+) -> Result<(Vec<Url>, Vec<Url>), Error> {
+    let (new_stored, new_urls) = if ksc.use_csk {
+        let mut new_urls = Vec::new();
+
+        // Create a new CSK
+        let (csk_pub_url, csk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(csk_priv_url.clone());
+        new_urls.push(csk_pub_url.clone());
+        kss.keyset
+            .add_key_csk(
+                csk_pub_url.to_string(),
+                Some(csk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err(|e| format!("unable to add CSK {csk_pub_url}: {e}\n"))?;
+
+        let new = vec![csk_pub_url];
+        (new, new_urls)
+    } else {
+        let mut new_urls = Vec::new();
+
+        // Create a new KSK
+        let (ksk_pub_url, ksk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            true,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(ksk_priv_url.clone());
+        new_urls.push(ksk_pub_url.clone());
+        kss.keyset
+            .add_key_ksk(
+                ksk_pub_url.to_string(),
+                Some(ksk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
+
+        // Create a new ZSK
+        let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = new_keys(
+            kss.keyset.name(),
+            ksc.algorithm.to_generate_params(),
+            false,
+            kss.keyset.keys(),
+            &ksc.keys_dir,
+            env,
+            #[cfg(feature = "kmip")]
+            &mut kss.kmip,
+        )?;
+        new_urls.push(zsk_priv_url.clone());
+        new_urls.push(zsk_pub_url.clone());
+        kss.keyset
+            .add_key_zsk(
+                zsk_pub_url.to_string(),
+                Some(zsk_priv_url.to_string()),
+                algorithm,
+                key_tag,
+                UnixTime::now(),
+                true,
+            )
+            .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
+
+        let new = vec![ksk_pub_url, zsk_pub_url];
+        (new, new_urls)
+    };
+    Ok((new_stored, new_urls))
+}
+
+/// Return the right RollType for a RollVariant.
+fn roll_variant_to_roll(roll_variant: RollVariant) -> RollType {
+    // For key type, such as KSK and ZSK, that can have different rolls, we
+    // we should find out which variant is used.
+    match roll_variant {
+        RollVariant::Ksk => RollType::KskRoll,
+        RollVariant::Zsk => RollType::ZskRoll,
+        RollVariant::Csk => RollType::CskRoll,
+        RollVariant::Algorithm => RollType::AlgorithmRoll,
+    }
+}
+
+/// Implementation of the Import subcommands.
+fn import_command(
+    subcommand: ImportCommands,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+    state_changed: &mut bool,
+) -> Result<(), Error> {
+    match subcommand {
+        ImportCommands::PublicKey { path } => {
+            let public_data = std::fs::read_to_string(&path)
+                .map_err(|e| format!("unable read from file {}: {e}", path.display()))?;
+
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data)
+                .map_err(|e| format!("unable to parse public key file {}: {e}", path.display()))?;
+
+            let path = absolute(&path)
+                .map_err(|e| format!("unable to make {} absolute: {}", path.display(), e))?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            kss.keyset
+                .add_public_key(
+                    public_key_url.clone(),
+                    public_key.data().algorithm(),
+                    public_key.data().key_tag(),
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err(|e| format!("unable to add public key {public_key_url}: {e}\n"))?;
+            kss.keyset
+                .set_present(&public_key_url, true)
+                .expect("should not happen");
+
+            // What about visible. We should visible when DNSKEY RRset has
+            // propagated. But we are not doing a key roll now. Just set it
+            // unconditionally.
+            kss.keyset
+                .set_visible(&public_key_url, UnixTime::now())
+                .expect("should not happen");
+        }
+        ImportCommands::Ksk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Ksk, kss)?;
+        }
+        ImportCommands::Zsk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Zsk, kss)?;
+        }
+        ImportCommands::Csk { subcommand } => {
+            import_key_command(subcommand, KeyVariant::Csk, kss)?;
+        }
+    }
+    *state_changed = true;
+
+    // Update the DNSKEY RRset if is is not empty. We don't want to create
+    // and incomplete DNSKEY RRset.
+    if !kss.dnskey_rrset.is_empty() {
+        update_dnskey_rrset(ksc, kss, env, true)?;
+    }
+    Ok(())
+}
+
+/// Implement import subcommand for a specific key type.
+fn import_key_command(
+    subcommand: ImportKeyCommands,
+    key_variant: KeyVariant,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    let (public_key_url, private_key_url, algorithm, key_tag, coupled) = match subcommand {
+        ImportKeyCommands::File {
+            path,
+            coupled,
+            private_key,
+        } => {
+            let private_path = match private_key {
+                Some(private_key) => private_key,
+                None => {
+                    if path.extension() != Some(OsStr::new("key")) {
+                        return Err(format!("public key {} should end in .key, use --private-key to specify a private key separately", path.display()).into());
+                    }
+                    path.with_extension("private")
+                }
+            };
+            let private_data = std::fs::read_to_string(&private_path)
+                .map_err(|e| format!("unable read from file {}: {e}", private_path.display()))?;
+            let secret_key = SecretKeyBytes::parse_from_bind(&private_data).map_err(|e| {
+                format!(
+                    "unable to parse private key file {}: {e}",
+                    private_path.display()
+                )
+            })?;
+            let public_data = std::fs::read_to_string(&path)
+                .map_err(|e| format!("unable read from file {}: {e}", path.display()))?;
+            let public_key = parse_from_bind::<Vec<u8>>(&public_data)
+                .map_err(|e| format!("unable to parse public key file {}: {e}", path.display()))?;
+
+            // Check the consistency of the public and private key pair.
+            let _key_pair = KeyPair::from_bytes(&secret_key, public_key.data()).map_err(|e| {
+                format!(
+                    "private key {} and public key {} do not match: {e}",
+                    private_path.display(),
+                    path.display()
+                )
+            })?;
+
+            if public_key.owner() != kss.keyset.name() {
+                return Err(format!(
+                    "public key {} has wrong owner name {}, expected {}",
+                    path.display(),
+                    public_key.owner(),
+                    kss.keyset.name()
+                )
+                .into());
+            }
+
+            let path = absolute(&path)
+                .map_err(|e| format!("unable to make {} absolute: {}", path.display(), e))?;
+            let private_path = absolute(&private_path).map_err(|e| {
+                format!("unable to make {} absolute: {}", private_path.display(), e)
+            })?;
+            let public_key_url = "file://".to_owned() + &path.display().to_string();
+            let private_key_url = "file://".to_owned() + &private_path.display().to_string();
+
+            (
+                public_key_url,
+                private_key_url,
+                public_key.data().algorithm(),
+                public_key.data().key_tag(),
+                coupled,
+            )
+        }
+        #[cfg(feature = "kmip")]
+        ImportKeyCommands::Kmip {
+            server,
+            public_id,
+            private_id,
+            algorithm,
+            flags,
+            coupled,
+        } => {
+            let pool = kss.kmip.get_pool(&server)?;
+            let keypair =
+                kmip::sign::KeyPair::from_metadata(algorithm, flags, &private_id, &public_id, pool)
+                    .map_err(|e| {
+                        format!("error constructing key pair on KMIP server '{server}': {e}")
+                    })?;
+            let public_key_url = keypair.public_key_url();
+            let private_key_url = keypair.private_key_url();
+            (
+                public_key_url.to_string(),
+                private_key_url.to_string(),
+                keypair.algorithm(),
+                keypair.dnskey().key_tag(),
+                coupled,
+            )
+        }
+    };
+    let mut set_at_parent = false;
+    let mut set_rrsig_visible = false;
+    match key_variant {
+        KeyVariant::Ksk => {
+            kss.keyset
+                .add_key_ksk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err(|e| {
+                    format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
+                })?;
+            set_at_parent = true;
+        }
+        KeyVariant::Zsk => {
+            kss.keyset
+                .add_key_zsk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err(|e| format!("unable to add ZSK {public_key_url}: {e}\n"))?;
+            set_rrsig_visible = true;
+        }
+        KeyVariant::Csk => {
+            kss.keyset
+                .add_key_csk(
+                    public_key_url.clone(),
+                    Some(private_key_url.clone()),
+                    algorithm,
+                    key_tag,
+                    UnixTime::now(),
+                    true,
+                )
+                .map_err(|e| format!("unable to add CSK {public_key_url}: {e}\n"))?;
+            set_at_parent = true;
+            set_rrsig_visible = true;
+        }
+    }
+
+    kss.keyset
+        .set_present(&public_key_url, true)
+        .expect("should not happen");
+
+    // What about visible? We should visible when the DNSKEY
+    // RRset has propagated. But we are not doing a key roll
+    // now. Just set it unconditionally.
+    kss.keyset
+        .set_visible(&public_key_url, UnixTime::now())
+        .expect("should not happen");
+
+    kss.keyset
+        .set_signer(&public_key_url, true)
+        .expect("should not happen");
+
+    kss.keyset
+        .set_decoupled(&public_key_url, !coupled)
+        .expect("should not happen");
+
+    if set_at_parent {
+        kss.keyset
+            .set_at_parent(&public_key_url, true)
+            .expect("should not happen");
+
+        // What about ds_visible? We should ds_visible when the DS
+        // RRset has propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_ds_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
+    }
+    if set_rrsig_visible {
+        // We should set rrsig_visible when the zone's RRSIG records
+        // have propagated. But we are not doing a key roll
+        // now. Just set it unconditionally.
+        kss.keyset
+            .set_rrsig_visible(&public_key_url, UnixTime::now())
+            .expect("should not happen");
+    }
+    Ok(())
+}
+
+/// Implement the remove-key subcommand.
+fn remove_key_command(
+    key: String,
+    force: bool,
+    continue_flag: bool,
+    kss: &mut KeySetState,
+) -> Result<(), Error> {
+    // The strategy depends on whether the key is decoupled or not.
+    // If the key is decoupled, then just remove the key from the keyset and
+    // leave underlying keys where they are.
+    // If the key is not decoupled, then we also need to remove the underlying
+    // keys. In that case, first check if the key is stale or if force is set.
+    // Then remove the private key (if any). If that fails abort unless
+    // continue is set. Then remove the public key. If that fails and the
+    // private key is remove then just log an error. Finally remove the key
+    // from the keyset.
+    // If force is true, then mark the key stale before removing.
+    let Some(k) = kss.keyset.keys().get(&key) else {
+        return Err(format!("key {key} not found").into());
+    };
+    let k = k.clone();
+    if k.decoupled() {
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    } else {
+        let stale = match k.keytype() {
+            KeyType::Ksk(keystate) | KeyType::Zsk(keystate) | KeyType::Include(keystate) => {
+                keystate.stale()
+            }
+            KeyType::Csk(ksk_keystate, zsk_keystate) => {
+                ksk_keystate.stale() && zsk_keystate.stale()
+            }
+        };
+        if !stale && !force {
+            return Err(format!(
+                "unable to remove key {key}. Key is not stale. Use --force to override"
+            )
+            .into());
+        }
+
+        // If there is a private key then try to remove that one first. We
+        // don't want lingering private key when something else fails.
+        if let Some(privref) = k.privref() {
+            let private_key_url = Url::parse(privref)
+                .map_err(|e| format!("unable to parse {privref} as Url: {e}"))?;
+            let res = remove_key(kss, private_key_url);
+            if !continue_flag {
+                res?;
+            } else if let Err(e) = res {
+                error!("unable to remove key {privref}: {e}");
+            }
+        }
+
+        // Move on to the public key.
+        let public_key_url =
+            Url::parse(&key).map_err(|e| format!("unable to parse {key} as Url: {e}"))?;
+        let res = remove_key(kss, public_key_url);
+        if k.privref().is_some() || continue_flag {
+            // Ignore errors removing a public key if we previously removed
+            // (or tried to remove) a private key. Or if we are told to
+            // continue.
+            if let Err(e) = res {
+                error!("unable to remove key {key}: {e}");
+            }
+        } else {
+            res?;
+        }
+        if force {
+            kss.keyset.set_stale(&key).expect("should not fail");
+        }
+        kss.keyset
+            .delete_key(&key)
+            .map_err(|e| format!("unable to remove key {key}: {e}").into())
+    }
+}
+
+/// Take a URL, get the public key and return a Record<_, Dnskey<_>>.
+#[allow(unused_variables)]
+fn public_key_from_url<Octs>(
+    pub_url: &Url,
+    ksc: &KeySetConfig,
+    kss: &mut KeySetState,
+    env: &impl Env,
+) -> Result<Record<Name<Octs>, Dnskey<Octs>>, Error>
+where
+    Octs: FromBuilder + OctetsFrom<Vec<u8>>,
+    <Octs as OctetsFrom<Vec<u8>>>::Error: Display,
+{
+    match pub_url.scheme() {
+        "file" => {
+            let path = pub_url.path();
+            let filename = env.in_cwd(&path);
+
+            let public_data = std::fs::read_to_string(&filename)
+                .map_err(|e| format!("unable read from file {}: {e}", filename.display()))?;
+            let mut public_key = parse_from_bind::<Vec<u8>>(&public_data).map_err(|e| {
+                format!(
+                    "unable to parse public key file {}: {e}",
+                    filename.display()
+                )
+            })?;
+
+            public_key.set_ttl(ksc.default_ttl);
+            let public_key = Record::try_octets_from(public_key)
+                .map_err(|e| format!("try_octets_from failed: {e}"))?;
+            Ok(public_key)
+        }
+
+        #[cfg(feature = "kmip")]
+        "kmip" => {
+            let kmip_key_url = KeyUrl::try_from(pub_url.clone())?;
+            let flags = kmip_key_url.flags();
+            let kmip_conn_pool = kss.kmip.get_pool(kmip_key_url.server_id())?;
+            let key = domain::crypto::kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
+                .map_err(|err| format!("Failed to fetch public key for KMIP key URL: {err}"))?;
+            let owner: Name<Octs> = kss
+                .keyset
+                .name()
+                .clone()
+                .try_flatten_into()
+                .map_err(|e| format!(".try_flatten_into failed: {e}"))?;
+            let record = Record::new(
+                owner,
+                Class::IN,
+                ksc.default_ttl,
+                Dnskey::try_octets_from(key.dnskey(flags))
+                    .map_err(|e| format!("try_octets_from failed: {e}"))?,
+            );
+            Ok(record)
+        }
+
+        _ => {
+            panic!("unsupported scheme in {pub_url}");
+        }
+    }
+}
+
 /*
 Test for RRSIG check
 - records before the zone
