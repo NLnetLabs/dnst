@@ -36,7 +36,7 @@ use domain::dep::kmip::client::pool::SyncConnPool;
 use domain::dep::octseq::{FromBuilder, OctetsFrom};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
-    self, Action, Key, KeySet, KeyState, KeyType, RollState, RollType, UnixTime,
+    self, Action, Available, Key, KeySet, KeyState, KeyType, RollState, RollType, UnixTime,
 };
 use domain::dnssec::sign::keys::SigningKey;
 use domain::dnssec::sign::records::Rrset;
@@ -2150,7 +2150,7 @@ impl WorkSpace {
                         algorithm,
                         key_tag,
                         UnixTime::now(),
-                        true,
+                        Available::Available,
                     )
                     .map_err(|e| {
                         format!("unable to add KSK {public_key_url}/{private_key_url}: {e}\n")
@@ -2166,7 +2166,7 @@ impl WorkSpace {
                         algorithm,
                         key_tag,
                         UnixTime::now(),
-                        true,
+                        Available::Available,
                     )
                     .map_err(|e| format!("unable to add ZSK {public_key_url}: {e}\n"))?;
                 set_rrsig_visible = true;
@@ -2180,7 +2180,7 @@ impl WorkSpace {
                         algorithm,
                         key_tag,
                         UnixTime::now(),
-                        true,
+                        Available::Available,
                     )
                     .map_err(|e| format!("unable to add CSK {public_key_url}: {e}\n"))?;
                 set_at_parent = true;
@@ -2679,7 +2679,7 @@ impl WorkSpace {
                     algorithm,
                     key_tag,
                     UnixTime::now(),
-                    true,
+                    Available::Available,
                 )
                 .map_err(|e| format!("unable to add CSK {csk_pub_url}: {e}\n"))?;
 
@@ -2700,7 +2700,7 @@ impl WorkSpace {
                     algorithm,
                     key_tag,
                     UnixTime::now(),
-                    true,
+                    Available::Available,
                 )
                 .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
 
@@ -2716,7 +2716,7 @@ impl WorkSpace {
                     algorithm,
                     key_tag,
                     UnixTime::now(),
-                    true,
+                    Available::Available,
                 )
                 .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
 
@@ -3247,7 +3247,7 @@ impl WorkSpace {
                 algorithm,
                 key_tag,
                 UnixTime::now(),
-                true,
+                Available::Available,
             )
             .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
 
@@ -3324,7 +3324,7 @@ impl WorkSpace {
                 algorithm,
                 key_tag,
                 UnixTime::now(),
-                true,
+                Available::Available,
             )
             .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
 

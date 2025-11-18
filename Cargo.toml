@@ -17,10 +17,12 @@ name = "ldns"
 path = "src/bin/ldns.rs"
 
 [features]
-default = ["kmip", "openssl", "ring"]
+#default = ["kmip", "openssl", "ring"]
+default = ["openssl", "ring"]
 
 # Cryptographic backends
-kmip = ["domain/kmip", "dep:indenter", "dep:rand"]
+#kmip = ["domain/kmip", "dep:indenter", "dep:rand"]
+kmip = ["dep:indenter", "dep:rand"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
@@ -32,7 +34,7 @@ static-openssl = ["openssl/vendored"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
     "bytes",
     "net",
     "resolv",
@@ -72,7 +74,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "patches-for-nameshed-prototype", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "crypto-and-keyset-fixes", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
