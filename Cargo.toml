@@ -10,7 +10,7 @@ description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 keywords = ["DNS", "domain", "ldns"]
-rust-version = "1.82"
+rust-version = "1.85"
 
 [[bin]]
 name = "ldns"
