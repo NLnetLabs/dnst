@@ -3,12 +3,6 @@
 #![warn(clippy::missing_docs_in_private_items)]
 
 // TODO:
-// - file locking
-//   - update the state file atomically by writing to a different file and
-//     then renaming. This helps downstream users.
-//   - option: overwrite the config file. This is risky but simplifies locking.
-//   - option: update the config file atomically. This makes locking more
-//     complex.
 // - add a autoremove_delay option. Delete stale keys only some time after
 //   their withdrawn times.
 // - move dnskey_rrset, cds_rrset, ns_rrset into apex_extra (ds_rrset remains).
@@ -16,6 +10,7 @@
 //   the apex.
 // - add a -v option to keyset. Remove the -v option from status. Add
 //   verbose output for creation and deletion of keys.
+// - add a way for status and other read commands to by-pass the lock.
 
 use crate::env::Env;
 use crate::error::Error;
