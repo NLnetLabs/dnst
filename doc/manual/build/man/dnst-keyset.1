@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Oct 03, 2025" "0.1.0-rc2" "dnst"
+.TH "DNST-KEYSET" "1" "Nov 24, 2025" "0.1.0-alpha" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys.
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
 The \fBkeyset\fP subcommand manages signing keys and generates a signed DNSKEY RRset.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -48,8 +48,7 @@ Hardware Security Module (HSM) that can be accessed using the
 Key Management Interoperability Protocol (KMIP).
 .sp
 The keyset subcommand operates on one zone at a time.
-For each zone, keyset
-maintains a configuration file that stores configuration parameters for
+For each zone, keyset maintains a configuration file that stores configuration parameters for
 key generation (which algorithm to use, whether to use a CSK or a
 KSK and ZSK pair), parameters for key rolls (whether key rolls are automatic
 or not), the lifetimes of keys and signatures, etc.
@@ -330,9 +329,19 @@ same except that it ends in \fB\&.private\fP\&.
 If this is not the case then the private key filename must be specified
 separately.
 .sp
-In order to use keys stored in a HSM the \fBdnst keyset kmip add\-server\fP subcommand must first be used to associate the KMIP server connection settings with a user defined server ID.
+In order to use keys stored in a HSM the \fBdnst keyset kmip add\-server\fP
+subcommand must first be used to associate the KMIP server connection settings
+with a user defined server ID.
 .sp
-The first server defined becomes the default. if a default KMIP server has been defined it will be used to generate all future keys, unless the \fBdnst keyset kmip disable\fP command is issued. If more than one KMIP server is defined, only one can be the default server at any time. Use the \fBdnst keyset kmip set\-default\fP command to change which KMIP server will be used to generate future keys. Note that like all \fBdnst keyset\(ga subcommands, the KMIP subcommands set behaviour for a single zone. Additionally there are \(ga\(galist\-servers\fP, \fBget\-server\fP, \fBmodify\-server\fP and \fBremove\-server\fP subcommands for inspecting and altering the configured KMIP server settings.
+The first server defined becomes the default. If a default KMIP server has
+been defined it will be used to generate all future keys, unless the \fBdnst
+keyset kmip disable\fP command is issued. If more than one KMIP server is
+defined, only one can be the default server at any time. Use the \fBdnst
+keyset kmip set\-default\fP command to change which KMIP server will be used
+to generate future keys. Note that like all \fBdnst keyset\(ga subcommands, the
+KMIP subcommands set behaviour for a single zone. Additionally there are
+\(ga\(galist\-servers\fP, \fBget\-server\fP, \fBmodify\-server\fP and \fBremove\-server\fP
+subcommands for inspecting and altering the configured KMIP server settings.
 .sp
 Importing a public/private key stored in an HSM requires specifying the KMIP
 server ID, the ID of the public key, the ID of the private key, the
@@ -354,7 +363,7 @@ There is a \fB\-\-coupled\fP option to tell keyset to take ownership of the key.
 .sp
 The keyset subcommand has no direct support for migration.
 Migration has to be done manually using the import commands.
-The semantics of the import commands are decribed in the previous section.
+The semantics of the import commands are described in the previous section.
 This section focuses on how the import command can be used to perform a
 migration.
 .sp
@@ -426,7 +435,7 @@ delete the existing one.
 .IP \(bu 2
 Complete the initial algorithm roll.
 .IP \(bu 2
-Verify using tools such as ldns\-veridy\-zone that the zone is correctly
+Verify using tools such as ldns\-verify\-zone that the zone is correctly
 signed.
 .IP \(bu 2
 Import the public key of the new ZSK (or CSK) in the existing signer.
@@ -484,7 +493,7 @@ the delete the existing one.
 .IP \(bu 2
 Complete the initial algorithm roll.
 .IP \(bu 2
-Verify using tools such as ldns\-veridy\-zone that the zone is correctly
+Verify using tools such as ldns\-verify\-zone that the zone is correctly
 signed.
 .IP \(bu 2
 Transition the nameservers from the existing signer to the new signer.
@@ -525,7 +534,7 @@ Create empty configuration and state files for a domain.
 .INDENT 2.0
 .TP
 .B \-n
-The name of the domain
+The name of the domain for which signing keys will be managed.
 .UNINDENT
 .INDENT 2.0
 .TP
@@ -568,7 +577,7 @@ This command is similar to propagation1\-complete.
 .IP \(bu 2
 cache\-expired2
 .sp
-This command is similar to <TTL>
+This command is similar to cache\-expired1.
 .IP \(bu 2
 roll\-done
 .sp
@@ -597,7 +606,7 @@ When a decoupled key is later removed, only the reference is deleted from
 the key set.
 The file that contains the key is not deleted and the key is not deleted
 from an HSM.
-Passing the option \fB\-\-coupled\fP when importing a key, direct keyset to
+Passing the option \fB\-\-coupled\fP when importing a key, directs keyset to
 take ownership of the key.
 .sp
 The key pair can be imported in two ways:
@@ -624,10 +633,10 @@ kmip <SERVER> <PUBLIC_ID> <PRIVATE_ID> <ALGORITHM> <FLAGS>
 The <SERVER> argument specifies one of the KMIP servers that has been
 configured using the \fBkmip add\-server\fP command.
 The <PUBLIC_ID> and <PRIVATE_ID> arguments are the KMIP identifiers of
-respectively the public key and the private key.
+the public key and the private key respectively.
 The DNSSEC algorithm is specified using the <ALGORITHM> argument and
-finally the <FLAGS> argument (usually 256 or 257) is the value of the
-flags field in the DNSKEY record for the public key.
+finally the <FLAGS> argument (usually 256 or 257) is the value of
+the flags field in the DNSKEY record for the public key.
 .INDENT 2.0
 .TP
 .B \-\-coupled
@@ -641,7 +650,7 @@ remove\-key <KEY>
 Remove a key or key pair from the key set.
 The <KEY> argument is the URL of the public key.
 If the key is \fBcoupled\fP then the files that hold the keys are also removed
-or, in case of KMIP keys, the keys are remove from the HSM.
+or, in case of KMIP keys, the keys are removed from the HSM.
 Normally, keys are only removed when they are stale.
 .INDENT 2.0
 .TP
@@ -675,8 +684,9 @@ Give detailed information about all keys in the key set.
 .IP \(bu 2
 get
 .sp
-The the values of the following configuration variables: use\-csk,
-autoremove, algorithm, ds\-algorithm, dnskey\-lifetime, cds\-lifetime.
+Get the values of the following configuration variables: use\-csk,
+autoremove, autoremove\-delay, algorithm, ds\-algorithm, dnskey\-lifetime,
+cds\-lifetime.
 This is a subset of all configuration variables.
 .sp
 Additionally, the dnskey argument returns the current DNSKEY RRset plus
@@ -686,8 +696,8 @@ ds returns DS records that should be added to the parent zone.
 set
 .sp
 Set configuation variables.
-Note that setting configuration variables after the create command
-but before the init command can be used to affect the initial key creation.
+Note that setting configuration variables after the create command but
+before the init command can be used to affect the initial key creation.
 .INDENT 2.0
 .IP \(bu 2
 use\-csk <BOOLEAN>
@@ -698,7 +708,11 @@ will be created.
 autoremove <BOOLEAN>
 .sp
 When true, keys that are stale will be removed automatically.
-Currently there is no delay in removing keys.
+.IP \(bu 2
+autoremove\-delay <DELAY>
+.sp
+Set the delay between the time keys become stale and automatic
+removal.
 .IP \(bu 2
 algorithm <ALGORITHM>
 .sp
@@ -716,7 +730,7 @@ auto\-ksk, auto\-zsk, auto\-csk, auto\-algorithm
 .sp
 These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.
 When set to true, the corresponding step or steps of the key roll specified
-by the command is executed automatically.
+by the command are executed automatically.
 .sp
 For example, \fBauto\-csk true false true false\fP means that
 CSK rolls will start automatically, that the propagation1\-complete,
@@ -770,13 +784,13 @@ update\-ds\-command
 .sp
 Set a command to to run when the DS records in the parent zone need
 to be updated.
-This command can, for example, alert to operator or use an API provided
+This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
 .UNINDENT
 .IP \(bu 2
 show
 .sp
-Show all configuration variable.
+Show all configuration variables.
 .IP \(bu 2
 cron
 .sp
@@ -829,11 +843,8 @@ Optional password to authenticate to the KMIP server with.
 .INDENT 2.0
 .TP
 .B \-\-client\-cert <CLIENT_CERT_PATH>
-.INDENT 7.0
-.TP
-.B Optional path to a TLS certificate to authenticate to the KMIP server
+Optional path to a TLS certificate to authenticate to the KMIP server
 with.
-.UNINDENT
 .UNINDENT
 .INDENT 2.0
 .TP
@@ -843,8 +854,7 @@ Optional path to a private key for client certificate authentication.
 .INDENT 2.0
 .TP
 .B \-\-insecure
-Whether or not to accept the KMIP server TLS certificate without
-verifying it.
+Accept the KMIP server TLS certificate without verifying it.
 .UNINDENT
 .INDENT 2.0
 .TP

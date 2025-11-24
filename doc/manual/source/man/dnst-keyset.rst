@@ -667,7 +667,8 @@ The keyset subcommand provides the following commands:
 * get
 
   Get the values of the following configuration variables: use-csk,
-  autoremove, algorithm, ds-algorithm, dnskey-lifetime, cds-lifetime.
+  autoremove, autoremove-delay, algorithm, ds-algorithm, dnskey-lifetime,
+  cds-lifetime.
   This is a subset of all configuration variables.
 
   Additionally, the dnskey argument returns the current DNSKEY RRset plus
@@ -688,7 +689,11 @@ The keyset subcommand provides the following commands:
   * autoremove <BOOLEAN>
 
     When true, keys that are stale will be removed automatically.
-    Currently there is no delay in removing keys.
+
+  * autoremove-delay <DELAY>
+
+    Set the delay between the time keys become stale and automatic
+    removal.
 
   * algorithm <ALGORITHM>
 
