@@ -57,17 +57,16 @@ use domain_kmip::KeyUrl;
 use fs2::FileExt;
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
-use nix::sys::stat::fstat;
+use same_file::Handle;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::{create_dir_all, metadata, remove_file, rename, File};
+use std::fs::{create_dir_all, remove_file, rename, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
-use std::os::fd::AsFd;
 use std::path::{absolute, Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -5638,49 +5637,27 @@ fn write_locked_file(filename: &PathBuf) -> Result<File, Error> {
     // Might have locked the old file. Check. Try a number of times and
     // then give up. Lock contention is expected to be low.
     for _try in 0..MAX_FILE_LOCK_TRIES {
-        // First get the metadata before
-        // we try to lock.
-        let md = metadata(filename)
-            .map_err(|e| format!("unable to get metadata for {}: {e}", filename.display()))?;
         let file = File::open(filename)
             .map_err(|e| format!("unable to open file {}: {e}", filename.display()))?;
 
         file.lock_exclusive()
             .map_err(|e| format!("unable to lock {}: {e}", filename.display()))?;
 
-        // Get metadata again.
-        let md2 = metadata(filename)
-            .map_err(|e| format!("unable to get metadata for {}: {e}", filename.display()))?;
+        let file_clone = file
+            .try_clone()
+            .map_err(|e| format!("unable to clone locked file {}: {e}", filename.display()))?;
+        let locked_file_handle = Handle::from_file(file_clone).map_err(|e| {
+            format!(
+                "Unable to get handle from locked file {}: {e}",
+                filename.display()
+            )
+        })?;
+        let current_file_handle = Handle::from_path(filename)
+            .map_err(|e| format!("Unable to get handle from file {}: {e}", filename.display()))?;
 
-        // Check if nothing changed. Created may not exist on all platforms,
-        // use a default if we get an error.
-        if md.created().unwrap_or(UNIX_EPOCH) != md2.created().unwrap_or(UNIX_EPOCH)
-            || md.modified().map_err(|e| {
-                format!(
-                    "failed to get the modified time of {}: {e}",
-                    filename.display()
-                )
-            })? != md2.modified().map_err(|e| {
-                format!(
-                    "failed to get the modified time of {}: {e}",
-                    filename.display()
-                )
-            })?
-        {
+        if locked_file_handle != current_file_handle {
             continue;
         }
-
-        let file2 = File::open(filename)
-            .map_err(|e| format!("unable to open file {}: {e}", filename.display()))?;
-
-        let filestat = fstat(file.as_fd())
-            .map_err(|e| format!("fstat failed for {}: {e}", filename.display()))?;
-        let filestat2 = fstat(file2.as_fd())
-            .map_err(|e| format!("fstat failed for {}: {e}", filename.display()))?;
-        if filestat.st_ino != filestat2.st_ino {
-            todo!();
-        }
-
         return Ok(file);
     }
     Err(format!(
