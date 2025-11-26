@@ -48,13 +48,13 @@ use domain::resolv::StubResolver;
 #[cfg(feature = "kmip")]
 use domain::utils::base32::encode_string_hex;
 use domain::zonefile::inplace::{Entry, Zonefile};
-use fs2::FileExt;
 #[cfg(feature = "kmip")]
 use domain_kmip as kmip;
 #[cfg(feature = "kmip")]
 use domain_kmip::dep::kmip::client::pool::SyncConnPool;
 #[cfg(feature = "kmip")]
 use domain_kmip::KeyUrl;
+use fs2::FileExt;
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
 use nix::sys::stat::fstat;
