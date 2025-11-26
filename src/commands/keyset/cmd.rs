@@ -669,6 +669,8 @@ impl Keyset {
                 keys_dir,
                 use_csk: false,
                 algorithm: KeyParameters::EcdsaP256Sha256,
+		ksk_roll_type: KskRollType::DoubleSignatureKskRoll,
+		zsk_roll_type: ZskRollType::PrePublishZskRoll,
                 ksk_validity: None,
                 zsk_validity: None,
                 csk_validity: None,
@@ -1537,6 +1539,9 @@ struct KeySetConfig {
     /// Algorithm and other parameters for key generation.
     algorithm: KeyParameters,
 
+    ksk_roll_type: KskRollType,
+    zsk_roll_type: ZskRollType,
+
     /// Validity of KSKs.
     ksk_validity: Option<Duration>,
     /// Validity of ZSKs.
@@ -1595,6 +1600,18 @@ struct AutoConfig {
     expire: bool,
     /// Whether to handle the done step automatically.
     done: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+enum KskRollType {
+    DoubleSignatureKskRoll,
+    DoubleDsKskRoll,
+}
+
+#[derive(Deserialize, Serialize)]
+enum ZskRollType {
+    PrePublishZskRoll,
+    DoubleSignatureZskRoll,
 }
 
 /// Persistent state for the keyset command.
@@ -3200,7 +3217,10 @@ impl WorkSpace {
 
     /// Start a KSK roll.
     fn start_ksk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
-        let roll_type = RollType::KskRoll;
+        let roll_type = match self.config.ksk_roll_type {
+	    KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+	    KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
+	};
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3275,7 +3295,10 @@ impl WorkSpace {
 
     /// Start a ZSK roll.
     fn start_zsk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
-        let roll_type = RollType::ZskRoll;
+        let roll_type = match self.config.zsk_roll_type {
+	    ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+	    ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+	};
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3311,8 +3334,6 @@ impl WorkSpace {
             .map(|(name, _)| name.clone())
             .collect();
         let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-        // Collect algorithms. Maybe this needs to be in the library.
 
         // Create a new ZSK
         let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = self.new_keys(false, env)?;
