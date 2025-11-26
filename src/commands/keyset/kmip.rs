@@ -30,11 +30,9 @@ use std::{
 };
 
 use clap::Subcommand;
-use domain::{
-    base::{name::ToLabelIter, Name, NameBuilder},
-    crypto::kmip::{ClientCertificate, ConnectionSettings, KeyUrl},
-    dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool},
-};
+use domain::base::{name::ToLabelIter, Name, NameBuilder};
+use domain_kmip::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
+use domain_kmip::{ClientCertificate, ConnectionSettings, KeyUrl};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
