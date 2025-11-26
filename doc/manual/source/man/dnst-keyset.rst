@@ -24,8 +24,7 @@ Key Management Interoperability Protocol (KMIP).
 .. _RFC 9364: https://www.rfc-editor.org/rfc/rfc9364
 
 The keyset subcommand operates on one zone at a time.
-For each zone, keyset
-maintains a configuration file that stores configuration parameters for
+For each zone, keyset maintains a configuration file that stores configuration parameters for
 key generation (which algorithm to use, whether to use a CSK or a
 KSK and ZSK pair), parameters for key rolls (whether key rolls are automatic
 or not), the lifetimes of keys and signatures, etc.
@@ -316,9 +315,19 @@ same except that it ends in ``.private``.
 If this is not the case then the private key filename must be specified
 separately.
 
-In order to use keys stored in a HSM the ``dnst keyset kmip add-server`` subcommand must first be used to associate the KMIP server connection settings with a user defined server ID.
+In order to use keys stored in a HSM the ``dnst keyset kmip add-server``
+subcommand must first be used to associate the KMIP server connection settings
+with a user defined server ID.
 
-The first server defined becomes the default. if a default KMIP server has been defined it will be used to generate all future keys, unless the ``dnst keyset kmip disable`` command is issued. If more than one KMIP server is defined, only one can be the default server at any time. Use the ``dnst keyset kmip set-default`` command to change which KMIP server will be used to generate future keys. Note that like all ``dnst keyset` subcommands, the KMIP subcommands set behaviour for a single zone. Additionally there are ``list-servers``, ``get-server``, ``modify-server`` and ``remove-server`` subcommands for inspecting and altering the configured KMIP server settings.
+The first server defined becomes the default. If a default KMIP server has
+been defined it will be used to generate all future keys, unless the ``dnst
+keyset kmip disable`` command is issued. If more than one KMIP server is
+defined, only one can be the default server at any time. Use the ``dnst
+keyset kmip set-default`` command to change which KMIP server will be used
+to generate future keys. Note that like all ``dnst keyset` subcommands, the
+KMIP subcommands set behaviour for a single zone. Additionally there are
+``list-servers``, ``get-server``, ``modify-server`` and ``remove-server``
+subcommands for inspecting and altering the configured KMIP server settings.
 
 Importing a public/private key stored in an HSM requires specifying the KMIP
 server ID, the ID of the public key, the ID of the private key, the
@@ -344,7 +353,7 @@ Migration
 
 The keyset subcommand has no direct support for migration.
 Migration has to be done manually using the import commands.
-The semantics of the import commands are decribed in the previous section.
+The semantics of the import commands are described in the previous section.
 This section focuses on how the import command can be used to perform a
 migration.
 
@@ -417,7 +426,7 @@ The basic idea is to execute the following steps:
 
 * Complete the initial algorithm roll.
 
-* Verify using tools such as ldns-veridy-zone that the zone is correctly
+* Verify using tools such as ldns-verify-zone that the zone is correctly
   signed.
 
 * Import the public key of the new ZSK (or CSK) in the existing signer.
@@ -475,7 +484,7 @@ The basic idea is to execute the following steps:
 
 * Complete the initial algorithm roll.
 
-* Verify using tools such as ldns-veridy-zone that the zone is correctly
+* Verify using tools such as ldns-verify-zone that the zone is correctly
   signed.
 
 * Transition the nameservers from the existing signer to the new signer.
@@ -521,12 +530,11 @@ The keyset subcommand provides the following commands:
 
   .. option:: -n
 
-      The name of the domain
+      The name of the domain for which signing keys will be managed.
 
   .. option:: -s
 
       The name of the state file.
-
 
 * init
 
@@ -562,7 +570,7 @@ The keyset subcommand provides the following commands:
 
   * cache-expired2
 
-    This command is similar to <TTL>
+    This command is similar to cache-expired1.
 
   * roll-done
 
@@ -589,7 +597,7 @@ The keyset subcommand provides the following commands:
     the key set.
     The file that contains the key is not deleted and the key is not deleted
     from an HSM.
-    Passing the option ``--coupled`` when importing a key, direct keyset to
+    Passing the option ``--coupled`` when importing a key, directs keyset to
     take ownership of the key.
 
     The key pair can be imported in two ways:
@@ -613,10 +621,10 @@ The keyset subcommand provides the following commands:
       The <SERVER> argument specifies one of the KMIP servers that has been
       configured using the ``kmip add-server`` command.
       The <PUBLIC_ID> and <PRIVATE_ID> arguments are the KMIP identifiers of
-      respectively the public key and the private key.
+      the public key and the private key respectively.
       The DNSSEC algorithm is specified using the <ALGORITHM> argument and
-      finally the <FLAGS> argument (usually 256 or 257) is the value of the
-      flags field in the DNSKEY record for the public key.
+      finally the <FLAGS> argument (usually 256 or 257) is the value of 
+      the flags field in the DNSKEY record for the public key.
 
       .. option:: --coupled
 
@@ -627,7 +635,7 @@ The keyset subcommand provides the following commands:
   Remove a key or key pair from the key set.
   The <KEY> argument is the URL of the public key.
   If the key is ``coupled`` then the files that hold the keys are also removed
-  or, in case of KMIP keys, the keys are remove from the HSM.
+  or, in case of KMIP keys, the keys are removed from the HSM.
   Normally, keys are only removed when they are stale.
 
   .. option:: --force
@@ -658,7 +666,7 @@ The keyset subcommand provides the following commands:
 
 * get
 
-  The the values of the following configuration variables: use-csk,
+  Get the values of the following configuration variables: use-csk,
   autoremove, algorithm, ds-algorithm, dnskey-lifetime, cds-lifetime.
   This is a subset of all configuration variables.
 
@@ -669,8 +677,8 @@ The keyset subcommand provides the following commands:
 * set
 
   Set configuation variables.
-  Note that setting configuration variables after the create command
-  but before the init command can be used to affect the initial key creation.
+  Note that setting configuration variables after the create command but
+  before the init command can be used to affect the initial key creation.
 
   * use-csk <BOOLEAN>
 
@@ -697,7 +705,7 @@ The keyset subcommand provides the following commands:
 
     These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.
     When set to true, the corresponding step or steps of the key roll specified
-    by the command is executed automatically.
+    by the command are executed automatically.
 
     For example, ``auto-csk true false true false`` means that
     CSK rolls will start automatically, that the propagation1-complete,
@@ -751,12 +759,12 @@ The keyset subcommand provides the following commands:
 
     Set a command to to run when the DS records in the parent zone need
     to be updated.
-    This command can, for example, alert to operator or use an API provided
+    This command can, for example, alert the operator or use an API provided
     by the parent zone to update the DS records automatically.
 
 * show
 
-  Show all configuration variable.
+  Show all configuration variables.
 
 * cron
 
@@ -804,8 +812,7 @@ The keyset subcommand provides the following commands:
     .. option:: --client-cert <CLIENT_CERT_PATH>
 
        Optional path to a TLS certificate to authenticate to the KMIP server
-          with.
-
+       with.
 
     .. option:: --client-key <CLIENT_KEY_PATH>
 
@@ -813,8 +820,7 @@ The keyset subcommand provides the following commands:
 
     .. option:: --insecure
 
-       Whether or not to accept the KMIP server TLS certificate without
-       verifying it.
+       Accept the KMIP server TLS certificate without verifying it.
 
     .. option:: --server-cert <SERVER_CERT_PATH>
 
