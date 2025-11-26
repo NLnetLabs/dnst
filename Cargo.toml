@@ -44,7 +44,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-validator",
     "unstable-zonetree"
 ] }
-domain-kmip = { git = "ssh://git@github.com/NLnetLabs/domain-kmip.git", branch = "initial-impl", optional = true, features = [
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "initial-impl", optional = true, features = [
 ] }
 indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"

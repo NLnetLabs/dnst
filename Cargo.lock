@@ -378,7 +378,7 @@ dependencies = [
 [[package]]
 name = "domain-kmip"
 version = "0.0.1"
-source = "git+ssh://git@github.com/NLnetLabs/domain-kmip.git?branch=initial-impl#b009e1a34515c956eac538a00645cabfebbd2b8f"
+source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=initial-impl#b009e1a34515c956eac538a00645cabfebbd2b8f"
 dependencies = [
  "bcder",
  "domain",
