@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  package:
+  package-dnst:
     uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v8
     # secrets:
     #   DOCKER_HUB_ID: ${{ secrets.DOCKER_HUB_ID }}
@@ -32,6 +32,8 @@ jobs:
       rpm_extra_build_packages: make openssl-devel
       rpm_scriptlets_path: pkg/rpm/scriptlets.toml
 
+  package-dnst-ldnsutils:
+    needs: package-dnst
     # Package empty dnst-ldnsutils package to create symlinks
     uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v9
     with:
