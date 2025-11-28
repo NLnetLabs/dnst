@@ -57,11 +57,7 @@ jobs:
       # dependencies are at the time of writing not yet published in the main
       # channel but only in the "-proposed" channel.
       package_test_always_add_repo: true
-
-      deb_extra_build_packages: libssl-dev
       deb_apt_source: 'deb [arch=amd64] https://packages.nlnetlabs.nl/linux/${OS_NAME} ${OS_REL}-proposed main'
-
-      rpm_extra_build_packages: make openssl-devel
       rpm_yum_repo: |
         [nlnetlabs]
         name=NLnet Labs Testing
