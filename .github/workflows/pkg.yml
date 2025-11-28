@@ -44,6 +44,7 @@ jobs:
       rpm_scriptlets_path: pkg/dnst-ldnsutils/pkg/rpm/scriptlets.toml
 
       manifest_dir: pkg/dnst-ldnsutils
+      artifact_prefix: dnst-ldnsutils
 
       # About the use of deb_apt_source and rpm_yum_repo:
       # ----------------------------------------------------------------------
