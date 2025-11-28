@@ -28,7 +28,7 @@ pub struct Keygen {
     /// The signature algorithm to generate for
     ///
     /// Possible values:
-    /// - RSASHA256[:<bits>]: An RSA SHA-256 key (algorithm 8) of the given size (default 2048)
+    /// - RSASHA256:          An RSA SHA-256 key (algorithm 8)
     /// - ECDSAP256SHA256:    An ECDSA P-256 SHA-256 key (algorithm 13)
     /// - ECDSAP384SHA384:    An ECDSA P-384 SHA-384 key (algorithm 14)
     /// - ED25519:            An Ed25519 key (algorithm 15)
@@ -46,7 +46,16 @@ pub struct Keygen {
         value_parser = ValueParser::new(Keygen::parse_algorithm),
         verbatim_doc_comment,
     )]
-    algorithm: GenerateParams,
+    algorithm: SecurityAlgorithm,
+
+    /// The length of the key (for RSA keys only)
+    #[arg(
+        short = 'b',
+        long = "bits",
+        value_name = "bits",
+        default_value = "2048"
+    )]
+    bits: u32,
 
     /// Generate a key signing key instead of a zone signing key
     #[arg(short = 'k')]
@@ -228,17 +237,7 @@ impl LdnsCommand for Keygen {
             }
         }
 
-        let algorithm = match algorithm {
-            Some(SecurityAlgorithm::RSASHA256) => GenerateParams::RsaSha256 { bits },
-            Some(SecurityAlgorithm::ECDSAP256SHA256) => GenerateParams::EcdsaP256Sha256,
-            Some(SecurityAlgorithm::ECDSAP384SHA384) => GenerateParams::EcdsaP384Sha384,
-            Some(SecurityAlgorithm::ED25519) => GenerateParams::Ed25519,
-            Some(SecurityAlgorithm::ED448) => GenerateParams::Ed448,
-            Some(_) => unreachable!(),
-            None => {
-                return Err("Missing algorithm (-a) option".into());
-            }
-        };
+        let algorithm = algorithm.ok_or("Missing algorithm (-a) option")?;
 
         let symlink = match (create_symlinks, force_symlinks) {
             (true, true) => SymlinkArg::Force,
@@ -253,6 +252,7 @@ impl LdnsCommand for Keygen {
 
         Ok(Command::Keygen(Self {
             algorithm,
+            bits,
             make_ksk,
             symlink,
             name,
@@ -268,32 +268,14 @@ impl From<Keygen> for Command {
 }
 
 impl Keygen {
-    fn parse_algorithm(value: &str) -> Result<GenerateParams, clap::Error> {
+    fn parse_algorithm(value: &str) -> Result<SecurityAlgorithm, clap::Error> {
         match value {
-            "RSASHA256" | "8" => return Ok(GenerateParams::RsaSha256 { bits: 2048 }),
-            "ECDSAP256SHA256" | "13" => return Ok(GenerateParams::EcdsaP256Sha256),
-            "ECDSAP384SHA384" | "14" => return Ok(GenerateParams::EcdsaP384Sha384),
-            "ED25519" | "15" => return Ok(GenerateParams::Ed25519),
-            "ED448" | "16" => return Ok(GenerateParams::Ed448),
+            "RSASHA256" | "8" => return Ok(SecurityAlgorithm::RSASHA256),
+            "ECDSAP256SHA256" | "13" => return Ok(SecurityAlgorithm::ECDSAP256SHA256),
+            "ECDSAP384SHA384" | "14" => return Ok(SecurityAlgorithm::ECDSAP384SHA384),
+            "ED25519" | "15" => return Ok(SecurityAlgorithm::ED25519),
+            "ED448" | "16" => return Ok(SecurityAlgorithm::ED448),
             _ => {}
-        }
-
-        // TODO: Remove attrs when more RSA algorithms are added.
-        #[allow(clippy::collapsible_match)]
-        if let Some((name, params)) = value.split_once(':') {
-            #[allow(clippy::single_match)]
-            match name {
-                "RSASHA256" | "8" => {
-                    let bits: u32 = params.parse().map_err(|err| {
-                        clap::Error::raw(
-                            clap::error::ErrorKind::InvalidValue,
-                            format!("invalid RSA key size '{params}': {err}"),
-                        )
-                    })?;
-                    return Ok(GenerateParams::RsaSha256 { bits });
-                }
-                _ => {}
-            }
         }
 
         Err(clap::Error::raw(
@@ -305,7 +287,14 @@ impl Keygen {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let mut stdout = env.stdout();
 
-        let params = self.algorithm;
+        let params = match self.algorithm {
+            SecurityAlgorithm::RSASHA256 => GenerateParams::RsaSha256 { bits: self.bits },
+            SecurityAlgorithm::ECDSAP256SHA256 => GenerateParams::EcdsaP256Sha256,
+            SecurityAlgorithm::ECDSAP384SHA384 => GenerateParams::EcdsaP384Sha384,
+            SecurityAlgorithm::ED25519 => GenerateParams::Ed25519,
+            SecurityAlgorithm::ED448 => GenerateParams::Ed448,
+            _ => unreachable!()
+        };
 
         // The digest algorithm is selected based on the key algorithm.
         let digest_alg = match params.algorithm() {
@@ -420,7 +409,7 @@ impl Keygen {
 
 #[cfg(test)]
 mod test {
-    use domain::crypto::sign::GenerateParams;
+    use domain::base::iana::SecurityAlgorithm;
     use regex::Regex;
 
     use crate::commands::Command;
@@ -451,7 +440,8 @@ mod test {
             .unwrap_err();
 
         let base = Keygen {
-            algorithm: GenerateParams::Ed25519,
+            algorithm: SecurityAlgorithm::ED25519,
+            bits: 2048,
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
@@ -465,15 +455,16 @@ mod test {
         assert_eq!(
             parse(cmd.args(["-a", "RSASHA256", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                algorithm: SecurityAlgorithm::RSASHA256,
                 ..base.clone()
             }
         );
         // - RSA-SHA256 accepts other key sizes.
         assert_eq!(
-            parse(cmd.args(["-a", "RSASHA256:1024", "example.org"])),
+            parse(cmd.args(["-a", "RSASHA256", "-b", "1024", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                algorithm: SecurityAlgorithm::RSASHA256,
+                bits: 1024,
                 ..base.clone()
             }
         );
@@ -481,15 +472,16 @@ mod test {
         assert_eq!(
             parse(cmd.args(["-a", "8", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                algorithm: SecurityAlgorithm::RSASHA256,
                 ..base.clone()
             }
         );
         // - Specifying the algorithm by number incl. keysize
         assert_eq!(
-            parse(cmd.args(["-a", "8:1024", "example.org"])),
+            parse(cmd.args(["-a", "8", "-b", "1024", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                algorithm: SecurityAlgorithm::RSASHA256,
+                bits: 1024,
                 ..base.clone()
             }
         );
@@ -554,7 +546,8 @@ mod test {
             .unwrap_err();
 
         let base = Keygen {
-            algorithm: GenerateParams::Ed25519,
+            algorithm: SecurityAlgorithm::ED25519,
+            bits: 2048,
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
@@ -568,7 +561,7 @@ mod test {
         assert_eq!(
             parse(cmd.args(["-a", "RSASHA256", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 2048 },
+                algorithm: SecurityAlgorithm::RSASHA256,
                 ..base.clone()
             }
         );
@@ -576,7 +569,8 @@ mod test {
         assert_eq!(
             parse(cmd.args(["-a", "RSASHA256", "-b", "1024", "example.org"])),
             Keygen {
-                algorithm: GenerateParams::RsaSha256 { bits: 1024 },
+                algorithm: SecurityAlgorithm::RSASHA256,
+                bits: 1024,
                 ..base.clone()
             }
         );
