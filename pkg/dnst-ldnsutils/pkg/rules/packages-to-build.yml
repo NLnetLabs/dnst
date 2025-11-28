@@ -14,7 +14,7 @@ image:
   - 'rockylinux:9'
 target:
   - 'x86_64'
-# include:
+include:
 #   # package for the Raspberry Pi 4b as an ARMv7 cross compiled variant of the Debian Bullseye upon which
 #   # Raspbian 11 is based.
 #   - pkg: 'dnst-ldnsutils'
@@ -31,3 +31,11 @@ target:
 #   - pkg: 'dnst-ldnsutils'
 #     image: 'debian:buster'
 #     target: 'aarch64-unknown-linux-musl'
+  - image: 'almalinux:9'
+    rpm_rpmlint_check_filters: no-binary
+
+  - image: 'almalinux:8'
+    rpm_rpmlint_check_filters: no-binary
+
+  - image: 'almalinux:10'
+    rpm_rpmlint_check_filters: no-binary
