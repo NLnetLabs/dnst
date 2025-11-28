@@ -4,15 +4,15 @@
 pkg:
   - 'dnst-ldnsutils'
 image:
-  - "ubuntu:focal"    # ubuntu/20.04
-  - "ubuntu:jammy"    # ubuntu/22.04
-  - "ubuntu:noble"    # ubuntu/24.04
-  - "debian:buster"   # debian/10
-  - "debian:bullseye" # debian/11
-  - "debian:bookworm" # debian/12
-  - "debian:trixie"   # debian/13
-  - 'almalinux:8'     # compatible with EOL centos:8
-  - 'almalinux:9'
+  # - "ubuntu:focal"    # ubuntu/20.04
+  # - "ubuntu:jammy"    # ubuntu/22.04
+  # - "ubuntu:noble"    # ubuntu/24.04
+  # - "debian:buster"   # debian/10
+  # - "debian:bullseye" # debian/11
+  # - "debian:bookworm" # debian/12
+  # - "debian:trixie"   # debian/13
+  # - 'almalinux:8'     # compatible with EOL centos:8
+  # - 'almalinux:9'
   - 'almalinux:10'
 target:
   - 'x86_64'
@@ -34,10 +34,10 @@ include:
     image: 'debian:buster'
     target: 'aarch64-unknown-linux-musl'
 
-  # Set rpmlint filters for RHEL rpmlint
-  - image: 'almalinux:8'
-    rpm_rpmlint_check_filters: no-binary
-  - image: 'almalinux:9'
-    rpm_rpmlint_check_filters: no-binary
-  - image: 'almalinux:10'
-    rpm_rpmlint_check_filters: no-binary
+  # # Set rpmlint filters for RHEL rpmlint
+  # - image: 'almalinux:8'
+  #   rpm_rpmlint_check_filters: no-binary
+  # - image: 'almalinux:9'
+  #   rpm_rpmlint_check_filters: no-binary
+  # - image: 'almalinux:10'
+  #   rpm_rpmlint_check_filters: no-binary
