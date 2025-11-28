@@ -49,13 +49,8 @@ pub struct Keygen {
     algorithm: SecurityAlgorithm,
 
     /// The length of the key (for RSA keys only)
-    #[arg(
-        short = 'b',
-        long = "bits",
-        value_name = "bits",
-        default_value = "2048"
-    )]
-    bits: u32,
+    #[arg(short = 'b', long = "bits", value_name = "bits")]
+    bits: Option<u32>,
 
     /// Generate a key signing key instead of a zone signing key
     #[arg(short = 'k')]
@@ -87,6 +82,13 @@ pub struct Keygen {
     /// The domain name to generate a key for
     #[arg(value_name = "domain", value_parser = ValueParser::new(parse_name))]
     name: Name<Vec<u8>>,
+
+    // -----------------------------------------------------------------------
+    // Non-command line argument fields:
+    // -----------------------------------------------------------------------
+    /// Whether or not we were invoked as `ldns-keygen`.
+    #[arg(skip = false)]
+    invoked_as_ldns: bool,
 }
 
 /// Symlinking behaviour.
@@ -252,10 +254,11 @@ impl LdnsCommand for Keygen {
 
         Ok(Command::Keygen(Self {
             algorithm,
-            bits,
+            bits: Some(bits),
             make_ksk,
             symlink,
             name,
+            invoked_as_ldns: true
         })
         .into())
     }
@@ -287,8 +290,23 @@ impl Keygen {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
         let mut stdout = env.stdout();
 
+        // Only allow the bits cli option when using RSA.
+        // ldns doesn't care, so skip this check when running as ldns.
+        if !self.invoked_as_ldns {
+            match (self.bits, self.algorithm) {
+                // no --bits: OK
+                (None, _) => {}
+                // --bits with RSA: OK
+                (Some(_), SecurityAlgorithm::RSASHA256) => {}
+                // --bits with non-RSA: ERROR
+                (Some(_), _) => return Err("the --bits option is only allowed for RSA keys".into()),
+            }
+        }
+
         let params = match self.algorithm {
-            SecurityAlgorithm::RSASHA256 => GenerateParams::RsaSha256 { bits: self.bits },
+            SecurityAlgorithm::RSASHA256 => GenerateParams::RsaSha256 {
+                bits: self.bits.unwrap_or(2048),
+            },
             SecurityAlgorithm::ECDSAP256SHA256 => GenerateParams::EcdsaP256Sha256,
             SecurityAlgorithm::ECDSAP384SHA384 => GenerateParams::EcdsaP384Sha384,
             SecurityAlgorithm::ED25519 => GenerateParams::Ed25519,
@@ -441,10 +459,11 @@ mod test {
 
         let base = Keygen {
             algorithm: SecurityAlgorithm::ED25519,
-            bits: 2048,
+            bits: None,
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
+            invoked_as_ldns: false
         };
 
         // The simplest invocation.
@@ -464,7 +483,7 @@ mod test {
             parse(cmd.args(["-a", "RSASHA256", "-b", "1024", "example.org"])),
             Keygen {
                 algorithm: SecurityAlgorithm::RSASHA256,
-                bits: 1024,
+                bits: Some(1024),
                 ..base.clone()
             }
         );
@@ -481,7 +500,7 @@ mod test {
             parse(cmd.args(["-a", "8", "-b", "1024", "example.org"])),
             Keygen {
                 algorithm: SecurityAlgorithm::RSASHA256,
-                bits: 1024,
+                bits: Some(1024),
                 ..base.clone()
             }
         );
@@ -547,10 +566,11 @@ mod test {
 
         let base = Keygen {
             algorithm: SecurityAlgorithm::ED25519,
-            bits: 2048,
+            bits: Some(2048),
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
+            invoked_as_ldns: true
         };
 
         // The simplest invocation.
@@ -570,7 +590,7 @@ mod test {
             parse(cmd.args(["-a", "RSASHA256", "-b", "1024", "example.org"])),
             Keygen {
                 algorithm: SecurityAlgorithm::RSASHA256,
-                bits: 1024,
+                bits: Some(1024),
                 ..base.clone()
             }
         );
