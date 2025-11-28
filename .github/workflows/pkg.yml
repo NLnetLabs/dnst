@@ -33,12 +33,11 @@ jobs:
       rpm_scriptlets_path: pkg/rpm/scriptlets.toml
 
   package-dnst-ldnsutils:
-    needs: package-dnst
     # Package empty dnst-ldnsutils package to create symlinks
     uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v9
     with:
-      package_build_rules: pkg/dnst-ldnsutils/pkg/rules/ldns_packages-to-build.yml
-      package_test_rules: pkg/dnst-ldnsutils/pkg/rules/ldns_packages-to-test.yml
+      package_build_rules: pkg/dnst-ldnsutils/pkg/rules/packages-to-build.yml
+      package_test_rules: pkg/dnst-ldnsutils/pkg/rules/packages-to-test.yml
       package_test_scripts_path: pkg/dnst-ldnsutils/pkg/test-scripts/test-<package>.sh
 
       rpm_scriptlets_path: pkg/dnst-ldnsutils/pkg/rpm/scriptlets.toml
