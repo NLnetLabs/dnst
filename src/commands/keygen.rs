@@ -23,6 +23,8 @@ use super::{parse_os, parse_os_with, Command, LdnsCommand};
 #[cfg(not(any(feature = "openssl", feature = "ring")))]
 compile_error!("Either the 'openssl' or the 'ring' feature (or both) must be enabled");
 
+const DEFAULT_RSA_KEYLEN: u32 = 2048;
+
 #[derive(Clone, Debug, PartialEq, Eq, clap::Args)]
 pub struct Keygen {
     /// The signature algorithm to generate for
@@ -48,7 +50,7 @@ pub struct Keygen {
     )]
     algorithm: SecurityAlgorithm,
 
-    /// The length of the key (for RSA keys only)
+    /// The length of the key (for RSA keys only) [default: 2048]
     #[arg(short = 'b', long = "bits", value_name = "bits")]
     bits: Option<u32>,
 
@@ -258,7 +260,7 @@ impl LdnsCommand for Keygen {
             make_ksk,
             symlink,
             name,
-            invoked_as_ldns: true
+            invoked_as_ldns: true,
         })
         .into())
     }
@@ -305,7 +307,7 @@ impl Keygen {
 
         let params = match self.algorithm {
             SecurityAlgorithm::RSASHA256 => GenerateParams::RsaSha256 {
-                bits: self.bits.unwrap_or(2048),
+                bits: self.bits.unwrap_or(DEFAULT_RSA_KEYLEN),
             },
             SecurityAlgorithm::ECDSAP256SHA256 => GenerateParams::EcdsaP256Sha256,
             SecurityAlgorithm::ECDSAP384SHA384 => GenerateParams::EcdsaP384Sha384,
@@ -463,7 +465,7 @@ mod test {
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
-            invoked_as_ldns: false
+            invoked_as_ldns: false,
         };
 
         // The simplest invocation.
@@ -570,7 +572,7 @@ mod test {
             make_ksk: false,
             symlink: SymlinkArg::No,
             name: "example.org".parse().unwrap(),
-            invoked_as_ldns: true
+            invoked_as_ldns: true,
         };
 
         // The simplest invocation.
