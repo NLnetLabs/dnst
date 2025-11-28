@@ -31,7 +31,7 @@ include:
 #   - pkg: 'dnst-ldnsutils'
 #     image: 'debian:buster'
 #     target: 'aarch64-unknown-linux-musl'
-  - image: 'almalinux:9'
+  - image: 'rockylinux:9'
     rpm_rpmlint_check_filters: no-binary
 
   # - image: 'almalinux:8'
