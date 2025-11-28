@@ -11,26 +11,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  # package-dnst:
-  #   uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v8
-  #   # secrets:
-  #   #   DOCKER_HUB_ID: ${{ secrets.DOCKER_HUB_ID }}
-  #   #   DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
-  #   with:
-  #     docker_org: nlnetlabs
-  #     docker_repo: dnst
-  #     docker_build_rules: pkg/rules/docker-images-to-build.yml
-  #     docker_sanity_check_command: --version
+  package-dnst:
+    uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v8
+    # secrets:
+    #   DOCKER_HUB_ID: ${{ secrets.DOCKER_HUB_ID }}
+    #   DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+    with:
+      docker_org: nlnetlabs
+      docker_repo: dnst
+      docker_build_rules: pkg/rules/docker-images-to-build.yml
+      docker_sanity_check_command: --version
 
-  #     package_build_rules: pkg/rules/packages-to-build.yml
-  #     package_test_rules: pkg/rules/packages-to-test.yml
-  #     package_test_scripts_path: pkg/test-scripts/test-<package>.sh
+      package_build_rules: pkg/rules/packages-to-build.yml
+      package_test_rules: pkg/rules/packages-to-test.yml
+      package_test_scripts_path: pkg/test-scripts/test-<package>.sh
 
-  #     cross_build_args: --features static-openssl
+      cross_build_args: --features static-openssl
 
-  #     deb_extra_build_packages: libssl-dev
-  #     rpm_extra_build_packages: make openssl-devel
-  #     rpm_scriptlets_path: pkg/rpm/scriptlets.toml
+      deb_extra_build_packages: libssl-dev
+      rpm_extra_build_packages: make openssl-devel
+      rpm_scriptlets_path: pkg/rpm/scriptlets.toml
 
   package-dnst-ldnsutils:
     # Package empty dnst-ldnsutils package to create symlinks
