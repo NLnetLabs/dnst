@@ -1,12 +1,12 @@
 post_trans_script = '''
 #!/bin/bash -e
 
-FORCE=
+# FORCE=
 # See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
-if [ $1 -eq 2 ]; then
-    # Upgrade
-    FORCE=-f
-fi
+# if [ $1 -eq 2 ]; then
+#     # Upgrade
+#     FORCE=-f
+# fi
 '''
 
 post_uninstall_script = '''
@@ -14,7 +14,7 @@ post_uninstall_script = '''
 #RPM_SYSTEMD_MACROS#
 
 # See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
-if [ $1 -eq 0 ] ; then
-    # Uninstallation
-fi
+# if [ $1 -eq 0 ] ; then
+#     # Uninstallation
+# fi
 '''
