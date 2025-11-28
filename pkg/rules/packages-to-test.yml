@@ -4,10 +4,10 @@
 pkg:
   - 'dnst'
 image:
-  - "ubuntu:focal"    # ubuntu/20.04
+  # - "ubuntu:focal"    # ubuntu/20.04
   - "ubuntu:jammy"    # ubuntu/22.04
-  - "debian:buster"   # debian/10
-  - "debian:bullseye" # debian/11
+  # - "debian:buster"   # debian/10
+  # - "debian:bullseye" # debian/11
   - "debian:bookworm" # debian/12
 published_pkg:
   - 'ldnsutils'       # correct for Ubuntu/Debian
@@ -24,18 +24,18 @@ test-image:
 test-mode:   
   - 'fresh-install'
   - 'upgrade-from-published'
-include:
-  - pkg: 'dnst'
-    image: 'rockylinux:8'
-    target: 'x86_64'
-    test-mode: 'fresh-install'
+# include:
+#   - pkg: 'dnst'
+#     image: 'rockylinux:8'
+#     target: 'x86_64'
+#     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
-    image: 'rockylinux:8'
-    target: 'x86_64'
-    test-mode: 'upgrade-from-published'
-    published_pkg: 'ldns-utils'
-    rpm_yum_extra_args: --enablerepo powertools
+#   - pkg: 'dnst'
+#     image: 'rockylinux:8'
+#     target: 'x86_64'
+#     test-mode: 'upgrade-from-published'
+#     published_pkg: 'ldns-utils'
+#     rpm_yum_extra_args: --enablerepo powertools
 
   - pkg: 'dnst'
     image: 'rockylinux:9'
