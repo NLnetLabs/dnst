@@ -25,6 +25,10 @@ assets = [
     ["../../doc/manual/build/man/ldns-update.1", "/usr/share/man/man1/ldns-update.1", "644"],
 ]
 copyright = "Copyright (c) 2024, NLnet Labs. All rights reserved."
+extended-description = """\
+This is a meta package that replaces the original ldnsutils with their dnst
+counterparts (where implemented).
+"""
 maintainer-scripts = "pkg/debian"
 # See: https://www.debian.org/doc/debian-policy/ch-relationships.html#replacing-whole-packages-forcing-their-removal
 conflicts = "ldnsutils"
