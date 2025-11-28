@@ -293,7 +293,7 @@ impl Keygen {
             SecurityAlgorithm::ECDSAP384SHA384 => GenerateParams::EcdsaP384Sha384,
             SecurityAlgorithm::ED25519 => GenerateParams::Ed25519,
             SecurityAlgorithm::ED448 => GenerateParams::Ed448,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         // The digest algorithm is selected based on the key algorithm.
