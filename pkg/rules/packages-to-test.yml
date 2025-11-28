@@ -4,11 +4,13 @@
 pkg:
   - 'dnst'
 image:
-  # - "ubuntu:focal"    # ubuntu/20.04
+  - "ubuntu:focal"    # ubuntu/20.04
   - "ubuntu:jammy"    # ubuntu/22.04
-  # - "debian:buster"   # debian/10
-  # - "debian:bullseye" # debian/11
+  - "ubuntu:noble"    # ubuntu/24.04
+  - "debian:buster"   # debian/10
+  - "debian:bullseye" # debian/11
   - "debian:bookworm" # debian/12
+  - "debian:trixie"   # debian/13
 published_pkg:
   - 'ldnsutils'       # correct for Ubuntu/Debian
 target:
@@ -24,37 +26,40 @@ test-image:
 test-mode:   
   - 'fresh-install'
   - 'upgrade-from-published'
-# include:
-#   - pkg: 'dnst'
-#     image: 'rockylinux:8'
-#     target: 'x86_64'
-#     test-mode: 'fresh-install'
-
-#   - pkg: 'dnst'
-#     image: 'rockylinux:8'
-#     target: 'x86_64'
-#     test-mode: 'upgrade-from-published'
-#     published_pkg: 'ldns-utils'
-#     rpm_yum_extra_args: --enablerepo powertools
-
+include:
   - pkg: 'dnst'
-    image: 'rockylinux:9'
+    image: 'almalinux:8'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
   - pkg: 'dnst'
-    image: 'rockylinux:9'
+    image: 'almalinux:8'
+    target: 'x86_64'
+    test-mode: 'upgrade-from-published'
+    published_pkg: 'ldns-utils'
+    rpm_yum_extra_args: --enablerepo powertools
+
+  - pkg: 'dnst'
+    image: 'almalinux:9'
+    target: 'x86_64'
+    test-mode: 'fresh-install'
+
+  - pkg: 'dnst'
+    image: 'almalinux:9'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
     rpm_yum_extra_args: --enablerepo crb
 
-# Disable upgrade testing on Rocky Linux 9 and Debian Bookworm as we haven't published any packages for
-# those O/S versions yet.
-#test-exclude:
-#  - pkg: 'routinator'
-#    image: 'rockylinux:9'
-#    mode: 'upgrade-from-published'
-#  - pkg: 'routinator'
-#    image: 'debian:bookworm'
-#    mode: 'upgrade-from-published'
+  - pkg: 'dnst'
+    image: 'almalinux:10'
+    target: 'x86_64'
+    test-mode: 'fresh-install'
+
+  - pkg: 'dnst'
+    image: 'almalinux:10'
+    target: 'x86_64'
+    test-mode: 'upgrade-from-published'
+    published_pkg: 'ldns-utils'
+    # --enablerepo crb is no longer needed since alma10 (https://almalinux.org/blog/2025-09-08-enabling-crb-by-default-for-almalinux10/)
+    # rpm_yum_extra_args: --enablerepo crb
