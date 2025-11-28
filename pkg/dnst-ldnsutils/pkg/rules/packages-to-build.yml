@@ -34,8 +34,8 @@ include:
   - image: 'almalinux:9'
     rpm_rpmlint_check_filters: no-binary
 
-  - image: 'almalinux:8'
-    rpm_rpmlint_check_filters: no-binary
+  # - image: 'almalinux:8'
+  #   rpm_rpmlint_check_filters: no-binary
 
-  - image: 'almalinux:10'
-    rpm_rpmlint_check_filters: no-binary
+  # - image: 'almalinux:10'
+  #   rpm_rpmlint_check_filters: no-binary
