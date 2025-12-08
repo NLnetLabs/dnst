@@ -161,7 +161,7 @@ all nameservers but there is no need to report the TTL.
 
 Typically, in a list of actions, an action of the first category is paired
 with one from the second of third category.
-For example, ``UpdateDnskeyRrset`` is paired with eiher
+For example, ``UpdateDnskeyRrset`` is paired with either
 ``ReportDnskeyPropagated`` or ``WaitDnskeyPropagated``.
 
 A key roll starts with the ``start-roll`` step, which creates new keys.
