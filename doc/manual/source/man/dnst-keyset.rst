@@ -324,7 +324,7 @@ been defined it will be used to generate all future keys, unless the ``dnst
 keyset kmip disable`` command is issued. If more than one KMIP server is
 defined, only one can be the default server at any time. Use the ``dnst
 keyset kmip set-default`` command to change which KMIP server will be used
-to generate future keys. Note that like all ``dnst keyset` subcommands, the
+to generate future keys. Note that like all ``dnst keyset`` subcommands, the
 KMIP subcommands set behaviour for a single zone. Additionally there are
 ``list-servers``, ``get-server``, ``modify-server`` and ``remove-server``
 subcommands for inspecting and altering the configured KMIP server settings.
