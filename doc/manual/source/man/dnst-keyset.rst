@@ -564,7 +564,7 @@ The keyset subcommand provides the following commands:
     Inform keyset that enough time has passed that caches should have expired.
     Note that this command will fail if invoked too early.
 
-  * propgation2-complete <TTL>
+  * propagation2-complete <TTL>
 
     This command is similar to propagation1-complete.
 
