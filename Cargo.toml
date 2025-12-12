@@ -20,7 +20,6 @@ path = "src/bin/ldns.rs"
 default = ["kmip", "openssl", "ring"]
 
 # Cryptographic backends
-#kmip = ["domain/kmip", "dep:indenter", "dep:rand"]
 kmip = ["domain-kmip", "dep:indenter", "dep:rand"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
@@ -44,7 +43,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-validator",
     "unstable-zonetree"
 ] }
-domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "initial-impl", optional = true, features = [
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "main", optional = true, features = [
 ] }
 indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
