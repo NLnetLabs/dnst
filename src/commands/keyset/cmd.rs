@@ -320,6 +320,16 @@ enum SetCommands {
         algorithm: String,
     },
 
+    KskRollType {
+        #[arg(value_parser = KskRollType::new)]
+	value: KskRollType,
+    },
+
+    ZskRollType {
+        #[arg(value_parser = ZskRollType::new)]
+	value: ZskRollType,
+    },
+
     /// Set the config values for automatic KSK rolls.
     AutoKsk {
         /// Whether to automatically start a key roll.
@@ -594,12 +604,18 @@ enum RollVariant {
 
 impl RollVariant {
     /// Return the right RollType for a RollVariant.
-    fn roll_variant_to_roll(self) -> RollType {
+    fn roll_variant_to_roll(self, config: &KeySetConfig) -> RollType {
         // For key types, such as KSK and ZSK, that can have different rolls,
         // we should find out which variant is used.
         match self {
-            RollVariant::Ksk => RollType::KskRoll,
-            RollVariant::Zsk => RollType::ZskRoll,
+            RollVariant::Ksk => match config.ksk_roll_type {
+		KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+		KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll, 
+	    },
+            RollVariant::Zsk => match config.zsk_roll_type {
+		ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+		ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+	    },
             RollVariant::Csk => RollType::CskRoll,
             RollVariant::Algorithm => RollType::AlgorithmRoll,
         }
@@ -1133,6 +1149,8 @@ impl Keyset {
                 println!("state-file: {:?}", ws.config.state_file);
                 println!("use-csk: {}", ws.config.use_csk);
                 println!("algorithm: {}", ws.config.algorithm);
+                println!("ksk-roll-type: {}", ws.config.ksk_roll_type);
+                println!("zsk-roll-type: {}", ws.config.zsk_roll_type);
                 println!("ksk-validity: {:?}", ws.config.ksk_validity);
                 println!("zsk-validity: {:?}", ws.config.zsk_validity);
                 println!("csk-validity: {:?}", ws.config.csk_validity);
@@ -1539,7 +1557,9 @@ struct KeySetConfig {
     /// Algorithm and other parameters for key generation.
     algorithm: KeyParameters,
 
+    #[serde(default)]
     ksk_roll_type: KskRollType,
+    #[serde(default)]
     zsk_roll_type: ZskRollType,
 
     /// Validity of KSKs.
@@ -1602,16 +1622,64 @@ struct AutoConfig {
     done: bool,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 enum KskRollType {
+    #[default]
     DoubleSignatureKskRoll,
     DoubleDsKskRoll,
 }
 
-#[derive(Deserialize, Serialize)]
+impl KskRollType {
+    /// Create a new KskRollType based on the roll name.
+    fn new(roll: &str) -> Result<Self, Error> {
+        if roll == "double-signature-ksk-roll" {
+            Ok(KskRollType::DoubleSignatureKskRoll)
+        } else if roll == "double-ds-ksk-roll" {
+            Ok(KskRollType::DoubleDsKskRoll)
+        } else {
+            Err(format!("unknown roll name {roll}\n").into())
+        }
+    }
+
+}
+
+impl Display for KskRollType {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+	match self {
+	    KskRollType::DoubleSignatureKskRoll => write!(fmt, "double-signature-ksk-roll"),
+	    KskRollType::DoubleDsKskRoll => write!(fmt, "double-ds-ksk-roll"),
+	}
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 enum ZskRollType {
+    #[default]
     PrePublishZskRoll,
     DoubleSignatureZskRoll,
+}
+
+impl ZskRollType {
+    /// Create a new ZskRollType based on the roll name.
+    fn new(roll: &str) -> Result<Self, Error> {
+        if roll == "pre-publish-zsk-roll" {
+            Ok(ZskRollType::PrePublishZskRoll)
+        } else if roll == "double-signature-zsk-roll" {
+            Ok(ZskRollType::DoubleSignatureZskRoll)
+        } else {
+            Err(format!("unknown roll name {roll}\n").into())
+        }
+    }
+
+}
+
+impl Display for ZskRollType {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+	match self {
+	    ZskRollType::PrePublishZskRoll => write!(fmt, "pre-publish-zsk-roll"),
+	    ZskRollType::DoubleSignatureZskRoll => write!(fmt, "double-signature-zsk-roll"),
+	}
+    }
 }
 
 /// Persistent state for the keyset command.
@@ -1839,6 +1907,12 @@ impl WorkSpace {
             SetCommands::Algorithm { algorithm, bits } => {
                 self.config.algorithm = KeyParameters::new(&algorithm, bits)?;
             }
+            SetCommands::KskRollType { value } => {
+                self.config.ksk_roll_type = value;
+            }
+            SetCommands::ZskRollType { value } => {
+                self.config.zsk_roll_type = value;
+            }
             SetCommands::AutoKsk {
                 start,
                 report,
@@ -1957,23 +2031,23 @@ impl WorkSpace {
                 return Ok(());
             }
             RollCommands::Propagation1Complete { ttl } => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.propagation1_complete(roll, ttl)
             }
             RollCommands::CacheExpired1 => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.cache_expired1(roll)
             }
             RollCommands::Propagation2Complete { ttl } => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.propagation2_complete(roll, ttl)
             }
             RollCommands::CacheExpired2 => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.cache_expired2(roll)
             }
             RollCommands::RollDone => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.do_done(roll)?;
                 self.state_changed = true;
                 return Ok(());
