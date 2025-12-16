@@ -72,6 +72,7 @@ use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
@@ -168,6 +169,10 @@ pub struct Keyset {
 /// Type for an optional Duration. A separate type is needed because CLAP
 /// treats Option<T> special.
 type OptDuration = Option<Duration>;
+
+/// Type for an optional UnixTime. A separate type is needed because CLAP
+/// treats Option<T> special.
+type OptUnixTime = Option<UnixTime>;
 
 /// The subcommands of the keyset utility.
 #[allow(clippy::large_enum_variant)]
@@ -472,6 +477,14 @@ enum SetCommands {
         /// Command and arguments.
         args: Vec<String>,
     },
+
+    /// Set the fake time to use when signing and other time related
+    /// operations.
+    FakeTime {
+        /// The time value as Unix seconds.
+        #[arg(value_parser = parse_opt_unixtime)]
+        opt_unixtime: OptUnixTime,
+    },
 }
 
 /// The various subcommands of a key roll command.
@@ -697,6 +710,7 @@ impl Keyset {
                 default_ttl: DEFAULT_TTL,
                 autoremove: false,
                 update_ds_command: Vec::new(),
+                faketime: None,
             };
 
             // Create the parent directies.
@@ -1192,6 +1206,13 @@ impl Keyset {
                 println!("default-ttl: {:?}", ws.config.default_ttl);
                 println!("autoremove: {:?}", ws.config.autoremove);
                 println!("update_ds_command: {:?}", ws.config.update_ds_command);
+                // Only print faketime when it exists.
+                if let Some(faketime) = &ws.config.faketime {
+                    println!(
+                        "fake-time: {}",
+                        <UnixTime as Into<Duration>>::into(faketime.clone()).as_secs()
+                    );
+                }
             }
             Commands::Cron => {
                 if sig_renew(&ws.state.dnskey_rrset, &ws.config.dnskey_remain_time) {
@@ -1594,6 +1615,11 @@ struct KeySetConfig {
 
     /// Command to run when the DS records at the parent need updating.
     update_ds_command: Vec<String>,
+
+    /// Fake time to use when signing.
+    ///
+    /// This is need for integration tests.
+    faketime: Option<UnixTime>,
 }
 
 /// Configuration for key roll automation.
@@ -1928,6 +1954,7 @@ impl WorkSpace {
             SetCommands::UpdateDsCommand { args } => {
                 self.config.update_ds_command = args;
             }
+            SetCommands::FakeTime { opt_unixtime } => self.config.faketime = opt_unixtime,
         }
         self.config_changed = true;
         Ok(())
@@ -2787,7 +2814,8 @@ impl WorkSpace {
                 dnskeys.push(public_key);
             }
         }
-        let now = Timestamp::now().into_int();
+        let now = Into::<Duration>::into(self.config.faketime.clone().unwrap_or(UnixTime::now()))
+            .as_secs() as u32;
         let inception = (now - self.config.dnskey_inception_offset.as_secs() as u32).into();
         let expiration = (now + self.config.dnskey_signature_lifetime.as_secs() as u32).into();
 
@@ -3822,6 +3850,26 @@ fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
     }
     let duration = parse_duration(value)?;
     Ok(Some(duration))
+}
+
+/// Parse a UnixTime from string.
+///
+/// Those accepts both both a seconds value and a broken down time value
+/// without punctuation.
+fn parse_unixtime(value: &str) -> Result<UnixTime, Error> {
+    let timestamp = Timestamp::from_str(value)
+        .map_err(|e| format!("unable to parse Unix time {value}: {e}"))?;
+    Ok(UnixTime::from(timestamp))
+}
+
+/// Parse an optional UnixTime from a string but also allow 'off' to signal
+/// no UnixTime.
+fn parse_opt_unixtime(value: &str) -> Result<Option<UnixTime>, Error> {
+    if value == "off" {
+        return Ok(None);
+    }
+    let unixtime = parse_unixtime(value)?;
+    Ok(Some(unixtime))
 }
 
 /// Check whether signatures need to be renewed.
