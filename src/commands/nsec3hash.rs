@@ -258,6 +258,7 @@ mod tests {
                     algorithm,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -268,6 +269,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -280,6 +282,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt,
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -295,6 +298,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name,
                 };
                 nsec3_hash.execute(&env).unwrap();
