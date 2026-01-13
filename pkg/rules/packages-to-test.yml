@@ -2,7 +2,7 @@
 # workflow inputs.
 ---
 pkg:
-  - 'dnst'
+  - 'cascade-dnst'
 image:
   - "ubuntu:focal"    # ubuntu/20.04
   - "ubuntu:jammy"    # ubuntu/22.04
@@ -27,36 +27,36 @@ test-mode:
   - 'fresh-install'
   - 'upgrade-from-published'
 include:
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:8'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:8'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
     rpm_yum_extra_args: --enablerepo powertools
 
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:9'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:9'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
     rpm_yum_extra_args: --enablerepo crb
 
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:10'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'cascade-dnst'
     image: 'almalinux:10'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'

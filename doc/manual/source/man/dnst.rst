@@ -47,6 +47,10 @@ Commands
 
         Generate a new key pair for a domain name.
 
+   :doc:`dnst-keyset <dnst-keyset>` (1)
+
+        Manage DNSSEC signing keys for a domain.
+
    :doc:`dnst-notify <dnst-notify>` (1)
 
         Send a NOTIFY message to a list of name servers.

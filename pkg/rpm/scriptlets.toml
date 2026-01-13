@@ -1,40 +1,38 @@
 post_trans_script = '''
 #!/bin/bash -e
 
-# This script will be run _after_ upgrade in the presence of an obsoleted ldns-utils
-# package. This is useful because the ldns-utils uninstall script will have been run
-# _after_ installation of dnst and so the symbolic links that we create will be
-# removed, and we have to make sure here that they get put back
-
-FORCE=
-# See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
-if [ $1 -eq 2 ]; then
-    # Upgrade
-    FORCE=-f
-fi
-
-# Create symbolic links
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-keygen
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-key2ds
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-nsec3-hash
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-notify
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-signzone
-ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-update
+# # This script will be run _after_ upgrade in the presence of an obsoleted ldns-utils
+# # package. This is useful because the ldns-utils uninstall script will have been run
+# # _after_ installation of dnst and so the symbolic links that we create will be
+# # removed, and we have to make sure here that they get put back
+# 
+# FORCE=
+# # See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
+# if [ $1 -eq 2 ]; then
+#     # Upgrade
+#     FORCE=-f
+# fi
+# 
+# # Create symbolic links
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-keygen
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-key2ds
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-nsec3-hash
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-notify
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-signzone
+# ln -f -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-update
 '''
 
 post_uninstall_script = '''
 #!/bin/bash -e
-#RPM_SYSTEMD_MACROS#
-
-# See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
-if [ $1 -eq 0 ] ; then
-    # Uninstallation
-    # Remove symbolic links
-    rm -f /usr/bin/ldns-keygen
-    rm -f /usr/bin/ldns-key2ds
-    rm -f /usr/bin/ldns-nsec3-hash
-    rm -f /usr/bin/ldns-notify
-    rm -f /usr/bin/ldns-signzone
-    rm -f /usr/bin/ldns-update
-fi
+# # See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
+# if [ $1 -eq 0 ] ; then
+#     # Uninstallation
+#     # Remove symbolic links
+#     rm -f /usr/bin/ldns-keygen
+#     rm -f /usr/bin/ldns-key2ds
+#     rm -f /usr/bin/ldns-nsec3-hash
+#     rm -f /usr/bin/ldns-notify
+#     rm -f /usr/bin/ldns-signzone
+#     rm -f /usr/bin/ldns-update
+# fi
 '''
