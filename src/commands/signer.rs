@@ -10,6 +10,7 @@ use core::clone::Clone;
 use core::cmp::Ordering;
 use core::fmt::Write;
 use core::str::FromStr;
+use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::rdata::dnssec::RtypeBitmap;
 use domain::rdata::Nsec;
 use domain::dep::octseq::OctetsFrom;
@@ -144,6 +145,21 @@ enum Commands {
 
 #[derive(Clone, Debug, Subcommand)]
 enum SetCommands {
+    /// Set the amount inception times of signatures are backdated.
+    ///
+    /// Note that positive values are subtracted from the current time.
+    InceptionOffset {
+        /// The offset.
+        #[arg(value_parser = super::keyset::cmd::parse_duration)]
+        duration: Duration,
+    },
+    /// Set how much time the expiration times of signatures are in the
+    /// future.
+    Lifetime {
+        /// The lifetime.
+        #[arg(value_parser = super::keyset::cmd::parse_duration)]
+        duration: Duration,
+    },
     UseNsec3 {
         #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
@@ -184,6 +200,14 @@ enum SetCommands {
     },
     NotifyCommand {
         args: Vec<String>,
+    },
+
+    /// Set the fake time to use when signing and other time related
+    /// operations.
+    FakeTime {
+        /// The time value as Unix seconds.
+        #[arg(value_parser = super::keyset::cmd::parse_opt_unixtime)]
+        opt_unixtime: super::keyset::cmd::OptUnixTime,
     },
 }
 
@@ -348,6 +372,7 @@ impl Signer {
                 zonemd: HashSet::new(),
                 serial_policy: SerialPolicy::Keep,
                 notify_command: Vec::new(),
+		faketime: None,
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
             let mut file = File::create(&self.signer_config).map_err(|e| {
@@ -442,7 +467,7 @@ impl Signer {
                 res = self.go_further(env, &sc, &mut signer_state, &kss, options)
             }
             Commands::Resign => {
-		self.resign(&sc, &kss, env)
+		self.resign(&sc, &kss, env)?
 	    }
             Commands::Show => {
                 todo!();
@@ -857,9 +882,10 @@ impl Signer {
             nsec3_hashes = Some(hash_provider);
         }
 
-        let now = TestableTimestamp::now();
-        let inception = (now.into_int() - sc.inception_offset.as_secs() as u32).into();
-        let expiration = (now.into_int() + sc.signature_lifetime.as_secs() as u32).into();
+        let now = Into::<Duration>::into(sc.faketime.clone().unwrap_or(UnixTime::now()))
+            .as_secs() as u32;
+        let inception = (now - sc.inception_offset.as_secs() as u32).into();
+        let expiration = (now + sc.signature_lifetime.as_secs() as u32).into();
 
         let signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
@@ -1147,10 +1173,62 @@ impl Signer {
         Ok(())
     }
 
-    fn resign(&self, sc: &SignerConfig, kss: &KeySetState, _env: impl Env) {
+    fn resign(&self, sc: &SignerConfig, kss: &KeySetState, _env: impl Env) -> Result<(), Error> {
 	let origin = kss.keyset.name();
 	let origin_bytes = Name::<Bytes>::octets_from(origin.clone());
-	let mut iss = IncrementalSigningState::new(origin_bytes);
+	let mut iss = IncrementalSigningState::new(origin_bytes, sc);
+
+        let mut keys = Vec::new();
+        for (k, v) in kss.keyset.keys() {
+            let signer = match v.keytype() {
+                KeyType::Ksk(_) => false,
+                KeyType::Zsk(key_state) => key_state.signer(),
+                KeyType::Csk(_, key_state) => key_state.signer(),
+                KeyType::Include(_) => false,
+            };
+
+            if signer {
+                let privref = v.privref().ok_or("missing private key")?;
+                let priv_url = Url::parse(privref).expect("valid URL expected");
+                let private_data = if priv_url.scheme() == "file" {
+                    std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", priv_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {priv_url}");
+                };
+                let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to parse private key file {privref}: {e}").into()
+                    })?;
+                let pub_url = Url::parse(k).expect("valid URL expected");
+                let public_data = if pub_url.scheme() == "file" {
+                    std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", pub_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {pub_url}");
+                };
+                let public_key =
+                    parse_from_bind::<Bytes>(&public_data).map_err::<Error, _>(|e| {
+                        format!("unable to parse public key file {k}: {e}").into()
+                    })?;
+
+                let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                    .map_err::<Error, _>(|e| {
+                        format!("private key {privref} and public key {k} do not match: {e}").into()
+                    })?;
+                let signing_key = SigningKey::new(
+                    public_key.owner().clone(),
+                    public_key.data().flags(),
+                    key_pair,
+                );
+                keys.push(signing_key);
+            }
+        }
+
+	iss.keys = keys;
+
 	load_signed_zone(&mut iss, &sc.zonefile_out).unwrap();
 
 	// Should check if the NSEC(3) mode has changed. Sign the full 
@@ -1158,11 +1236,27 @@ impl Signer {
 
 	load_unsigned_zone(&mut iss, &sc.zonefile_in).unwrap();
 
-	initial_diffs(&mut iss);
+	load_apex_records(kss, &mut iss)?;
+
+	initial_diffs(&mut iss)?;
 
 	// Should check whether to do NSEC, NSEC3, or NSEC3 opt-out. Just do
 	// NSEC for now.
-	incremental_nsec(&mut iss);
+	incremental_nsec(&mut iss)?;
+
+	let mut new_sigs = vec![];
+	for m in &iss.modified_nsecs {
+	    let Some(nsec) = iss.nsecs.get(m) else {
+		panic!("NSEC for {m} should exist");
+	    };
+
+	    let nsec = nsec.clone();
+	    sign_records(&[nsec], &iss.keys, iss.inception, iss.expiration, &mut new_sigs)?;
+	}
+	for (sig, rtype) in new_sigs {
+	    let key = (sig[0].owner().clone(), rtype);
+	    iss.rrsigs.insert(key, sig);
+	}
 
 	let mut writer = stdout();
 	for (_, data) in iss.new_data {
@@ -1544,6 +1638,12 @@ fn set_command(
     env: &impl Env,
 ) -> Result<(), Error> {
     match cmd {
+	SetCommands::InceptionOffset { duration } => {
+	    sc.inception_offset = duration;
+	}
+	SetCommands::Lifetime { duration } => {
+	    sc.signature_lifetime = duration;
+	}
         SetCommands::UseNsec3 { boolean } => {
             sc.use_nsec3 = boolean;
         }
@@ -1573,6 +1673,7 @@ fn set_command(
         SetCommands::NotifyCommand { args } => {
             sc.notify_command = args;
         }
+	SetCommands::FakeTime { opt_unixtime } => sc.faketime = opt_unixtime,
     }
     *config_changed = true;
     Ok(())
@@ -1605,6 +1706,11 @@ struct SignerConfig {
     zonemd: HashSet<ZonemdTuple>,
     serial_policy: SerialPolicy,
     notify_command: Vec<String>,
+
+    /// Fake time to use when signing.
+    ///
+    /// This is need for integration tests.
+    faketime: Option<UnixTime>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1628,10 +1734,18 @@ struct IncrementalSigningState {
 
     changes: HashMap<Name<Bytes>, ChangesValue>,
     modified_nsecs: HashSet<Name<Bytes>>,
+    keys: Vec<SigningKey<Bytes, KeyPair>>,
+    inception: Timestamp,
+    expiration: Timestamp,
 }
 
 impl IncrementalSigningState {
-    fn new(origin: Name<Bytes>) -> Self {
+    fn new(origin: Name<Bytes>, sc: &SignerConfig) -> Self {
+        let now = Into::<Duration>::into(sc.faketime.clone().unwrap_or(UnixTime::now()))
+            .as_secs() as u32;
+        let inception = (now - sc.inception_offset.as_secs() as u32).into();
+        let expiration = (now + sc.signature_lifetime.as_secs() as u32).into();
+
 	Self {
 	    origin,
 	    old_data: HashMap::new(),
@@ -1640,6 +1754,9 @@ impl IncrementalSigningState {
 	    rrsigs: HashMap::new(),
 	    changes: HashMap::new(),
 	    modified_nsecs: HashSet::new(),
+	    keys: vec![],
+	    inception,
+	    expiration,
        	}
     }
 }
@@ -1851,13 +1968,88 @@ fn load_unsigned_zone(iss: &mut IncrementalSigningState, path: &PathBuf, ) -> Re
     Ok(())
 }
 
-fn initial_diffs( iss: &mut IncrementalSigningState,) {
+fn load_apex_records(kss: &KeySetState, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+	let mut records = vec![];
+	let mut rrsig_records = vec![];
+        for r in &kss.dnskey_rrset {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
+            for entry in zonefile {
+                let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
+
+                // We only care about records in a zonefile
+                let Entry::Record(record) = entry else {
+                    continue;
+                };
+
+                let owner = record.owner().to_name::<Bytes>();
+                let data = record.data().clone().try_flatten_into().unwrap();
+                let r = Record::new(owner, record.class(), record.ttl(), data);
+
+		if r.rtype() == Rtype::RRSIG {
+		    rrsig_records.push(r);
+		} else {
+		    records.push(r);
+		}
+            }
+        }
+
+	if !records.is_empty() {
+	    let key = (records[0].owner().clone(), Rtype::DNSKEY);
+	    iss.new_data.insert(key, records);
+	}
+	if !rrsig_records.is_empty() {
+	    let key = (rrsig_records[0].owner().clone(), Rtype::DNSKEY);
+	    iss.rrsigs.insert(key, rrsig_records);
+	}
+
+        for r in &kss.cds_rrset {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
+            for entry in zonefile {
+                let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
+
+                // We only care about records in a zonefile
+                let Entry::Record(record) = entry else {
+                    continue;
+                };
+
+                let owner = record.owner().to_name::<Bytes>();
+                let data = record.data().clone().try_flatten_into().unwrap();
+                let r = Record::new(owner.clone(), record.class(), record.ttl(), data);
+
+		if r.rtype() == Rtype::RRSIG {
+		    let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+			panic!("RRSIG expected");
+		    };
+		    let key = (owner, rrsig.type_covered());
+		    records= vec![r];
+		    if let Some(v) = iss.rrsigs.get_mut(&key) {
+			v.append(&mut records);
+		    } else
+		    {
+			iss.rrsigs.insert(key, records);
+		    }
+		} else {
+			let key = (owner, r.rtype());
+			records= vec![r];
+			if let Some(v) = iss.new_data.get_mut(&key) {
+			    v.append(&mut records);
+			} else
+			{
+			    iss.new_data.insert(key, records);
+			}
+		}
+            }
+        }
+	Ok(())
+}
+
+fn initial_diffs( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
+    let mut new_sigs = vec![];
     for (_, new_rrset) in iss.new_data.iter_mut() {
-println!("new rrset: {}/{}", new_rrset[0].owner(), new_rrset[0].rtype());
-//dbg!(&new_rrset);
 	let key = (new_rrset[0].owner().clone(), new_rrset[0].rtype());
 	if let Some(mut old_rrset) = iss.old_data.remove(&key) {
-//dbg!(&old_rrset);
 	    old_rrset.sort_by(|a, b| {
 		a.as_ref().data().canonical_cmp(b.as_ref().data())
 	    });
@@ -1867,12 +2059,9 @@ println!("new rrset: {}/{}", new_rrset[0].owner(), new_rrset[0].rtype());
 
 	    if *old_rrset != *new_rrset {
 		if iss.rrsigs.remove(&key).is_some() {
-		    println!("modified, should resign {}/{}",
-			new_rrset[0].owner(), new_rrset[0].rtype());
+		    sign_records(new_rrset, &iss.keys, iss.inception, iss.expiration, &mut new_sigs)?;
 		}
-	
-	    } else {
-	    }
+	    } 
 	}
 	else {
 	    if let Some((added, _)) = iss.changes.get_mut(&key.0) {
@@ -1884,6 +2073,10 @@ println!("new rrset: {}/{}", new_rrset[0].owner(), new_rrset[0].rtype());
 		iss.changes.insert(key.0, (added, removed));
 	    }
 	}
+    }
+    for (sig, rtype) in new_sigs {
+	let key = (sig[0].owner().clone(), rtype);
+	iss.rrsigs.insert(key, sig);
     }
     for (_, old_rrset) in &iss.old_data {
 	// What is left in old_data is removed.
@@ -1901,22 +2094,84 @@ println!("new rrset: {}/{}", new_rrset[0].owner(), new_rrset[0].rtype());
 	    iss.changes.insert(key.0, (added, removed));
 	}
     }
+    Ok(())
 }
 
-fn incremental_nsec( iss: &mut IncrementalSigningState,) {
+fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
     // Should changes be sorted or not? If changes is sorted we will 
     // process a new delegation before any glue. Which is more efficient.
     // Otherwise if glue comes first, the glue will be signed and inserted
     // in the NSEC chain only to be removed when the delegation is processed.
     // However, we removing a delegation, the situation is reversed. For now
     // assuming that sorting is not necessary.
+
+    let set_nsec_rrsig: HashSet<_> = [Rtype::NSEC, Rtype::RRSIG].into();
+
     let changes = iss.changes.clone();
     for (key, (add, delete)) in &changes {
 	dbg!(key);
 	dbg!(add);
 	dbg!(delete);
-	if let Some(nsec) = iss.nsecs.get(key) {
-	    println!("should handle existing name, nsec {nsec:?}");
+
+	// The intersection between add and delete is empty.
+	assert!(add.intersection(delete).next().is_none());
+
+	if let Some(record_nsec) = iss.nsecs.get(key) {
+	    let record_nsec = record_nsec.clone();
+	    let ZoneRecordData::Nsec(nsec) = record_nsec.data() else {
+		panic!("NSEC record expected");
+	    };
+
+	    // Convert the existing RRtype bitmap into a hash set.
+	    let mut curr = HashSet::new();
+	    for rtype in nsec.types() {
+		curr.insert(rtype);
+	    }
+
+	    // The intersection between curr and add is empty.
+	    assert!(curr.intersection(add).next().is_none());
+
+	    // delete is completely contained in curr. In other words the
+	    // difference between delete and curr is empty.
+	    assert!(delete.difference(&curr).next().is_none());
+
+	    if add.contains(&Rtype::NS) {
+		println!("should handle existing name, adding NS nsec {nsec:?}");
+		continue;
+	    }
+	    if delete.contains(&Rtype::NS) {
+		// Apex is special, but we can assume the NS RRset will not
+		// be removed from apex.
+		assert!(*key != iss.origin);
+
+		let mut new = nsec_update_bitmap(&record_nsec, &nsec, &curr, add, delete, &set_nsec_rrsig, iss);
+		
+		// Sign the types at this name except for NSEC, and RRSIG.
+		new.remove(&Rtype::NSEC);
+		new.remove(&Rtype::RRSIG);
+		sign_rtype_set(key, &new, iss)?;
+
+		// Name that were previously occluded are no longer.
+		nsec_clear_occluded(key);
+		continue;
+	    }
+	    if *key != iss.origin && nsec.types().contains(Rtype::NS) {
+		// NS marks a delegation but only when the NS is not
+		// at the apex.
+
+		// If the add set contains DS then sign the DS RRset.
+		if add.contains(&Rtype::DS) {
+		    let ds_set: HashSet<_> = [Rtype::DS].into();
+		    sign_rtype_set(key, &ds_set, iss)?;
+		}
+		nsec_update_bitmap(&record_nsec, &nsec, &curr, add, delete, &set_nsec_rrsig, iss);
+		continue;
+	    }
+
+	    // The add types need to be signed.
+	    sign_rtype_set(key, add, iss)?;
+
+	    nsec_update_bitmap(&record_nsec, &nsec, &curr, add, delete, &set_nsec_rrsig, iss);
 	} else {
 	    if add.is_empty() {
 		assert!(!delete.is_empty());
@@ -1942,9 +2197,8 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) {
 		let rtypebitmap = rtypebitmap.finalize();
 		nsec_insert(key, rtypebitmap, iss);
 		if add.contains(&Rtype::DS) {
-		    let mut ds_set = HashSet::new();
-		    ds_set.insert(Rtype::DS);
-		    sign_rtype_set(key, &ds_set, iss);
+		    let ds_set: HashSet<_> = [Rtype::DS].into();
+		    sign_rtype_set(key, &ds_set, iss)?;
 		}
 		continue;
 	    }
@@ -1957,9 +2211,10 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) {
 	    }
 	    let rtypebitmap = rtypebitmap.finalize();
 	    nsec_insert(key, rtypebitmap, iss);
-	    sign_rtype_set(key, add, iss);
+	    sign_rtype_set(key, add, iss)?;
 	}
     }
+    Ok(())
 }
 
 fn nsec_insert(name: &Name<Bytes>, rtypebitmap: RtypeBitmap<Bytes>, iss: &mut IncrementalSigningState) {
@@ -1994,8 +2249,66 @@ fn nsec_insert(name: &Name<Bytes>, rtypebitmap: RtypeBitmap<Bytes>, iss: &mut In
     iss.modified_nsecs.insert(previous_name.clone());
 }
 
-fn nsec_set_occluded(name: &Name<Bytes>) {
+fn nsec_remove(name: &Name<Bytes>, next_name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
+    dbg!(name);
+    dbg!(next_name);
+
+    // Try to find the NSEC record that comes before the one we are trying
+    // to remove. Assume that the APEX NSEC will always exist can sort 
+    // before anything else.
+    let mut range = iss.nsecs.range::<Name<_>, _>(..name);
+    let (previous_name, previous_record) = range.next_back().expect("previous NSEC record should exist");
+    let previous_name = previous_name.clone();
+    let previous_record = previous_record.clone();
+    drop(range);
+    dbg!(&previous_name);
+    dbg!(&previous_record);
+    let ZoneRecordData::Nsec(previous_nsec) = previous_record.data() else {
+	panic!("NSEC record expected");
+    };
+    dbg!(previous_nsec);
+    let previous_nsec = Nsec::new(next_name.clone(), previous_nsec.types().clone());
+    let previous_record = Record::new(previous_name.clone(), previous_record.class(),
+	previous_record.ttl(), ZoneRecordData::Nsec(previous_nsec));
+    iss.nsecs.insert(previous_name.clone(), previous_record);
+    iss.modified_nsecs.insert(previous_name.clone());
+    iss.nsecs.remove(name);
+    iss.modified_nsecs.remove(name);
+    let key = (name.clone(), Rtype::NSEC);
+    iss.rrsigs.remove(&key);
+}
+
+// Return the effective result HashSet even when the NSEC record gets deleted.
+fn nsec_update_bitmap(record: &ZRD, nsec: &Nsec<Bytes, Name<Bytes>>, curr: &HashSet<Rtype>, add: &HashSet<Rtype>, delete: &HashSet<Rtype>, set_nsec_rrsig: &HashSet<Rtype>, iss: &mut IncrementalSigningState) -> HashSet<Rtype> {
+    // Update curr.
+    let curr: HashSet<_> = curr.union(add).map(|t| *t).collect();
+    let curr: HashSet<_> = curr.difference(delete).map(|t| *t).collect();
+
+    let owner = record.owner();
+    if curr == *set_nsec_rrsig {
+	nsec_remove(owner, nsec.next_name(), iss);
+	return curr;
+    }
+
+    let mut builder = RtypeBitmap::<Bytes>::builder();
+    for rtype in &curr {
+	builder.add(*rtype).expect("should not fail");
+    }
+    let nsec = Nsec::new(nsec.next_name().clone(), builder.finalize());
+    let record = Record::new(record.owner().clone(),
+	record.class(), record.ttl(), ZoneRecordData::Nsec(nsec));
+    iss.nsecs.insert(owner.clone(), record);
+
+    iss.modified_nsecs.insert(owner.clone());
+    curr
+}
+
+fn nsec_set_occluded(_name: &Name<Bytes>) {
     println!("Should implement nsec_set_occluded");
+}
+
+fn nsec_clear_occluded(_name: &Name<Bytes>) {
+    println!("Should implement nsec_clear_occluded");
 }
 
 fn is_occluded(name: &Name<Bytes>, iss: &IncrementalSigningState) -> bool {
@@ -2028,15 +2341,48 @@ fn is_occluded(name: &Name<Bytes>, iss: &IncrementalSigningState) -> bool {
     }
 }
 
-fn sign_rtype_set(name: &Name<Bytes>, set: &HashSet<Rtype>, iss: &mut IncrementalSigningState) {
+fn sign_rtype_set(name: &Name<Bytes>, set: &HashSet<Rtype>, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+    let mut new_sigs = vec![];
     for rtype in set {
 	let key = (name.clone(), rtype.clone());
 	let Some(records) = iss.new_data.get(&key) else {
 	    panic!("Expected something for {}/{}", name, rtype);
 	};
-	println!("Should sign {records:?}");
+	sign_records(records, &iss.keys, iss.inception, iss.expiration, &mut new_sigs)?;
     }
+    for (sig, rtype) in new_sigs {
+	let key = (sig[0].owner().clone(), rtype);
+	iss.rrsigs.insert(key, sig);
+    }
+    Ok(())
 }
+
+fn sign_records(records: &[ZRD], keys: &[SigningKey<Bytes, KeyPair>], inception: Timestamp, expiration: Timestamp, new_sigs: &mut Vec<(Vec<ZRD>, Rtype)>) -> Result<(), Error> {
+
+    let rtype = records[0].rtype();
+    if rtype == Rtype::DNSKEY || rtype == Rtype::CDS ||
+	rtype == Rtype::CDNSKEY {
+	// These records get signed with the KSK(s). Don't touch
+	// the signatures.
+	return Ok(());
+    }
+
+    let rrset = Rrset::new(records)
+	.map_err(|e| format!("Rrset::new failed: {e}"))?;
+    let mut rrsig_records = vec![];
+    for key in keys {
+	let rrsig = sign_rrset(key, &rrset,
+	    inception,
+	    expiration)
+	    .map_err(|e| format!("signing failed: {e}"))?;
+	let record = Record::new(rrsig.owner().clone(),
+	    rrsig.class(), rrsig.ttl(), ZoneRecordData::Rrsig(rrsig.data().clone()));
+	rrsig_records.push(record);
+    }
+    new_sigs.push((rrsig_records, rrset.rtype()));
+    Ok(())
+}
+
 
 //------------ SigningMode ---------------------------------------------------
 
