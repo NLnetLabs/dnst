@@ -2185,8 +2185,6 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 	    }
 
 	    if add.contains(&Rtype::NS) {
-		nsec_set_occluded(key);
-
 		// Create a new NSEC record and sign only DS records (if any).
 		let mut rtypebitmap = RtypeBitmap::<Bytes>::builder();
 		rtypebitmap.add(Rtype::NSEC).expect("should not fail");
@@ -2200,6 +2198,10 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 		    let ds_set: HashSet<_> = [Rtype::DS].into();
 		    sign_rtype_set(key, &ds_set, iss)?;
 		}
+
+		// nsec_set_occluded expects the NSEC for key to exist. 
+		// So call this after inserting the new NSEC record.
+		nsec_set_occluded(key, iss);
 		continue;
 	    }
 	    // Create a new NSEC record and sign all records.
@@ -2303,8 +2305,45 @@ fn nsec_update_bitmap(record: &ZRD, nsec: &Nsec<Bytes, Name<Bytes>>, curr: &Hash
     curr
 }
 
-fn nsec_set_occluded(_name: &Name<Bytes>) {
-    println!("Should implement nsec_set_occluded");
+fn nsec_set_occluded(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
+    let Some(nsec_record) = iss.nsecs.get(name) else {
+	panic!("NSEC for {name} expected to exist");
+    };
+    let ZoneRecordData::Nsec(nsec) = nsec_record.data() else {
+	panic!("NSEC record expected");
+    };
+    let nsec = nsec.clone();
+    let mut next = nsec.next_name().clone();
+    loop {
+	if !next.ends_with(name) {
+	    break;
+	}
+
+	// For consistency, make sure next is not equal to name.
+	if next == name {
+	    break;
+	}
+	dbg!(&next);
+
+	let curr = next;
+	let Some(nsec_record) = iss.nsecs.get(&curr) else {
+	    panic!("NSEC for {name} expected to exist");
+	};
+	dbg!(nsec_record);
+	let ZoneRecordData::Nsec(nsec) = nsec_record.data() else {
+	    panic!("NSEC record expected");
+	};
+	let nsec = nsec.clone();
+	next = nsec.next_name().clone();
+
+	nsec_remove(&curr, &next, iss);
+
+	// Remove all signatures.
+	for rtype in nsec.types().iter() {
+	    let key = (curr.clone(), rtype);
+	    iss.rrsigs.remove(&key);
+	}
+    }
 }
 
 fn nsec_clear_occluded(_name: &Name<Bytes>) {
