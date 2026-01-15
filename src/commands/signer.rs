@@ -1733,10 +1733,10 @@ type ChangesValue = (RtypeSet, RtypeSet); // add set followed by delete set.
 
 struct IncrementalSigningState {
     origin: Name<Bytes>,
-    old_data: HashMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
-    new_data: BTreeMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
-    nsecs: BTreeMap<Name<Bytes>, ZRD>,
-    rrsigs: HashMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
+    old_data: HashMap<(Name<Bytes>, Rtype), Vec<Zrd>>,
+    new_data: BTreeMap<(Name<Bytes>, Rtype), Vec<Zrd>>,
+    nsecs: BTreeMap<Name<Bytes>, Zrd>,
+    rrsigs: HashMap<(Name<Bytes>, Rtype), Vec<Zrd>>,
 
     changes: HashMap<Name<Bytes>, ChangesValue>,
     modified_nsecs: HashSet<Name<Bytes>>,
@@ -1767,7 +1767,7 @@ impl IncrementalSigningState {
     }
 }
 
-type ZRD = Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
+type Zrd = Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
 
 fn load_signed_zone(iss: &mut IncrementalSigningState, path: &PathBuf) -> Result<(), Error> {
     // Don't use Zonefile::load() as it knows nothing about the size of
@@ -2038,33 +2038,29 @@ fn initial_diffs(iss: &mut IncrementalSigningState) -> Result<(), Error> {
             old_rrset.sort_by(|a, b| a.as_ref().data().canonical_cmp(b.as_ref().data()));
             new_rrset.sort_by(|a, b| a.as_ref().data().canonical_cmp(b.as_ref().data()));
 
-            if *old_rrset != *new_rrset {
-                if iss.rrsigs.remove(&key).is_some() {
-                    sign_records(
-                        new_rrset,
-                        &iss.keys,
-                        iss.inception,
-                        iss.expiration,
-                        &mut new_sigs,
-                    )?;
-                }
+            if *old_rrset != *new_rrset && iss.rrsigs.remove(&key).is_some() {
+                sign_records(
+                    new_rrset,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
             }
+        } else if let Some((added, _)) = iss.changes.get_mut(&key.0) {
+            added.insert(new_rrset[0].rtype());
         } else {
-            if let Some((added, _)) = iss.changes.get_mut(&key.0) {
-                added.insert(new_rrset[0].rtype());
-            } else {
-                let mut added = HashSet::new();
-                let removed = HashSet::new();
-                added.insert(new_rrset[0].rtype());
-                iss.changes.insert(key.0, (added, removed));
-            }
+            let mut added = HashSet::new();
+            let removed = HashSet::new();
+            added.insert(new_rrset[0].rtype());
+            iss.changes.insert(key.0, (added, removed));
         }
     }
     for (sig, rtype) in new_sigs {
         let key = (sig[0].owner().clone(), rtype);
         iss.rrsigs.insert(key, sig);
     }
-    for (_, old_rrset) in &iss.old_data {
+    for old_rrset in iss.old_data.values() {
         // What is left in old_data is removed.
         let rtype = old_rrset[0].rtype();
         let key = (old_rrset[0].owner().clone(), rtype);
@@ -2138,13 +2134,13 @@ fn incremental_nsec(iss: &mut IncrementalSigningState) -> Result<(), Error> {
                 // Restrict curr and add to these types.
                 let mask: HashSet<Rtype> = [Rtype::NS, Rtype::DS, Rtype::NSEC, Rtype::RRSIG].into();
 
-                let curr: HashSet<Rtype> = curr.intersection(&mask).map(|r| *r).collect();
-                let add: HashSet<Rtype> = add.intersection(&mask).map(|r| *r).collect();
+                let curr = curr.intersection(&mask).copied().collect();
+                let add = add.intersection(&mask).copied().collect();
 
                 // Update the NSEC record.
                 nsec_update_bitmap(
                     &record_nsec,
-                    &nsec,
+                    nsec,
                     &curr,
                     &add,
                     delete,
@@ -2181,7 +2177,7 @@ fn incremental_nsec(iss: &mut IncrementalSigningState) -> Result<(), Error> {
 
                 let mut new = nsec_update_bitmap(
                     &record_nsec,
-                    &nsec,
+                    nsec,
                     &curr,
                     add,
                     delete,
@@ -2207,30 +2203,14 @@ fn incremental_nsec(iss: &mut IncrementalSigningState) -> Result<(), Error> {
                     let ds_set: HashSet<_> = [Rtype::DS].into();
                     sign_rtype_set(key, &ds_set, iss)?;
                 }
-                nsec_update_bitmap(
-                    &record_nsec,
-                    &nsec,
-                    &curr,
-                    add,
-                    delete,
-                    &set_nsec_rrsig,
-                    iss,
-                );
+                nsec_update_bitmap(&record_nsec, nsec, &curr, add, delete, &set_nsec_rrsig, iss);
                 continue;
             }
 
             // The add types need to be signed.
             sign_rtype_set(key, add, iss)?;
 
-            nsec_update_bitmap(
-                &record_nsec,
-                &nsec,
-                &curr,
-                add,
-                delete,
-                &set_nsec_rrsig,
-                iss,
-            );
+            nsec_update_bitmap(&record_nsec, nsec, &curr, add, delete, &set_nsec_rrsig, iss);
         } else {
             if add.is_empty() {
                 assert!(!delete.is_empty());
@@ -2336,7 +2316,7 @@ fn nsec_remove(name: &Name<Bytes>, next_name: &Name<Bytes>, iss: &mut Incrementa
 
 // Return the effective result HashSet even when the NSEC record gets deleted.
 fn nsec_update_bitmap(
-    record: &ZRD,
+    record: &Zrd,
     nsec: &Nsec<Bytes, Name<Bytes>>,
     curr: &HashSet<Rtype>,
     add: &HashSet<Rtype>,
@@ -2345,8 +2325,8 @@ fn nsec_update_bitmap(
     iss: &mut IncrementalSigningState,
 ) -> HashSet<Rtype> {
     // Update curr.
-    let curr: HashSet<_> = curr.union(add).map(|t| *t).collect();
-    let curr: HashSet<_> = curr.difference(delete).map(|t| *t).collect();
+    let curr: HashSet<_> = curr.union(add).copied().collect();
+    let curr = curr.difference(delete).copied().collect();
 
     let owner = record.owner();
     if curr == *set_nsec_rrsig {
@@ -2491,7 +2471,7 @@ fn is_occluded(name: &Name<Bytes>, iss: &IncrementalSigningState) -> bool {
             // Something weird is going on. Return not occluded.
             return false;
         }
-        if iss.new_data.get(&(curr.clone(), Rtype::NS)).is_some() {
+        if iss.new_data.contains_key(&(curr.clone(), Rtype::NS)) {
             // Name is occluded.
             return true;
         }
@@ -2511,9 +2491,9 @@ fn sign_rtype_set(
 ) -> Result<(), Error> {
     let mut new_sigs = vec![];
     for rtype in set {
-        let key = (name.clone(), rtype.clone());
+        let key = (name.clone(), *rtype);
         let Some(records) = iss.new_data.get(&key) else {
-            panic!("Expected something for {}/{}", name, rtype);
+            panic!("Expected something for {name}/{rtype}");
         };
         sign_records(
             records,
@@ -2531,11 +2511,11 @@ fn sign_rtype_set(
 }
 
 fn sign_records(
-    records: &[ZRD],
+    records: &[Zrd],
     keys: &[SigningKey<Bytes, KeyPair>],
     inception: Timestamp,
     expiration: Timestamp,
-    new_sigs: &mut Vec<(Vec<ZRD>, Rtype)>,
+    new_sigs: &mut Vec<(Vec<Zrd>, Rtype)>,
 ) -> Result<(), Error> {
     let rtype = records[0].rtype();
     if rtype == Rtype::DNSKEY || rtype == Rtype::CDS || rtype == Rtype::CDNSKEY {
