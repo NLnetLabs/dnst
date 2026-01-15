@@ -1728,7 +1728,7 @@ type ChangesValue = (RtypeSet, RtypeSet); // add set followed by delete set.
 struct IncrementalSigningState {
     origin: Name<Bytes>,
     old_data: HashMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
-    new_data: HashMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
+    new_data: BTreeMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
     nsecs: BTreeMap<Name<Bytes>, ZRD>,
     rrsigs: HashMap<(Name<Bytes>, Rtype), Vec<ZRD>>,
 
@@ -1749,7 +1749,7 @@ impl IncrementalSigningState {
 	Self {
 	    origin,
 	    old_data: HashMap::new(),
-	    new_data: HashMap::new(),
+	    new_data: BTreeMap::new(),
 	    nsecs: BTreeMap::new(),
 	    rrsigs: HashMap::new(),
 	    changes: HashMap::new(),
@@ -2109,9 +2109,6 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 
     let changes = iss.changes.clone();
     for (key, (add, delete)) in &changes {
-	dbg!(key);
-	dbg!(add);
-	dbg!(delete);
 
 	// The intersection between add and delete is empty.
 	assert!(add.intersection(delete).next().is_none());
@@ -2136,13 +2133,55 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 	    assert!(delete.difference(&curr).next().is_none());
 
 	    if add.contains(&Rtype::NS) {
-		println!("should handle existing name, adding NS nsec {nsec:?}");
+		// Remove the signatures for the existing types.
+		for rtype in nsec.types().iter() {
+		    // When NS is added, we should keep the signatures for
+		    // DS and NSEC. The NSEC signature will be updated but
+		    // there is no point in removing it first. Do no try to
+		    // remove a signature for RRSIG because it does not exist.
+		    if rtype == Rtype::DS || rtype == Rtype::NSEC ||
+			rtype == Rtype::RRSIG {
+			continue;
+		    }
+		    let key = (key.clone(), rtype);
+		    iss.rrsigs.remove(&key);
+		}
+
+		// Restrict curr and add to these types.
+		let mask: HashSet<Rtype> = [Rtype::NS, Rtype::DS, Rtype::NSEC, Rtype::RRSIG].into();
+
+		let curr: HashSet<Rtype> = curr.intersection(&mask).map(|r| *r).collect();
+		let add: HashSet<Rtype> = add.intersection(&mask).map(|r| *r).collect();
+
+		// Update the NSEC record.
+		nsec_update_bitmap(&record_nsec, &nsec, &curr, &add, delete, &set_nsec_rrsig, iss);
+
+		// Mark descendents as occluded after updating the bitmap.
+		// The reason is that nsec_update_bitmap uses that current
+		// next_name and nsec_set_occluded may change that.
+		nsec_set_occluded(key, iss);
+
 		continue;
 	    }
 	    if delete.contains(&Rtype::NS) {
 		// Apex is special, but we can assume the NS RRset will not
 		// be removed from apex.
 		assert!(*key != iss.origin);
+
+		// Curr does not include all types at this name. Add the
+		// missing types to curr. 
+		let range_key = (key.clone(), 0.into());
+		let range = iss.new_data.range(range_key..);
+		for ((r_name, r_type), _) in range {
+		    if r_name != key {
+			break;
+		    }
+		    if add.contains(r_type) {
+			// Skip what we are trying to add.
+			continue;
+		    }
+		    curr.insert(*r_type);
+		}
 
 		let mut new = nsec_update_bitmap(&record_nsec, &nsec, &curr, add, delete, &set_nsec_rrsig, iss);
 		
@@ -2152,7 +2191,7 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 		sign_rtype_set(key, &new, iss)?;
 
 		// Name that were previously occluded are no longer.
-		nsec_clear_occluded(key);
+		nsec_clear_occluded(key, iss)?;
 		continue;
 	    }
 	    if *key != iss.origin && nsec.types().contains(Rtype::NS) {
@@ -2220,9 +2259,6 @@ fn incremental_nsec( iss: &mut IncrementalSigningState,) -> Result<(), Error> {
 }
 
 fn nsec_insert(name: &Name<Bytes>, rtypebitmap: RtypeBitmap<Bytes>, iss: &mut IncrementalSigningState) {
-    dbg!(&rtypebitmap);
-    dbg!(name);
-
     // Try to find the NSEC record that comes before the one we are trying
     // to insert. Assume that the APEX NSEC will always exist can sort 
     // before anything else.
@@ -2231,17 +2267,13 @@ fn nsec_insert(name: &Name<Bytes>, rtypebitmap: RtypeBitmap<Bytes>, iss: &mut In
     let previous_name = previous_name.clone();
     let previous_record = previous_record.clone();
     drop(range);
-    dbg!(&previous_name);
-    dbg!(&previous_record);
     let ZoneRecordData::Nsec(previous_nsec) = previous_record.data() else {
 	panic!("NSEC record expected");
     };
-    dbg!(previous_nsec);
     let next = previous_nsec.next_name();
     let new_nsec = Nsec::new(next.clone(), rtypebitmap);
     let new_record = Record::new(name.clone(), previous_record.class(),
 	previous_record.ttl(), ZoneRecordData::Nsec(new_nsec));
-    dbg!(&new_record);
     iss.nsecs.insert(name.clone(), new_record);
     iss.modified_nsecs.insert(name.clone());
     let previous_nsec = Nsec::new(name.clone(), previous_nsec.types().clone());
@@ -2252,9 +2284,6 @@ fn nsec_insert(name: &Name<Bytes>, rtypebitmap: RtypeBitmap<Bytes>, iss: &mut In
 }
 
 fn nsec_remove(name: &Name<Bytes>, next_name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
-    dbg!(name);
-    dbg!(next_name);
-
     // Try to find the NSEC record that comes before the one we are trying
     // to remove. Assume that the APEX NSEC will always exist can sort 
     // before anything else.
@@ -2263,12 +2292,9 @@ fn nsec_remove(name: &Name<Bytes>, next_name: &Name<Bytes>, iss: &mut Incrementa
     let previous_name = previous_name.clone();
     let previous_record = previous_record.clone();
     drop(range);
-    dbg!(&previous_name);
-    dbg!(&previous_record);
     let ZoneRecordData::Nsec(previous_nsec) = previous_record.data() else {
 	panic!("NSEC record expected");
     };
-    dbg!(previous_nsec);
     let previous_nsec = Nsec::new(next_name.clone(), previous_nsec.types().clone());
     let previous_record = Record::new(previous_name.clone(), previous_record.class(),
 	previous_record.ttl(), ZoneRecordData::Nsec(previous_nsec));
@@ -2323,13 +2349,10 @@ fn nsec_set_occluded(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
 	if next == name {
 	    break;
 	}
-	dbg!(&next);
-
 	let curr = next;
 	let Some(nsec_record) = iss.nsecs.get(&curr) else {
 	    panic!("NSEC for {name} expected to exist");
 	};
-	dbg!(nsec_record);
 	let ZoneRecordData::Nsec(nsec) = nsec_record.data() else {
 	    panic!("NSEC record expected");
 	};
@@ -2346,8 +2369,78 @@ fn nsec_set_occluded(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
     }
 }
 
-fn nsec_clear_occluded(_name: &Name<Bytes>) {
-    println!("Should implement nsec_clear_occluded");
+fn nsec_clear_occluded(name: &Name<Bytes>, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+    let key = (name.clone(), Rtype::SOA);
+    let range = iss.new_data.range(key..);
+    let mut opt_curr_name: Option<&Name<Bytes>> = None;
+    let mut curr_types: HashSet<Rtype> = HashSet::new();
+    let mut work = vec![];
+
+    // Keep track of delegations. Name below a delegation remain occluded.
+    let mut delegation: Option<Name<Bytes>> = None;
+
+    for ((key_name, key_rtype), _) in range {
+	// There is no easy way to avoid name showing up in the range. Just
+	// filter out name.
+	if key_name == name {
+	    continue;
+	}
+	
+	// Make sure curr_name is below name.
+	if !key_name.ends_with(name) {
+	    break;
+	}
+	if let Some(d) = &delegation {
+	    if key_name.ends_with(d) && key_name != d {
+		// Skip.
+		continue;
+	    }
+	}
+	if *key_rtype == Rtype::NS {
+	    // Set key_name as a delegation.
+	    delegation = Some(key_name.clone());
+	}
+	if let Some(curr_name) = opt_curr_name {
+	    if key_name == curr_name {
+		curr_types.insert(*key_rtype);
+	    } else {
+		work.push((curr_name.clone(), curr_types));
+		opt_curr_name = Some(key_name);
+		curr_types = [*key_rtype].into();
+	    }
+	} else {
+	    opt_curr_name = Some(key_name);
+	    curr_types.insert(*key_rtype);
+	}
+    }
+    if let Some(curr_name) = opt_curr_name {
+	work.push((curr_name.clone(), curr_types));
+    }
+    for (curr_name, curr_types) in work {
+	let mut curr_types = if curr_types.contains(&Rtype::NS) {
+	    let has_ds = curr_types.contains(&Rtype::DS);
+	    let mut curr_types: HashSet<Rtype> = [Rtype::NS].into();
+	    if has_ds {
+		curr_types.insert(Rtype::DS);
+	    }
+	    curr_types
+	} else {
+	    curr_types
+	};
+	let mut rtypebitmap = RtypeBitmap::<Bytes>::builder();
+	rtypebitmap.add(Rtype::NSEC).expect("should not fail");
+	rtypebitmap.add(Rtype::RRSIG).expect("should not fail");
+	for rtype in &curr_types {
+	    rtypebitmap.add(*rtype).expect("should not fail");
+	}
+	let rtypebitmap = rtypebitmap.finalize();
+
+	// Make sure NS doesn't get signed.
+	curr_types.remove(&Rtype::NS);
+	sign_rtype_set(&curr_name, &curr_types, iss)?;
+	nsec_insert(&curr_name, rtypebitmap, iss);
+    }
+    Ok(())
 }
 
 fn is_occluded(name: &Name<Bytes>, iss: &IncrementalSigningState) -> bool {
