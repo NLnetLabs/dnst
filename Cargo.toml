@@ -10,7 +10,7 @@ description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 keywords = ["DNS", "domain", "ldns"]
-rust-version = "1.80"
+rust-version = "1.85"
 
 [[bin]]
 name = "ldns"
@@ -34,7 +34,7 @@ clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
 # Until a release of domain is made that includes the features we need, pin
 # to a specific commit of the domain main branch to ensure that the dnst main
 # branch does not get broken if domain main is not stable.
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "bytes",
     "net",
     "resolv",
@@ -69,7 +69,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", rev = "17fb0e38120c9939ca28462af082d88ae8bc8b1d", features = [
+domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
