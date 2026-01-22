@@ -187,6 +187,9 @@ fn find_prefix(
     salt: &Nsec3Salt<Vec<u8>>,
     env: impl Env,
 ) -> Result<(), Error> {
+    // Note that the following loop runs effectively for ever. The loop will
+    // end when the maximum value of u64 is reached, but it is unlikely anyone
+    // will wait that long.
     for u in 0.. {
         let label = number_to_label(u);
         let mut name = NameBuilder::<Vec<u8>>::new();
