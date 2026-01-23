@@ -28,11 +28,9 @@ use domain::base::zonefile_fmt::{DisplayKind, ZonefileFmt};
 use domain::base::{
     MessageBuilder, Name, ParseRecordData, ParsedName, Record, Rtype, Serial, ToName, Ttl,
 };
+#[cfg(feature = "kmip")]
+use domain::crypto::sign::SignRaw;
 use domain::crypto::sign::{GenerateParams, KeyPair, SecretKeyBytes};
-#[cfg(feature = "kmip")]
-use domain::crypto::{kmip, kmip::KeyUrl, sign::SignRaw};
-#[cfg(feature = "kmip")]
-use domain::dep::kmip::client::pool::SyncConnPool;
 use domain::dep::octseq::{FromBuilder, OctetsFrom};
 use domain::dnssec::common::{display_as_bind, parse_from_bind};
 use domain::dnssec::sign::keys::keyset::{
@@ -55,6 +53,12 @@ use domain::resolv::StubResolver;
 #[cfg(feature = "kmip")]
 use domain::utils::base32::encode_string_hex;
 use domain::zonefile::inplace::{Entry, Zonefile};
+#[cfg(feature = "kmip")]
+use domain_kmip as kmip;
+#[cfg(feature = "kmip")]
+use domain_kmip::dep::kmip::client::pool::SyncConnPool;
+#[cfg(feature = "kmip")]
+use domain_kmip::KeyUrl;
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
 use serde::{Deserialize, Serialize};
@@ -273,6 +277,7 @@ enum Commands {
     },
 }
 
+/// The fields that can be reported with a get command.
 #[derive(Clone, Debug, Subcommand)]
 enum GetCommands {
     /// Get the state of the use_csk config variable.
@@ -295,6 +300,7 @@ enum GetCommands {
     Ds,
 }
 
+/// The fields that can be changed with a set command.
 #[derive(Clone, Debug, Subcommand)]
 enum SetCommands {
     /// Set the use_csk config variable.
@@ -478,6 +484,7 @@ enum SetCommands {
     },
 }
 
+/// The various subcommands of a key roll command.
 #[derive(Clone, Debug, Subcommand)]
 enum RollCommands {
     /// Start a key roll.
@@ -502,6 +509,7 @@ enum RollCommands {
     RollDone,
 }
 
+/// The top-level import command.
 #[derive(Clone, Debug, Subcommand)]
 enum ImportCommands {
     /// Import a public key.
@@ -530,6 +538,7 @@ enum ImportCommands {
     },
 }
 
+/// Where to import from, either a file or an HSM access using KMIP.
 #[derive(Clone, Debug, Subcommand)]
 enum ImportKeyCommands {
     /// Import public/private key pair from file.
@@ -580,6 +589,7 @@ enum ImportKeyCommands {
     },
 }
 
+/// Which type of key a command applies to.
 #[derive(Debug)]
 enum KeyVariant {
     /// Apply command to KSKs.
@@ -590,6 +600,7 @@ enum KeyVariant {
     Csk,
 }
 
+/// Which high-level key roll a command applies to.
 // We cannot use RollType because that name is already in use.
 enum RollVariant {
     /// Apply the subcommand to a KSK roll.
@@ -1610,6 +1621,7 @@ struct KeySetConfig {
     update_ds_command: Vec<String>,
 }
 
+/// Configuration for key roll automation.
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct AutoConfig {
     /// Whether to start a key roll automatically.
@@ -1714,6 +1726,7 @@ pub struct KeySetState {
     internal: HashMap<RollType, RollStateReports>,
 }
 
+/// Parameters for creating a new key.
 #[derive(Deserialize, Serialize)]
 enum KeyParameters {
     /// The RSASHA256 algorithm with the key length in bits.
@@ -1834,6 +1847,7 @@ struct RollStateReports {
     done: Mutex<ReportState>,
 }
 
+/// State for the report progration checks.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ReportState {
     /// State for DNSKEY propagation checks.
@@ -2449,11 +2463,8 @@ impl WorkSpace {
                     .state
                     .kmip
                     .get_pool(&mut self.pools, kmip_key_url.server_id())?;
-                let key =
-                    domain::crypto::kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
-                        .map_err(|err| {
-                            format!("Failed to fetch public key for KMIP key URL: {err}")
-                        })?;
+                let key = kmip::PublicKey::for_key_url(kmip_key_url, kmip_conn_pool)
+                    .map_err(|err| format!("Failed to fetch public key for KMIP key URL: {err}"))?;
                 let owner: Name<Octs> = self
                     .state
                     .keyset
@@ -2592,7 +2603,7 @@ impl WorkSpace {
                 rand::fill(&mut random_bytes[..]);
                 let private_key_random_label = encode_string_hex(&random_bytes);
 
-                let key_pair = domain::crypto::kmip::sign::generate(
+                let key_pair = kmip::sign::generate(
                     public_key_random_label,
                     private_key_random_label,
                     algorithm.clone(),
@@ -2891,7 +2902,7 @@ impl WorkSpace {
                 let privref = v.privref().ok_or("missing private key")?;
                 let priv_url = Url::parse(privref).expect("valid URL expected");
                 let pub_url = Url::parse(k).expect("valid URL expected");
-                let signing_key = match (priv_url.scheme(), pub_url.scheme()) {
+                match (priv_url.scheme(), pub_url.scheme()) {
                     ("file", "file") => {
                         let private_data =
                             std::fs::read_to_string(priv_url.path()).map_err(|e| {
@@ -2910,11 +2921,19 @@ impl WorkSpace {
                                     "private key {privref} and public key {k} do not match: {e}"
                                 )
                             })?;
-                        SigningKey::new(
+                        let signing_key = SigningKey::new(
                             public_key.owner().clone(),
                             public_key.data().flags(),
                             key_pair,
-                        )
+                        );
+                        let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(
+                            |e| {
+                                format!(
+                                    "error signing DNSKEY RRset with private key {privref}: {e}"
+                                )
+                            },
+                        )?;
+                        sigs.push(sig);
                     }
 
                     #[cfg(feature = "kmip")]
@@ -2927,27 +2946,31 @@ impl WorkSpace {
                             .state
                             .kmip
                             .get_pool(&mut self.pools, priv_key_url.server_id())?;
-                        let key_pair = domain::crypto::kmip::sign::KeyPair::from_urls(
+                        let key_pair = kmip::sign::KeyPair::from_urls(
                             priv_key_url,
                             pub_key_url,
                             kmip_conn_pool,
                         )
                         .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
-                        let key_pair = KeyPair::Kmip(key_pair);
-                        SigningKey::new(owner, flags, key_pair)
+                        //let key_pair = KeyPair::Kmip(key_pair);
+                        let signing_key = SigningKey::new(owner, flags, key_pair);
+
+                        // TODO: Should there be a key not found error we can detect here so that we can retry if
+                        // we believe that the key is simply not registered fully yet in the HSM?
+                        let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(
+                            |e| {
+                                format!(
+                                    "error signing DNSKEY RRset with private key {privref}: {e}"
+                                )
+                            },
+                        )?;
+                        sigs.push(sig);
                     }
 
                     (priv_scheme, pub_scheme) => {
                         panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
                     }
                 };
-
-                // TODO: Should there be a key not found error we can detect here so that we can retry if
-                // we believe that the key is simply not registered fully yet in the HSM?
-                let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(|e| {
-                    format!("error signing DNSKEY RRset with private key {privref}: {e}")
-                })?;
-                sigs.push(sig);
             }
         }
 
@@ -3026,7 +3049,7 @@ impl WorkSpace {
                 let privref = v.privref().ok_or("missing private key")?;
                 let priv_url = Url::parse(privref).expect("valid URL expected");
                 let pub_url = Url::parse(k).expect("valid URL expected");
-                let signing_key = match (priv_url.scheme(), pub_url.scheme()) {
+                match (priv_url.scheme(), pub_url.scheme()) {
                     ("file", "file") => {
                         let path = priv_url.path();
                         let filename = env.in_cwd(&path);
@@ -3051,11 +3074,26 @@ impl WorkSpace {
                                     "private key {privref} and public key {k} do not match: {e}"
                                 )
                             })?;
-                        SigningKey::new(
+                        let signing_key = SigningKey::new(
                             public_key.owner().clone(),
                             public_key.data().flags(),
                             key_pair,
+                        );
+                        let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
+                            .map_err(|e| {
+                                format!("error signing CDS RRset with private key {privref}: {e}")
+                            })?;
+                        cds_sigs.push(sig);
+                        let sig = sign_rrset::<_, _, Bytes, _>(
+                            &signing_key,
+                            &cdnskey_rrset,
+                            inception,
+                            expiration,
                         )
+                        .map_err(|e| {
+                            format!("error signing CDNSKEY RRset with private key {privref}: {e}")
+                        })?;
+                        cdnskey_sigs.push(sig);
                     }
 
                     #[cfg(feature = "kmip")]
@@ -3068,35 +3106,34 @@ impl WorkSpace {
                             .state
                             .kmip
                             .get_pool(&mut self.pools, priv_key_url.server_id())?;
-                        let key_pair = domain::crypto::kmip::sign::KeyPair::from_urls(
+                        let key_pair = kmip::sign::KeyPair::from_urls(
                             priv_key_url,
                             pub_key_url,
                             kmip_conn_pool,
                         )
                         .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
-                        let key_pair = KeyPair::Kmip(key_pair);
-                        SigningKey::new(owner, flags, key_pair)
+                        let signing_key = SigningKey::new(owner, flags, key_pair);
+                        let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
+                            .map_err(|e| {
+                                format!("error signing CDS RRset with private key {privref}: {e}")
+                            })?;
+                        cds_sigs.push(sig);
+                        let sig = sign_rrset::<_, _, Bytes, _>(
+                            &signing_key,
+                            &cdnskey_rrset,
+                            inception,
+                            expiration,
+                        )
+                        .map_err(|e| {
+                            format!("error signing CDNSKEY RRset with private key {privref}: {e}")
+                        })?;
+                        cdnskey_sigs.push(sig);
                     }
 
                     (priv_scheme, pub_scheme) => {
                         panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
                     }
                 };
-                let sig =
-                    sign_rrset(&signing_key, &cds_rrset, inception, expiration).map_err(|e| {
-                        format!("error signing CDS RRset with private key {privref}: {e}")
-                    })?;
-                cds_sigs.push(sig);
-                let sig = sign_rrset::<_, _, Bytes, _>(
-                    &signing_key,
-                    &cdnskey_rrset,
-                    inception,
-                    expiration,
-                )
-                .map_err(|e| {
-                    format!("error signing CDNSKEY RRset with private key {privref}: {e}")
-                })?;
-                cdnskey_sigs.push(sig);
             }
         }
 
