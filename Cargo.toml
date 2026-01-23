@@ -10,16 +10,17 @@ description = "Rust reimplementation of important ldns programs."
 categories = ["command-line-utilities"]
 license = "BSD-3-Clause"
 keywords = ["DNS", "domain", "ldns"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [[bin]]
 name = "ldns"
 path = "src/bin/ldns.rs"
 
 [features]
-default = ["openssl", "ring"]
+default = ["kmip", "openssl", "ring"]
 
 # Cryptographic backends
+kmip = ["domain-kmip", "dep:indenter", "dep:rand"]
 openssl = ["domain/openssl"]
 ring = ["domain/ring"]
 
@@ -31,9 +32,6 @@ static-openssl = ["openssl/vendored"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
-# Until a release of domain is made that includes the features we need, pin
-# to a specific commit of the domain main branch to ensure that the dnst main
-# branch does not get broken if domain main is not stable.
 domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
     "bytes",
     "net",
@@ -45,9 +43,13 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-validator",
     "unstable-zonetree"
 ] }
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "main", optional = true, features = [
+] }
+indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
 rayon = "1.10.0"
 octseq = "0.5.2"
+rand = { version = "0.9.2", optional = true }
 ring = "0.17.8"
 tokio = "1.40.0"
 openssl = { version = "*", features = ["vendored"], optional = true }
@@ -60,8 +62,12 @@ jiff = { version = "0.2", default-features = false, features = ["alloc", "std"] 
 # still uses it. And sharded-slab is used by tracing-subscriber, which is
 # used by domain, which is used by us.
 _unused_lazy_static = { package = "lazy_static", version = "1.0.2" }
+serde_json = "1.0.137"
+serde = "1.0.217"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
+url = "2.5.4"
+futures = "0.3.31"
 supports-color = "3.0.2"
 
 [dev-dependencies]
@@ -86,6 +92,7 @@ assets = [
     ["doc/manual/build/man/dnst.1", "/usr/share/man/man1/dnst.1", "644"],
     ["doc/manual/build/man/dnst-key2ds.1", "/usr/share/man/man1/dnst-key2ds.1", "644"],
     ["doc/manual/build/man/dnst-keygen.1", "/usr/share/man/man1/dnst-keygen.1", "644"],
+    ["doc/manual/build/man/dnst-keyset.1", "/usr/share/man/man1/dnst-keyset.1", "644"],
     ["doc/manual/build/man/dnst-notify.1", "/usr/share/man/man1/dnst-notify.1", "644"],
     ["doc/manual/build/man/dnst-nsec3-hash.1", "/usr/share/man/man1/dnst-nsec3-hash.1", "644"],
     ["doc/manual/build/man/dnst-signzone.1", "/usr/share/man/man1/dnst-signzone.1", "644"],
@@ -112,6 +119,7 @@ assets = [
     { source = "doc/manual/build/man/dnst.1", dest = "/usr/share/man/man1/dnst.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-key2ds.1", dest = "/usr/share/man/man1/dnst-key2ds.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-keygen.1", dest = "/usr/share/man/man1/dnst-keygen.1", mode = "644", doc = true },
+    { source = "doc/manual/build/man/dnst-keyset.1", dest = "/usr/share/man/man1/dnst-keyset.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-notify.1", dest = "/usr/share/man/man1/dnst-notify.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-nsec3-hash.1", dest = "/usr/share/man/man1/dnst-nsec3-hash.1", mode = "644", doc = true },
     { source = "doc/manual/build/man/dnst-signzone.1", dest = "/usr/share/man/man1/dnst-signzone.1", mode = "644", doc = true },
