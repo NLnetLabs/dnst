@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-NOTIFY" "1" "Jun 02, 2025" "0.1.0-rc1" "dnst"
+.TH "DNST-NOTIFY" "1" "Oct 03, 2025" "0.1.0-rc2" "dnst"
 .SH NAME
 dnst-notify \- Send a NOTIFY message to a list of name servers
 .SH SYNOPSIS
@@ -35,17 +35,30 @@ dnst-notify \- Send a NOTIFY message to a list of name servers
 \fBdnst notify\fP \fB[OPTIONS]\fP \fB\-z <ZONE>\fP \fB<SERVERS>...\fP
 .SH DESCRIPTION
 .sp
-\fBdnst notify\fP sends a NOTIFY message to the specified name servers. A name
-server can be specified as a domain name or IP address.
+\fBdnst notify\fP sends a NOTIFY message to the specified name servers.
 .sp
 This tells them that an updated zone is available at the primaries. It can
 perform TSIG signatures, and it can add a SOA serial number of the updated
 zone. If a server already has that serial number it will disregard the message.
+.SH ARGUMENTS
+.INDENT 0.0
+.TP
+.B <SERVERS>...
+One or more name servers to which NOTIFY messages will be sent, by
+default on port 53.
+.sp
+Each name server can be specified as a domain name or IP address.
+.UNINDENT
 .SH OPTIONS
 .INDENT 0.0
 .TP
 .B \-z <ZONE>
-The zone to send the NOTIFY for.
+The zone to send the NOTIFY for. Mandatory.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-I <ADDRESS>
+Source IP to send the message from.
 .UNINDENT
 .INDENT 0.0
 .TP
