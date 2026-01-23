@@ -36,6 +36,11 @@ Options
       Use the given salt for the hash calculation. The salt value should be
       in hexadecimal format. Defaults to an empty salt.
 
+.. option:: --find-prefix <BASE32 STRING>
+
+      Find a label that result in an NSEC3 hash that starts with a given
+      string.
+
 .. option:: -h, --help
 
       Print the help text (short summary with ``-h``, long help with

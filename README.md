@@ -1,10 +1,13 @@
+[![Discuss on Discourse](https://img.shields.io/badge/Discourse-NLnet_Labs-orange?logo=Discourse)](https://community.nlnetlabs.nl/c/dns-libraries-tools/12)
+[![Mastodon Follow](https://img.shields.io/mastodon/follow/114692612288811644?domain=social.nlnetlabs.nl&style=social)](https://social.nlnetlabs.nl/@nlnetlabs)
+
 # dnst
 
 dnst
 :: Domain Name System Tools - a toolset to assist DNS operators with zone and nameserver maintenance.
 
 dnst is intended to offer both:
-- a supported drop-in (see below) replacement and upgrade path for a subset of the popular NLnet Labs LDNS example tools, re-implemented in the Rust prpgramming language powered by the NLnet Labs "domain" Rust library
+- a supported drop-in (see below) replacement and upgrade path for a subset of the popular NLnet Labs LDNS example tools, re-implemented in the Rust prpgramming language powered by the NLnet Labs [domain](https://github.com/NLnetLabs/domain) Rust library
 - an evolving toolbox of commands to aid DNS operators in the maintenance and operation of their zones and nameservers.
 
 dnst is not intended perform dig and drill-like functions; for this NLnet Labs offers [dnsi](https://github.com/NLnetLabs/dnsi).

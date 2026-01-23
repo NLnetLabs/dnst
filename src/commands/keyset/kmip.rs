@@ -30,11 +30,9 @@ use std::{
 };
 
 use clap::Subcommand;
-use domain::{
-    base::{name::ToLabelIter, Name, NameBuilder},
-    crypto::kmip::{ClientCertificate, ConnectionSettings, KeyUrl},
-    dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool},
-};
+use domain::base::{name::ToLabelIter, Name, NameBuilder};
+use domain_kmip::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
+use domain_kmip::{ClientCertificate, ConnectionSettings, KeyUrl};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -1598,10 +1596,6 @@ pub struct KmipState {
     /// Which KMIP server should new keys be created in, if any?
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub default_server_id: Option<String>,
-
-    /// The current set of KMIP server pools.
-    #[serde(skip)]
-    pub pools: HashMap<String, SyncConnPool>,
 }
 
 impl KmipState {
@@ -1611,10 +1605,13 @@ impl KmipState {
     /// created if needed.
     ///
     /// Returns Ok(None) if no default KMIP server is set.
-    pub fn get_default_pool(&mut self) -> Result<Option<SyncConnPool>, Error> {
+    pub fn get_default_pool(
+        &self,
+        pools: &mut HashMap<String, SyncConnPool>,
+    ) -> Result<Option<SyncConnPool>, Error> {
         if self.default_server_id.is_some() {
             let id = self.default_server_id.clone().unwrap();
-            return self.get_pool(&id).map(Some);
+            return self.get_pool(pools, &id).map(Some);
         }
         Ok(None)
     }
@@ -1626,8 +1623,12 @@ impl KmipState {
     ///
     /// Returns Ok(pool) or Err if the server ID is not known or the pool
     /// cannot be created.
-    pub fn get_pool(&mut self, id: &str) -> Result<SyncConnPool, Error> {
-        match self.pools.get(id) {
+    pub fn get_pool(
+        &self,
+        pools: &mut HashMap<String, SyncConnPool>,
+        id: &str,
+    ) -> Result<SyncConnPool, Error> {
+        match pools.get(id) {
             Some(pool) => Ok(pool.clone()),
             None => {
                 let Some(srv_conn_settings) = self.servers.get(id) else {
@@ -1647,7 +1648,7 @@ impl KmipState {
                 )
                 .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
 
-                self.pools.insert(id.to_string(), pool.clone());
+                pools.insert(id.to_string(), pool.clone());
                 Ok(pool)
             }
         }

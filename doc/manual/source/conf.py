@@ -194,6 +194,7 @@ man_pages = [
     ('man/ldns-key2ds', 'ldns-key2ds', 'Generate DS RRs from the DNSKEYs in a keyfile', author, 1),
     ('man/dnst-keygen', 'dnst-keygen', 'Generate a new key pair for a domain name', author, 1),
     ('man/ldns-keygen', 'ldns-keygen', 'Generate a new key pair for a domain name', author, 1),
+    ('man/dnst-keyset', 'dnst-keyset', 'Manage DNSSEC signing keys for a domain', author, 1),
     ('man/dnst-notify', 'dnst-notify', 'Send a NOTIFY message to a list of name servers', author, 1),
     ('man/ldns-notify', 'ldns-notify', 'Send a NOTIFY message to a list of name servers', author, 1),
     ('man/dnst-nsec3-hash', 'dnst-nsec3-hash', 'Print out the NSEC3 hash of a domain name', author, 1),

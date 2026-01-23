@@ -6,10 +6,14 @@ Breaking changes
 
 New
 
+- Add find-prefix option to nsec3hash to find a label that results in an
+  NSEC3 hash with a specified prefix. ([#147])
+
 Bug fixes
 
 Other changes
 
+[#147]: https://github.com/NLnetLabs/domain/pull/147
 
 ## 0.1.0-rc1 ‘Prologue’
 
