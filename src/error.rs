@@ -1,6 +1,7 @@
 use std::fmt;
 
 use domain::base::wire::ParseError;
+use supports_color::Stream;
 use tracing::error;
 
 use crate::env::Env;
@@ -67,7 +68,11 @@ impl Error {
             // clap produces and return.
             PrimaryError::Clap(e) => {
                 let mut err = env.stderr();
-                writeln!(err, "{}", e.render().ansi());
+                if supports_color::on(Stream::Stderr).is_some_and(|s| s.has_basic) {
+                    writeln!(err, "{}", e.render().ansi())
+                } else {
+                    writeln!(err, "{}", e.render())
+                }
                 return;
             }
             PrimaryError::Other(error) => error,
