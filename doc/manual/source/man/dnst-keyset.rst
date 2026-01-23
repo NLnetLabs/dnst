@@ -161,7 +161,7 @@ all nameservers but there is no need to report the TTL.
 
 Typically, in a list of actions, an action of the first category is paired
 with one from the second of third category.
-For example, ``UpdateDnskeyRrset`` is paired with eiher
+For example, ``UpdateDnskeyRrset`` is paired with either
 ``ReportDnskeyPropagated`` or ``WaitDnskeyPropagated``.
 
 A key roll starts with the ``start-roll`` step, which creates new keys.
@@ -324,7 +324,7 @@ been defined it will be used to generate all future keys, unless the ``dnst
 keyset kmip disable`` command is issued. If more than one KMIP server is
 defined, only one can be the default server at any time. Use the ``dnst
 keyset kmip set-default`` command to change which KMIP server will be used
-to generate future keys. Note that like all ``dnst keyset` subcommands, the
+to generate future keys. Note that like all ``dnst keyset`` subcommands, the
 KMIP subcommands set behaviour for a single zone. Additionally there are
 ``list-servers``, ``get-server``, ``modify-server`` and ``remove-server``
 subcommands for inspecting and altering the configured KMIP server settings.
@@ -564,7 +564,7 @@ The keyset subcommand provides the following commands:
     Inform keyset that enough time has passed that caches should have expired.
     Note that this command will fail if invoked too early.
 
-  * propgation2-complete <TTL>
+  * propagation2-complete <TTL>
 
     This command is similar to propagation1-complete.
 

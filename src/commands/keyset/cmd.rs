@@ -285,6 +285,7 @@ enum Commands {
     },
 }
 
+/// The fields that can be reported with a get command.
 #[derive(Clone, Debug, Subcommand)]
 enum GetCommands {
     /// Get the state of the use_csk config variable.
@@ -309,6 +310,7 @@ enum GetCommands {
     Ds,
 }
 
+/// The fields that can be changed with a set command.
 #[derive(Clone, Debug, Subcommand)]
 enum SetCommands {
     /// Set the use_csk config variable.
@@ -488,6 +490,7 @@ enum SetCommands {
     },
 }
 
+/// The various subcommands of a key roll command.
 #[derive(Clone, Debug, Subcommand)]
 enum RollCommands {
     /// Start a key roll.
@@ -512,6 +515,7 @@ enum RollCommands {
     RollDone,
 }
 
+/// The top-level import command.
 #[derive(Clone, Debug, Subcommand)]
 enum ImportCommands {
     /// Import a public key.
@@ -540,6 +544,7 @@ enum ImportCommands {
     },
 }
 
+/// Where to import from, either a file or an HSM access using KMIP.
 #[derive(Clone, Debug, Subcommand)]
 enum ImportKeyCommands {
     /// Import public/private key pair from file.
@@ -590,6 +595,7 @@ enum ImportKeyCommands {
     },
 }
 
+/// Which type of key a command applies to.
 #[derive(Debug)]
 enum KeyVariant {
     /// Apply command to KSKs.
@@ -600,6 +606,7 @@ enum KeyVariant {
     Csk,
 }
 
+/// Which high-level key roll a command applies to.
 // We cannot use RollType because that name is already in use.
 enum RollVariant {
     /// Apply the subcommand to a KSK roll.
@@ -1693,6 +1700,7 @@ struct KeySetConfig {
     update_ds_command: Vec<String>,
 }
 
+/// Configuration for key roll automation.
 #[derive(Clone, Default, Deserialize, Serialize)]
 struct AutoConfig {
     /// Whether to start a key roll automatically.
@@ -1737,6 +1745,7 @@ pub struct KeySetState {
     internal: HashMap<RollType, RollStateReports>,
 }
 
+/// Parameters for creating a new key.
 #[derive(Deserialize, Serialize)]
 enum KeyParameters {
     /// The RSASHA256 algorithm with the key length in bits.
@@ -1857,6 +1866,7 @@ struct RollStateReports {
     done: Mutex<ReportState>,
 }
 
+/// State for the report progration checks.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ReportState {
     /// State for DNSKEY propagation checks.

@@ -1,9 +1,11 @@
+use std::char::from_u32;
 use std::ffi::OsString;
 use std::str::FromStr;
 
 use clap::builder::ValueParser;
 use domain::base::iana::nsec3::Nsec3HashAlgorithm;
 use domain::base::name::Name;
+use domain::base::NameBuilder;
 use domain::dnssec::common::nsec3_hash;
 use domain::rdata::nsec3::Nsec3Salt;
 use lexopt::Arg;
@@ -46,6 +48,9 @@ pub struct Nsec3Hash {
         value_parser = ValueParser::new(Nsec3Hash::parse_salt)
     )]
     salt: Nsec3Salt<Vec<u8>>,
+
+    #[arg(long = "find-prefix")]
+    find_prefix: Option<String>,
 
     /// The domain name to hash
     #[arg(value_name = "DOMAIN NAME", value_parser = ValueParser::new(parse_name))]
@@ -111,6 +116,7 @@ impl LdnsCommand for Nsec3Hash {
             algorithm,
             iterations,
             salt,
+            find_prefix: None,
             name,
         })))
     }
@@ -153,6 +159,16 @@ impl Nsec3Hash {
 
 impl Nsec3Hash {
     pub fn execute(self, env: impl Env) -> Result<(), Error> {
+        if let Some(prefix) = self.find_prefix {
+            return find_prefix(
+                &prefix,
+                &self.name,
+                self.algorithm,
+                self.iterations,
+                &self.salt,
+                env,
+            );
+        }
         let hash =
             nsec3_hash::<_, _, Vec<u8>>(&self.name, self.algorithm, self.iterations, &self.salt)
                 .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
@@ -161,6 +177,49 @@ impl Nsec3Hash {
         writeln!(env.stdout(), "{hash}.");
         Ok(())
     }
+}
+
+fn find_prefix(
+    prefix: &str,
+    origin_name: &Name<Vec<u8>>,
+    algorithm: Nsec3HashAlgorithm,
+    iterations: u16,
+    salt: &Nsec3Salt<Vec<u8>>,
+    env: impl Env,
+) -> Result<(), Error> {
+    // Note that the following loop runs effectively for ever. The loop will
+    // end when the maximum value of u64 is reached, but it is unlikely anyone
+    // will wait that long.
+    for u in 0.. {
+        let label = number_to_label(u);
+        let mut name = NameBuilder::<Vec<u8>>::new();
+        name.append_chars(label).expect("should not fail");
+        let name = name.append_origin(&origin_name).expect("should not fail");
+        let hash = nsec3_hash::<_, _, Vec<u8>>(&name, algorithm, iterations, salt)
+            .map_err(|err| format!("Error creating NSEC3 hash: {err}"))?
+            .to_string()
+            .to_lowercase();
+        if hash.starts_with(prefix) {
+            writeln!(env.stdout(), "{name}");
+            writeln!(env.stdout(), "({hash})");
+            return Ok(());
+        }
+    }
+    panic!("Nothing found for pattern {prefix}");
+}
+
+/// Create a label for a number using lower case letters.
+fn number_to_label(mut n: u64) -> Vec<char> {
+    let mut label = Vec::<char>::new();
+    while n != 0 {
+        let r = n % 26;
+        n /= 26;
+        label.push(from_u32('a' as u32 + r as u32).expect("should not fail"));
+    }
+    if label.is_empty() {
+        label.push('a')
+    }
+    label
 }
 
 // These are just basic tests as there is very little code in this module, the
@@ -202,6 +261,7 @@ mod tests {
                     algorithm,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -212,6 +272,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -224,6 +285,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt,
+                    find_prefix: None,
                     name: Name::root(),
                 };
                 nsec3_hash.execute(&env).unwrap();
@@ -239,6 +301,7 @@ mod tests {
                     algorithm: Nsec3HashAlgorithm::SHA1,
                     iterations: 0,
                     salt: Nsec3Salt::empty(),
+                    find_prefix: None,
                     name,
                 };
                 nsec3_hash.execute(&env).unwrap();
