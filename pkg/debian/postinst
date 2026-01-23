@@ -1,6 +1,6 @@
 #!/bin/sh -e
 
-case "$1" in
-configure)
-    ;;
-esac
+# case "$1" in
+# configure)
+#     ;;
+# esac
