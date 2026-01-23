@@ -326,14 +326,18 @@ enum SetCommands {
         algorithm: String,
     },
 
+    /// Set the type of KSK roll to perform.
     KskRollType {
+        /// The type of KSK roll.
         #[arg(value_parser = KskRollType::new)]
-	value: KskRollType,
+        value: KskRollType,
     },
 
+    /// Set the type of ZSK roll to perform.
     ZskRollType {
+        /// The type of ZSK roll.
         #[arg(value_parser = ZskRollType::new)]
-	value: ZskRollType,
+        value: ZskRollType,
     },
 
     /// Set the config values for automatic KSK rolls.
@@ -620,13 +624,13 @@ impl RollVariant {
         // we should find out which variant is used.
         match self {
             RollVariant::Ksk => match config.ksk_roll_type {
-		KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
-		KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll, 
-	    },
+                KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+                KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
+            },
             RollVariant::Zsk => match config.zsk_roll_type {
-		ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
-		ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
-	    },
+                ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+                ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+            },
             RollVariant::Csk => RollType::CskRoll,
             RollVariant::Algorithm => RollType::AlgorithmRoll,
         }
@@ -696,8 +700,8 @@ impl Keyset {
                 keys_dir,
                 use_csk: false,
                 algorithm: KeyParameters::EcdsaP256Sha256,
-		ksk_roll_type: KskRollType::DoubleSignatureKskRoll,
-		zsk_roll_type: ZskRollType::PrePublishZskRoll,
+                ksk_roll_type: KskRollType::DoubleSignatureKskRoll,
+                zsk_roll_type: ZskRollType::PrePublishZskRoll,
                 ksk_validity: None,
                 zsk_validity: None,
                 csk_validity: None,
@@ -1568,8 +1572,11 @@ struct KeySetConfig {
     /// Algorithm and other parameters for key generation.
     algorithm: KeyParameters,
 
+    /// Type of KSK roll to perform.
     #[serde(default)]
     ksk_roll_type: KskRollType,
+
+    /// Type of ZSK roll to perform.
     #[serde(default)]
     zsk_roll_type: ZskRollType,
 
@@ -1634,10 +1641,18 @@ struct AutoConfig {
     done: bool,
 }
 
+/// Type of KSK roll to perform.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 enum KskRollType {
     #[default]
+    /// KSK roll that first adds the new KSK to the DNSKEY RRset and add an
+    /// additional signature over the DNSKEY RRset from that key before
+    /// replace the DS for the old key with one for the new key.
     DoubleSignatureKskRoll,
+
+    /// KSK roll that first publishes an additional DS record for the new
+    /// before switching to the new key in the DNSKEY RRset and signing the
+    /// DNSKEY RRset with the new key.
     DoubleDsKskRoll,
 }
 
@@ -1652,22 +1667,27 @@ impl KskRollType {
             Err(format!("unknown roll name {roll}\n").into())
         }
     }
-
 }
 
 impl Display for KskRollType {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-	match self {
-	    KskRollType::DoubleSignatureKskRoll => write!(fmt, "double-signature-ksk-roll"),
-	    KskRollType::DoubleDsKskRoll => write!(fmt, "double-ds-ksk-roll"),
-	}
+        match self {
+            KskRollType::DoubleSignatureKskRoll => write!(fmt, "double-signature-ksk-roll"),
+            KskRollType::DoubleDsKskRoll => write!(fmt, "double-ds-ksk-roll"),
+        }
     }
 }
 
+/// Type of ZSK key roll to use.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 enum ZskRollType {
     #[default]
+    /// Type of ZSK roll where the new ZSK is first added to the DNSKEY
+    /// RRset and then the zone is signed with the new key.
     PrePublishZskRoll,
+
+    /// Type of ZSK roll where the zone is signed with both the old and the
+    /// new ZSK for some period of time.
     DoubleSignatureZskRoll,
 }
 
@@ -1682,15 +1702,14 @@ impl ZskRollType {
             Err(format!("unknown roll name {roll}\n").into())
         }
     }
-
 }
 
 impl Display for ZskRollType {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-	match self {
-	    ZskRollType::PrePublishZskRoll => write!(fmt, "pre-publish-zsk-roll"),
-	    ZskRollType::DoubleSignatureZskRoll => write!(fmt, "double-signature-zsk-roll"),
-	}
+        match self {
+            ZskRollType::PrePublishZskRoll => write!(fmt, "pre-publish-zsk-roll"),
+            ZskRollType::DoubleSignatureZskRoll => write!(fmt, "double-signature-zsk-roll"),
+        }
     }
 }
 
@@ -3329,9 +3348,9 @@ impl WorkSpace {
     /// Start a KSK roll.
     fn start_ksk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
         let roll_type = match self.config.ksk_roll_type {
-	    KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
-	    KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
-	};
+            KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+            KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
+        };
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3407,9 +3426,9 @@ impl WorkSpace {
     /// Start a ZSK roll.
     fn start_zsk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
         let roll_type = match self.config.zsk_roll_type {
-	    ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
-	    ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
-	};
+            ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+            ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+        };
 
         assert!(!self.state.keyset.keys().is_empty());
 
