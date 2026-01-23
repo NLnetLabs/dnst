@@ -721,6 +721,16 @@ Not all values are supported for KMIP keys.
 For RSA keys, the length of the key in bits.
 .UNINDENT
 .IP \(bu 2
+ksk\-roll\-type <KSK\-ROLL\-TYPE>
+.sp
+The type of KSK roll to use. Possible values are double\-signature\-ksk\-roll
+and double\-ds\-ksk\-roll.
+.IP \(bu 2
+zsk\-roll\-type <ZSK\-ROLL\-TYPE>
+.sp
+The type of ZSK roll to use. Possible values are pre\-publish\-zsk\-roll
+and double\-signature\-zsk\-roll.
+.IP \(bu 2
 auto\-ksk, auto\-zsk, auto\-csk, auto\-algorithm
 .sp
 These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.

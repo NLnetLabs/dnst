@@ -701,6 +701,16 @@ The keyset subcommand provides the following commands:
 
        For RSA keys, the length of the key in bits.
 
+  * ksk-roll-type <KSK-ROLL-TYPE>
+
+    The type of KSK roll to use. Possible values are double-signature-ksk-roll
+    and double-ds-ksk-roll.
+
+  * zsk-roll-type <ZSK-ROLL-TYPE>
+
+    The type of ZSK roll to use. Possible values are pre-publish-zsk-roll
+    and double-signature-zsk-roll.
+
   * auto-ksk, auto-zsk, auto-csk, auto-algorithm
 
     These commands take four boolean arguments: <START> <REPORT> <EXPIRE> <DONE>.
