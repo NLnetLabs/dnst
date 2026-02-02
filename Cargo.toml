@@ -140,3 +140,6 @@ assets = [
 # Set Obsoletes per https://docs.fedoraproject.org/en-US/packaging-guidelines/#renaming-or-replacing-existing-packages.
 [package.metadata.generate-rpm.obsoletes]
 ldns-utils = "< 0:1.8.4-2"
+
+[patch.'https://github.com/NLnetLabs/domain.git']
+domain = { path = "../domain" }

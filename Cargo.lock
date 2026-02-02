@@ -350,7 +350,6 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#80ca8b57d8b7d551b4cf5fea020674e694eeecd3"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -396,7 +395,6 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#80ca8b57d8b7d551b4cf5fea020674e694eeecd3"
 dependencies = [
  "proc-macro2",
  "quote",
