@@ -1274,11 +1274,7 @@ impl Signer {
         initial_diffs(&mut iss)?;
 
         if sc.use_nsec3 {
-            if sc.opt_out {
-                todo!();
-            } else {
-                incremental_nsec3(&mut iss)?;
-            }
+            incremental_nsec3(&mut iss)?;
         } else {
             incremental_nsec(&mut iss)?;
         }
@@ -2359,6 +2355,8 @@ fn incremental_nsec3(iss: &mut IncrementalSigningState) -> Result<(), Error> {
     // However, we removing a delegation, the situation is reversed. For now
     // assuming that sorting is not necessary.
 
+    let opt_out_flag = iss.nsec3param.opt_out_flag();
+
     let changes = iss.changes.clone();
     for (key, (add, delete)) in &changes {
         // The intersection between add and delete is empty.
@@ -2469,6 +2467,19 @@ fn incremental_nsec3(iss: &mut IncrementalSigningState) -> Result<(), Error> {
         } else {
             if add.is_empty() {
                 assert!(!delete.is_empty());
+
+                // Special magic for out-out. It is possible that an NS
+                // record got deleted. With opt-out there will not be an
+                // NSEC3 record if there is only a NS record and no DS record.
+                if opt_out_flag && delete.contains(&Rtype::NS) {
+                    if is_occluded(key, iss) {
+                        // No need to do anything.
+                        continue;
+                    }
+                    nsec3_clear_occluded(key, iss)?;
+                    continue;
+                }
+
                 // No need to do anything.
                 continue;
             }
@@ -2478,7 +2489,29 @@ fn incremental_nsec3(iss: &mut IncrementalSigningState) -> Result<(), Error> {
                 continue;
             }
 
+            // Just copy add in case we need to change it.
+            let mut add = add.clone();
+            if opt_out_flag {
+                // We have a new record and no NSEC3 record exists. But in the
+                // case of opt-out there may already be an NS record.
+                // We are not at APEX because APEX always has an NSEC3
+                // record.
+                let tmpkey = (key.clone(), Rtype::NS);
+                if iss.new_data.contains_key(&tmpkey) {
+                    // Found an NS record. It is safe to add NS to the add
+                    // set.
+                    add.insert(Rtype::NS);
+                }
+            }
+
             if add.contains(&Rtype::NS) {
+                if opt_out_flag {
+                    // Check if this is just an NS record. If so, don't
+                    // create an NSEC3 record.
+                    if !add.iter().any(|r| *r != Rtype::NS) {
+                        continue;
+                    }
+                }
                 // Create a new NSEC3 record and sign only DS records (if any).
                 // If add contains DS then add RRSIG to add.
 
@@ -2503,7 +2536,7 @@ fn incremental_nsec3(iss: &mut IncrementalSigningState) -> Result<(), Error> {
             // Create a new NSEC3 record and sign all records.
             let rtypebitmap = nsec3_rtypebitmap_from_iterator(add_with_rrsig.iter());
             nsec3_insert_full(key, nsec3_hash_octets, &nsec3_name, rtypebitmap, iss);
-            sign_rtype_set(key, add, iss)?;
+            sign_rtype_set(key, &add, iss)?;
         }
     }
     Ok(())
@@ -2874,11 +2907,40 @@ fn nsec3_update_bitmap(
     }
 
     if curr.is_empty() {
-        nsec3_remove_full(name, owner, nsec3.next_owner(), iss);
+        // The NSEC3 bitmp will be empty, but this may now have become an
+        // empty non-terminal. Our only option is to update the NSEC3 record
+        // and then call nsec3_remove_et to see if it is empty can can be
+        // removed.
+        nsec3_update(owner, nsec3_record, nsec3, &curr, iss);
+        nsec3_remove_et(name, iss);
         return curr;
     }
 
-    let rtypebitmap = nsec3_rtypebitmap_from_iterator(curr.iter());
+    if iss.nsec3param.opt_out_flag() && !curr.iter().any(|r| *r != Rtype::NS) {
+        // The new bitmap has nothing except for NS. We would like to delete
+        // the NSEC3. However there may still be descendents that need to be
+        // removed with nsec3_set_occluded. Update this NSEC3 to be empty and
+        // call nsec3_remove_et to remove it if there are no descendents.
+
+        let empty_curr = HashSet::new();
+        nsec3_update(owner, nsec3_record, nsec3, &empty_curr, iss);
+        nsec3_remove_et(name, iss);
+        return curr;
+    }
+
+    nsec3_update(owner, nsec3_record, nsec3, &curr, iss);
+    curr
+}
+
+fn nsec3_update(
+    owner: &Name<Bytes>,
+    nsec3_record: &Zrd,
+    nsec3: &Nsec3<Bytes>,
+    rtypes: &HashSet<Rtype>,
+    iss: &mut IncrementalSigningState,
+) {
+    // Just update an NSEC3 record without further logic.
+    let rtypebitmap = nsec3_rtypebitmap_from_iterator(rtypes.iter());
     let nsec3 = Nsec3::new(
         iss.nsec3param.hash_algorithm(),
         iss.nsec3param.flags(),
@@ -2896,7 +2958,6 @@ fn nsec3_update_bitmap(
     iss.nsec3s.insert(owner.clone(), record);
 
     iss.modified_nsecs.insert(owner.clone());
-    curr
 }
 
 fn nsec3_remove_full(
