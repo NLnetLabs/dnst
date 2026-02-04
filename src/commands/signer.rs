@@ -2364,21 +2364,8 @@ fn incremental_nsec3(iss: &mut IncrementalSigningState) -> Result<(), Error> {
         // The intersection between add and delete is empty.
         assert!(add.intersection(delete).next().is_none());
 
-        let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-            nsec3_hash::<_, _, BytesMut>(
-                key,
-                iss.nsec3param.hash_algorithm(),
-                iss.nsec3param.iterations(),
-                iss.nsec3param.salt(),
-            )
-            .expect("should not fail"),
-        );
-        let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-        let mut builder = NameBuilder::<BytesMut>::new();
-        builder
-            .append_label(nsec3_hash_base32.as_bytes())
-            .expect("should not fail");
-        let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+        let (nsec3_hash_octets, nsec3_name) = nsec3_hash_parts(key, iss);
+
         if let Some(record_nsec3) = iss.nsec3s.get(&nsec3_name) {
             let record_nsec3 = record_nsec3.clone();
             let ZoneRecordData::Nsec3(nsec3) = record_nsec3.data() else {
@@ -2772,21 +2759,8 @@ fn nsec3_insert_ent(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
             return;
         }
 
-        let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-            nsec3_hash::<_, _, BytesMut>(
-                &name,
-                iss.nsec3param.hash_algorithm(),
-                iss.nsec3param.iterations(),
-                iss.nsec3param.salt(),
-            )
-            .expect("should not fail"),
-        );
-        let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-        let mut builder = NameBuilder::<BytesMut>::new();
-        builder
-            .append_label(nsec3_hash_base32.as_bytes())
-            .expect("should not fail");
-        let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+        let (nsec3_hash_octets, nsec3_name) = nsec3_hash_parts(&name, iss);
+
         if iss.nsec3s.contains_key(&nsec3_name) {
             // Found something. We are done.
             return;
@@ -2958,21 +2932,8 @@ fn nsec3_remove_et(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
             return;
         }
 
-        let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-            nsec3_hash::<_, _, BytesMut>(
-                &name,
-                iss.nsec3param.hash_algorithm(),
-                iss.nsec3param.iterations(),
-                iss.nsec3param.salt(),
-            )
-            .expect("should not fail"),
-        );
-        let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-        let mut builder = NameBuilder::<BytesMut>::new();
-        builder
-            .append_label(nsec3_hash_base32.as_bytes())
-            .expect("should not fail");
-        let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+        let (_, nsec3_name) = nsec3_hash_parts(&name, iss);
+
         let Some(record_nsec3) = iss.nsec3s.get(&nsec3_name) else {
             // No NSEC3 record, nothing to do.
             return;
@@ -3012,22 +2973,8 @@ fn nsec3_remove_et(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
             }
             opt_curr_name = Some(key_name);
 
-            let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-                nsec3_hash::<_, _, BytesMut>(
-                    &key_name,
-                    iss.nsec3param.hash_algorithm(),
-                    iss.nsec3param.iterations(),
-                    iss.nsec3param.salt(),
-                )
-                .expect("should not fail"),
-            );
-            let nsec3_hash_base32 =
-                base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-            let mut builder = NameBuilder::<BytesMut>::new();
-            builder
-                .append_label(nsec3_hash_base32.as_bytes())
-                .expect("should not fail");
-            let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+            let (_, nsec3_name) = nsec3_hash_parts(key_name, iss);
+
             if iss.nsec3s.contains_key(&nsec3_name) {
                 // NSEC3 record is found. Our target is not an ET.
                 return;
@@ -3118,21 +3065,8 @@ fn nsec3_set_occluded(name: &Name<Bytes>, iss: &mut IncrementalSigningState) {
         }
         opt_curr_name = Some(key_name);
 
-        let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-            nsec3_hash::<_, _, BytesMut>(
-                &key_name,
-                iss.nsec3param.hash_algorithm(),
-                iss.nsec3param.iterations(),
-                iss.nsec3param.salt(),
-            )
-            .expect("should not fail"),
-        );
-        let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-        let mut builder = NameBuilder::<BytesMut>::new();
-        builder
-            .append_label(nsec3_hash_base32.as_bytes())
-            .expect("should not fail");
-        let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+        let (_, nsec3_name) = nsec3_hash_parts(key_name, iss);
+
         let Some(record_nsec3) = iss.nsec3s.get(&nsec3_name) else {
             // No NSEC3 record, nothing to do.
             continue;
@@ -3232,21 +3166,8 @@ fn nsec3_clear_occluded(
         curr_types.remove(&Rtype::RRSIG);
         sign_rtype_set(&curr_name, &curr_types, iss)?;
 
-        let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
-            nsec3_hash::<_, _, BytesMut>(
-                &curr_name,
-                iss.nsec3param.hash_algorithm(),
-                iss.nsec3param.iterations(),
-                iss.nsec3param.salt(),
-            )
-            .expect("should not fail"),
-        );
-        let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
-        let mut builder = NameBuilder::<BytesMut>::new();
-        builder
-            .append_label(nsec3_hash_base32.as_bytes())
-            .expect("should not fail");
-        let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+        let (nsec3_hash_octets, nsec3_name) = nsec3_hash_parts(&curr_name, iss);
+
         nsec3_insert_full(&curr_name, nsec3_hash_octets, &nsec3_name, rtypebitmap, iss);
     }
     Ok(())
@@ -3261,6 +3182,28 @@ where
         rtypebitmap.add(*rtype).expect("should not fail");
     }
     rtypebitmap.finalize()
+}
+
+fn nsec3_hash_parts(
+    name: &Name<Bytes>,
+    iss: &IncrementalSigningState,
+) -> (OwnerHash<Bytes>, Name<Bytes>) {
+    let nsec3_hash_octets = OwnerHash::<Bytes>::octets_from(
+        nsec3_hash::<_, _, BytesMut>(
+            name,
+            iss.nsec3param.hash_algorithm(),
+            iss.nsec3param.iterations(),
+            iss.nsec3param.salt(),
+        )
+        .expect("should not fail"),
+    );
+    let nsec3_hash_base32 = base32::encode_string_hex(&nsec3_hash_octets).to_ascii_lowercase();
+    let mut builder = NameBuilder::<BytesMut>::new();
+    builder
+        .append_label(nsec3_hash_base32.as_bytes())
+        .expect("should not fail");
+    let nsec3_name = builder.append_origin(&iss.origin).expect("should not fail");
+    (nsec3_hash_octets, nsec3_name)
 }
 
 fn is_occluded(name: &Name<Bytes>, iss: &IncrementalSigningState) -> bool {
