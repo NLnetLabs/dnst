@@ -63,6 +63,7 @@ use url::Url;
 
 const FOUR_WEEKS: u64 = 2419200;
 const TWO_WEEKS: u64 = 1209600;
+const FIFTEEN_MINUTES: u64 = 15 * 60;
 
 //------------ Signer --------------------------------------------------------
 
@@ -368,6 +369,8 @@ impl Signer {
                 zonemd: HashSet::new(),
                 serial_policy: SerialPolicy::Keep,
                 notify_command: Vec::new(),
+                signature_refresh_interval: Duration::from_secs(FIFTEEN_MINUTES),
+                key_roll_time: Duration::from_secs(ONE_DAY),
                 faketime: None,
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
@@ -390,6 +393,11 @@ impl Signer {
                 zonefile_modified: UNIX_EPOCH.try_into().expect("should not fail"),
                 minimum_expiration: UNIX_EPOCH.try_into().expect("should not fail"),
                 previous_serial: None,
+                apex_remove: HashSet::new(),
+                apex_extra: vec![],
+                key_tags: HashSet::new(),
+                key_roll: None,
+                last_signature_refresh: UNIX_EPOCH.try_into().expect("should not fail"),
             };
             let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
             let mut file = File::create(&signer_state_file).map_err(|e| {
@@ -411,16 +419,15 @@ impl Signer {
 
         let file = File::open(&self.signer_config)
             .map_err(|e| format!("unable to open file {}: {e}", self.signer_config.display()))?;
-        let mut sc: SignerConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
+        let sc: SignerConfig = serde_json::from_reader(file).map_err::<Error, _>(|e| {
             format!("error loading {:?}: {e}\n", self.signer_config).into()
         })?;
 
         let file = File::open(&sc.signer_state)
             .map_err(|e| format!("unable to open file {}: {e}", sc.signer_state.display()))?;
-        let mut signer_state: SignerState =
-            serde_json::from_reader(file).map_err::<Error, _>(|e| {
-                format!("error loading {:?}: {e}\n", sc.signer_state).into()
-            })?;
+        let signer_state: SignerState = serde_json::from_reader(file).map_err::<Error, _>(|e| {
+            format!("error loading {:?}: {e}\n", sc.signer_state).into()
+        })?;
 
         let keyset_state_modified = Self::file_modified(sc.keyset_state.clone())?;
         let file = File::open(&sc.keyset_state)
@@ -429,8 +436,15 @@ impl Signer {
             format!("error loading {:?}: {e}\n", sc.keyset_state).into()
         })?;
 
-        let mut config_changed = false;
-        let mut state_changed = false;
+        let mut ws = WorkSpace {
+            keyset_state: kss,
+            keyset_state_modified,
+            config: sc,
+            config_changed: false,
+            state: signer_state,
+            state_changed: false,
+        };
+
         let mut res = Ok(());
 
         match self.cmd {
@@ -455,78 +469,49 @@ impl Signer {
                 // Copy modified times to the state file. Do we need to be clever
                 // and avoid updating the state file if modified times do not
                 // change?
-                signer_state.config_modified = signer_config_modified;
-                signer_state.keyset_state_modified = keyset_state_modified;
-                let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
-                signer_state.zonefile_modified = zonefile_modified;
-                state_changed = true;
-                res = self.go_further(env, &sc, &mut signer_state, &kss, options)
+                ws.state.config_modified = signer_config_modified;
+                let zonefile_modified = Self::file_modified(ws.config.zonefile_in.clone())?;
+                ws.state.zonefile_modified = zonefile_modified;
+                ws.state_changed = true;
+                res = self.sign_full(&mut ws, env, options)
             }
-            Commands::Resign => self.resign(&sc, &kss, env)?,
+            Commands::Resign => ws.resign()?,
             Commands::Show => {
                 todo!();
             }
             Commands::Cron => {
-                // Simple automatic signer. Re-sign the zone when needed.
-                // The zone needs to be signed when one or more of the three
-                // input files has changed (signer config, keyset state or the
-                // unsigned zone file.
-                // The zone also needs to be signed when the remaining signature
-                // lifetime is not long enough anymore.
-
-                let mut need_resign = false;
-                if signer_config_modified != signer_state.config_modified {
-                    need_resign = true;
-                }
-                if keyset_state_modified != signer_state.keyset_state_modified {
-                    need_resign = true;
-                }
-                let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
-                if zonefile_modified != signer_state.zonefile_modified {
-                    need_resign = true;
-                }
-                let now = UnixTime::now();
-                if now + sc.minimal_remaining_validity > signer_state.minimum_expiration {
-                    todo!();
-                }
-                if need_resign {
-                    signer_state.config_modified = signer_config_modified;
-                    signer_state.keyset_state_modified = keyset_state_modified;
-                    let zonefile_modified = Self::file_modified(sc.zonefile_in.clone())?;
-                    signer_state.zonefile_modified = zonefile_modified;
-                    state_changed = true;
-                    res = self.go_further(env, &sc, &mut signer_state, &kss, Default::default())
-                }
+                ws.sign_incrementally(false)?;
             }
-            Commands::Set { subcommand } => {
-                set_command(subcommand, &mut sc, &mut config_changed, &env)?
-            }
+            Commands::Set { subcommand } => ws.set_command(subcommand, &env)?,
         }
 
-        if config_changed {
-            let json = serde_json::to_string_pretty(&sc).expect("should not fail");
+        if ws.config_changed {
+            let json = serde_json::to_string_pretty(&ws.config).expect("should not fail");
             let mut file = File::create(&self.signer_config)
                 .map_err(|e| format!("unable to create {}: {e}", self.signer_config.display()))?;
             write!(file, "{json}")
                 .map_err(|e| format!("unable to write to {}: {e}", self.signer_config.display()))?;
         }
-        if state_changed {
-            let json = serde_json::to_string_pretty(&signer_state).expect("should not fail");
-            let mut file = File::create(&sc.signer_state)
-                .map_err(|e| format!("unable to create {}: {e}", sc.signer_state.display()))?;
-            write!(file, "{json}")
-                .map_err(|e| format!("unable to write to {}: {e}", sc.signer_state.display()))?;
+        if ws.state_changed {
+            let json = serde_json::to_string_pretty(&ws.state).expect("should not fail");
+            let mut file = File::create(&ws.config.signer_state).map_err(|e| {
+                format!("unable to create {}: {e}", ws.config.signer_state.display())
+            })?;
+            write!(file, "{json}").map_err(|e| {
+                format!(
+                    "unable to write to {}: {e}",
+                    ws.config.signer_state.display()
+                )
+            })?;
         }
         res
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn go_further(
+    fn sign_full(
         &self,
+        ws: &mut WorkSpace,
         env: impl Env,
-        sc: &SignerConfig,
-        signer_state: &mut SignerState,
-        kss: &KeySetState,
         options: SigningOptions,
     ) -> Result<(), Error> {
         let signing_mode = if options.hash_only {
@@ -535,11 +520,17 @@ impl Signer {
             SigningMode::HashAndSign
         };
 
-        // Read the zone file.
-        let origin = kss.keyset.name().to_bytes();
-        let mut records = self.load_zone(&env.in_cwd(&sc.zonefile_in), origin.clone())?;
+        // Populate the signer state fields from keyset state.
+        ws.handle_keyset_changed();
 
-        for r in &kss.dnskey_rrset {
+        // The entire zone is signed, clear key_roll.
+        ws.state.key_roll = None;
+
+        // Read the zone file.
+        let origin = ws.keyset_state.keyset.name().to_bytes();
+        let mut records = self.load_zone(&env.in_cwd(&ws.config.zonefile_in), origin.clone())?;
+
+        for r in &ws.keyset_state.dnskey_rrset {
             let zonefile =
                 domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
             for entry in zonefile {
@@ -557,7 +548,7 @@ impl Signer {
                 records.insert(r).unwrap();
             }
         }
-        for r in &kss.cds_rrset {
+        for r in &ws.keyset_state.cds_rrset {
             let zonefile =
                 domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
             for entry in zonefile {
@@ -577,7 +568,7 @@ impl Signer {
         }
 
         let mut keys = Vec::new();
-        for (k, v) in kss.keyset.keys() {
+        for (k, v) in ws.keyset_state.keyset.keys() {
             let signer = match v.keytype() {
                 KeyType::Ksk(_) => false,
                 KeyType::Zsk(key_state) => key_state.signer(),
@@ -626,7 +617,7 @@ impl Signer {
         }
 
         let signing_keys: Vec<_> = keys.iter().collect();
-        let out_file = sc.zonefile_out.clone();
+        let out_file = ws.config.zonefile_out.clone();
 
         let mut writer = if out_file.as_os_str() == "-" {
             FileOrStdout::Stdout(env.stdout())
@@ -642,7 +633,7 @@ impl Signer {
         };
 
         // Make sure, zonemd arguments are unique
-        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(sc.zonemd.clone());
+        let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(ws.config.zonemd.clone());
 
         // implement SOA serial policies. There are four policies:
         // 1) Keep. Copy the serial from the unsigned zone. Refuse to sign
@@ -662,9 +653,9 @@ impl Signer {
             unreachable!();
         };
 
-        match sc.serial_policy {
+        match ws.config.serial_policy {
             SerialPolicy::Keep => {
-                if let Some(previous_serial) = signer_state.previous_serial {
+                if let Some(previous_serial) = ws.state.previous_serial {
                     if zone_soa.serial() <= previous_serial {
                         return Err(
                             "Serial policy is Keep but upstream serial did not increase".into()
@@ -672,11 +663,11 @@ impl Signer {
                     }
                 }
 
-                signer_state.previous_serial = Some(zone_soa.serial());
+                ws.state.previous_serial = Some(zone_soa.serial());
             }
             SerialPolicy::Increment => {
                 let mut serial = zone_soa.serial();
-                if let Some(previous_serial) = signer_state.previous_serial {
+                if let Some(previous_serial) = ws.state.previous_serial {
                     if serial <= previous_serial {
                         serial = previous_serial.add(1);
 
@@ -693,11 +684,11 @@ impl Signer {
                         records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
                     }
                 }
-                signer_state.previous_serial = Some(serial);
+                ws.state.previous_serial = Some(serial);
             }
             SerialPolicy::UnixSeconds => {
                 let mut serial = Serial::now();
-                if let Some(previous_serial) = signer_state.previous_serial {
+                if let Some(previous_serial) = ws.state.previous_serial {
                     if serial <= previous_serial {
                         serial = previous_serial.add(1);
                     }
@@ -714,7 +705,7 @@ impl Signer {
                 ));
 
                 records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-                signer_state.previous_serial = Some(serial);
+                ws.state.previous_serial = Some(serial);
             }
             SerialPolicy::Date => {
                 let ts = JiffTimestamp::now();
@@ -724,7 +715,7 @@ impl Signer {
                     * 100;
                 let mut serial: Serial = serial.into();
 
-                if let Some(previous_serial) = signer_state.previous_serial {
+                if let Some(previous_serial) = ws.state.previous_serial {
                     if serial <= previous_serial {
                         serial = previous_serial.add(1);
                     }
@@ -741,7 +732,7 @@ impl Signer {
                 ));
 
                 records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-                signer_state.previous_serial = Some(serial);
+                ws.state.previous_serial = Some(serial);
             }
         }
 
@@ -783,7 +774,7 @@ impl Signer {
 
         let mut nsec3_hashes: Option<Nsec3HashMap> = None;
 
-        if sc.use_nsec3 && (options.extra_comments || options.preceed_zone_with_hash_list) {
+        if ws.config.use_nsec3 && (options.extra_comments || options.preceed_zone_with_hash_list) {
             // Create a collection of NSEC3 hashes that can later be used for
             // debug output.
             let mut hash_provider = Nsec3HashMap::new();
@@ -816,7 +807,7 @@ impl Signer {
 
                 if rrset.rtype() == Rtype::NS && *owner != apex {
                     delegation = Some(owner.clone());
-                    if sc.opt_out {
+                    if ws.config.opt_out {
                         // Delegations are ignored for NSEC3. Ignore this
                         // entry but keep looking for other types at the
                         // same owner name.
@@ -825,9 +816,14 @@ impl Signer {
                     }
                 }
 
-                let hashed_name =
-                    mk_hashed_nsec3_owner_name(owner, sc.algorithm, sc.iterations, &sc.salt, &apex)
-                        .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
+                let hashed_name = mk_hashed_nsec3_owner_name(
+                    owner,
+                    ws.config.algorithm,
+                    ws.config.iterations,
+                    &ws.config.salt,
+                    &apex,
+                )
+                .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
                 let hash_info = Nsec3HashInfo::new(owner.clone(), false);
                 hash_provider
                     .hashes_by_unhashed_owner
@@ -852,9 +848,9 @@ impl Signer {
 
                     let hashed_name = mk_hashed_nsec3_owner_name(
                         &suffix,
-                        sc.algorithm,
-                        sc.iterations,
-                        &sc.salt,
+                        ws.config.algorithm,
+                        ws.config.iterations,
+                        &ws.config.salt,
                         &apex,
                     )
                     .map_err(|err| Error::from(format!("NSEC3 error: {err}")))?;
@@ -876,10 +872,13 @@ impl Signer {
             nsec3_hashes = Some(hash_provider);
         }
 
-        let now =
-            Into::<Duration>::into(sc.faketime.clone().unwrap_or(UnixTime::now())).as_secs() as u32;
-        let inception = (now - sc.inception_offset.as_secs() as u32).into();
-        let expiration = (now + sc.signature_lifetime.as_secs() as u32).into();
+        let now = ws.faketime_or_now();
+        let now_u32 = Into::<Duration>::into(now.clone()).as_secs() as u32;
+        let inception = (now_u32 - ws.config.inception_offset.as_secs() as u32).into();
+        let expiration = (now_u32 + ws.config.signature_lifetime.as_secs() as u32).into();
+
+        // Set last_signature_refresh to the current time.
+        ws.state.last_signature_refresh = now;
 
         let signing_config: SigningConfig<_, _> = match signing_mode {
             SigningMode::HashOnly | SigningMode::HashAndSign => {
@@ -891,10 +890,15 @@ impl Signer {
                 // Note: Assuming that we want to later be able to support
                 // transition between NSEC <-> NSEC3 we will need to be able to
                 // sign with more than one hashing configuration at once.
-                if sc.use_nsec3 {
-                    let params = Nsec3param::new(sc.algorithm, 0, sc.iterations, sc.salt.clone());
+                if ws.config.use_nsec3 {
+                    let params = Nsec3param::new(
+                        ws.config.algorithm,
+                        0,
+                        ws.config.iterations,
+                        ws.config.salt.clone(),
+                    );
                     let mut nsec3_config = GenerateNsec3Config::new(params);
-                    if sc.opt_out {
+                    if ws.config.opt_out {
                         nsec3_config = nsec3_config.with_opt_out();
                     }
                     SigningConfig::new(DenialConfig::Nsec3(nsec3_config), inception, expiration)
@@ -946,7 +950,7 @@ impl Signer {
         // Note that truncating the u64 from as_secs() to u32 is fine because
         // Timestamp is designed for this situation.
         let expire_ts: Timestamp = (Duration::from_secs(now_ts.into_int() as u64)
-            .saturating_add(sc.signature_lifetime)
+            .saturating_add(ws.config.signature_lifetime)
             .as_secs() as u32)
             .into();
         let ts = records
@@ -984,9 +988,9 @@ impl Signer {
         let minimum_expiration = if let Some(ts) = ts {
             ts.into()
         } else {
-            UnixTime::now() + sc.signature_lifetime
+            UnixTime::now() + ws.config.signature_lifetime
         };
-        signer_state.minimum_expiration = minimum_expiration;
+        ws.state.minimum_expiration = minimum_expiration;
 
         // The signed RRs are in DNSSEC canonical order by owner name. For
         // compatibility with ldns-signzone, re-order them to be in canonical
@@ -1143,14 +1147,14 @@ impl Signer {
 
         writer.flush().map_err(|e| format!("flush failed: {e}"))?;
 
-        if !sc.notify_command.is_empty() {
-            let output = Command::new(&sc.notify_command[0])
-                .args(&sc.notify_command[1..])
+        if !ws.config.notify_command.is_empty() {
+            let output = Command::new(&ws.config.notify_command[0])
+                .args(&ws.config.notify_command[1..])
                 .output()
                 .map_err(|e| {
                     format!(
                         "unable to create new Command for {}: {e}",
-                        sc.notify_command[0]
+                        ws.config.notify_command[0]
                     )
                 })?;
             if !output.status.success() {
@@ -1165,202 +1169,6 @@ impl Signer {
         }
 
         Ok(())
-    }
-
-    fn resign(&self, sc: &SignerConfig, kss: &KeySetState, _env: impl Env) -> Result<(), Error> {
-        let origin = kss.keyset.name();
-        let origin_bytes = Name::<Bytes>::octets_from(origin.clone());
-        let mut iss = IncrementalSigningState::new(origin_bytes, sc);
-
-        let mut keys = Vec::new();
-        for (k, v) in kss.keyset.keys() {
-            let signer = match v.keytype() {
-                KeyType::Ksk(_) => false,
-                KeyType::Zsk(key_state) => key_state.signer(),
-                KeyType::Csk(_, key_state) => key_state.signer(),
-                KeyType::Include(_) => false,
-            };
-
-            if signer {
-                let privref = v.privref().ok_or("missing private key")?;
-                let priv_url = Url::parse(privref).expect("valid URL expected");
-                let private_data = if priv_url.scheme() == "file" {
-                    std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
-                        format!("unable read from file {}: {e}", priv_url.path()).into()
-                    })?
-                } else {
-                    panic!("unsupported URL scheme in {priv_url}");
-                };
-                let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
-                    .map_err::<Error, _>(|e| {
-                        format!("unable to parse private key file {privref}: {e}").into()
-                    })?;
-                let pub_url = Url::parse(k).expect("valid URL expected");
-                let public_data = if pub_url.scheme() == "file" {
-                    std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
-                        format!("unable read from file {}: {e}", pub_url.path()).into()
-                    })?
-                } else {
-                    panic!("unsupported URL scheme in {pub_url}");
-                };
-                let public_key =
-                    parse_from_bind::<Bytes>(&public_data).map_err::<Error, _>(|e| {
-                        format!("unable to parse public key file {k}: {e}").into()
-                    })?;
-
-                let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
-                    .map_err::<Error, _>(|e| {
-                        format!("private key {privref} and public key {k} do not match: {e}").into()
-                    })?;
-                let signing_key = SigningKey::new(
-                    public_key.owner().clone(),
-                    public_key.data().flags(),
-                    key_pair,
-                );
-                keys.push(signing_key);
-            }
-        }
-
-        iss.keys = keys;
-
-        let start = Instant::now();
-        load_signed_zone(&mut iss, &sc.zonefile_out).unwrap();
-        println!("loading signed zone took {:?}", start.elapsed());
-
-        // Note that we could try to regenerate the NSEC(3). Assume that
-        // switching between NSEC, NSEC3, and NSEC3 opt-out (or other NSEC3
-        // parameter changes) is rare enough that we can just resign the full
-        // zone.
-        let key = (iss.origin.clone(), Rtype::NSEC3PARAM);
-        let opt_nsec3param = iss.old_data.get(&key);
-        if let Some(nsec3param_records) = opt_nsec3param {
-            // Zone was signed with NSEC3.
-            if !sc.use_nsec3 {
-                // Zone is signed with NSEC3 but we want NSEC.
-                todo!();
-            }
-            let ZoneRecordData::Nsec3param(nsec3param) = nsec3param_records[0].data() else {
-                panic!("ZoneRecordData::Nsec3param expected");
-            };
-            if nsec3param.hash_algorithm() != sc.algorithm
-                || nsec3param.opt_out_flag() != sc.opt_out
-                || nsec3param.iterations() != sc.iterations
-                || *nsec3param.salt() != sc.salt
-            {
-                // Parameters changed, resign.
-                todo!();
-            }
-
-            // Nothing has changed. Insert the old NSEC3PARAM records in the
-            // new zone data.
-            iss.new_data.insert(key, nsec3param_records.to_vec());
-        } else {
-            // Zone was signed with NSEC, check if that is also the target.
-            if sc.use_nsec3 {
-                // Resign the full zone with NSEC3.
-                todo!();
-            }
-
-            // Stay with NSEC.
-        }
-
-        let start = Instant::now();
-        load_unsigned_zone(&mut iss, &sc.zonefile_in).unwrap();
-        println!("loading new unsigned zone took {:?}", start.elapsed());
-
-        let start = Instant::now();
-        load_apex_records(kss, &mut iss)?;
-
-        initial_diffs(&mut iss)?;
-
-        if sc.use_nsec3 {
-            incremental_nsec3(&mut iss)?;
-        } else {
-            incremental_nsec(&mut iss)?;
-        }
-
-        let mut new_sigs = vec![];
-        if sc.use_nsec3 {
-            for m in &iss.modified_nsecs {
-                let Some(nsec3) = iss.nsec3s.get(m) else {
-                    panic!("NSEC3 for {m} should exist");
-                };
-
-                let nsec3 = nsec3.clone();
-                sign_records(
-                    &[nsec3],
-                    &iss.keys,
-                    iss.inception,
-                    iss.expiration,
-                    &mut new_sigs,
-                )?;
-            }
-        } else {
-            for m in &iss.modified_nsecs {
-                let Some(nsec) = iss.nsecs.get(m) else {
-                    panic!("NSEC for {m} should exist");
-                };
-
-                let nsec = nsec.clone();
-                sign_records(
-                    &[nsec],
-                    &iss.keys,
-                    iss.inception,
-                    iss.expiration,
-                    &mut new_sigs,
-                )?;
-            }
-        }
-        for (sig, rtype) in new_sigs {
-            let key = (sig[0].owner().clone(), rtype);
-            iss.rrsigs.insert(key, sig);
-        }
-        println!("incremental signing took {:?}", start.elapsed());
-
-        /*
-                let mut writer = stdout();
-        */
-
-        let start = Instant::now();
-        let mut writer = {
-            let filename = sc.zonefile_out.as_os_str().to_str().unwrap();
-            let filename = filename.to_owned() + "-incremental";
-            let file = File::create(&filename)
-                .map_err(|e| format!("unable to create file {filename}: {e}",))?;
-            BufWriter::new(file)
-            // FileOrStdout::File(file)
-        };
-
-        for (_, data) in iss.new_data {
-            for rr in data {
-                writer
-                    .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
-                    .map_err(|e| format!("unable write signed zone: {e}"))?;
-            }
-        }
-        for (_, rr) in iss.nsecs {
-            writer
-                .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
-                .map_err(|e| format!("unable write signed zone: {e}"))?;
-        }
-        for (_, rr) in iss.nsec3s {
-            writer
-                .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
-                .map_err(|e| format!("unable write signed zone: {e}"))?;
-        }
-        for (_, data) in iss.rrsigs {
-            for rr in data {
-                let ZoneRecordData::Rrsig(rrsig) = rr.data() else {
-                    panic!("RRSIG expected");
-                };
-                let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
-                writer
-                    .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
-                    .map_err(|e| format!("unable write signed zone: {e}"))?;
-            }
-        }
-        println!("writing output took {:?}", start.elapsed());
-        todo!();
     }
 
     fn write_rr<W, N, O: AsRef<[u8]>>(
@@ -1715,52 +1523,589 @@ impl Signer {
     }
 }
 
-fn set_command(
-    cmd: SetCommands,
-    sc: &mut SignerConfig,
-    config_changed: &mut bool,
-    env: &impl Env,
-) -> Result<(), Error> {
-    match cmd {
-        SetCommands::InceptionOffset { duration } => {
-            sc.inception_offset = duration;
+struct WorkSpace {
+    keyset_state: KeySetState,
+    keyset_state_modified: UnixTime,
+    config: SignerConfig,
+    config_changed: bool,
+    state: SignerState,
+    state_changed: bool,
+}
+
+impl WorkSpace {
+    fn set_command(&mut self, cmd: SetCommands, env: &impl Env) -> Result<(), Error> {
+        match cmd {
+            SetCommands::InceptionOffset { duration } => {
+                self.config.inception_offset = duration;
+            }
+            SetCommands::Lifetime { duration } => {
+                self.config.signature_lifetime = duration;
+            }
+            SetCommands::UseNsec3 { boolean } => {
+                self.config.use_nsec3 = boolean;
+            }
+            SetCommands::Algorithm { algorithm } => {
+                self.config.algorithm = algorithm;
+            }
+            SetCommands::Iterations { iterations } => {
+                self.config.iterations = iterations;
+                match self.config.iterations {
+                    500.. => Signer::write_extreme_iterations_warning(&env),
+                    1.. => Signer::write_non_zero_iterations_warning(&env),
+                    _ => { /* Good, nothing to warn about */ }
+                }
+            }
+            SetCommands::Salt { salt } => {
+                self.config.salt = salt;
+            }
+            SetCommands::OptOut { boolean } => {
+                self.config.opt_out = boolean;
+            }
+            SetCommands::ZoneMD { zonemd } => {
+                self.config.zonemd = zonemd;
+            }
+            SetCommands::SerialPolicy { serial_policy } => {
+                self.config.serial_policy = serial_policy;
+            }
+            SetCommands::NotifyCommand { args } => {
+                self.config.notify_command = args;
+            }
+            SetCommands::FakeTime { opt_unixtime } => self.config.faketime = opt_unixtime,
         }
-        SetCommands::Lifetime { duration } => {
-            sc.signature_lifetime = duration;
+        self.config_changed = true;
+        Ok(())
+    }
+
+    fn sign_incrementally(&mut self, load_unsigned: bool) -> Result<(), Error> {
+        // Check what work needs to be done. If the keyset state
+        // changed then check if the APEX records change or if a
+        // CSK or ZSK roll require resigning the zone.
+        // If enough time has passed since the last time
+        // signatures have been updated, then update signatures
+        // and during a key roll, sign with the new key(s).
+        // Ignore signer configuration changes, they will get picked up when
+        // signatures need to be updated.
+        // Resign using the unsigned zonefile when load_unsigned is true.
+
+        let apex_changed = self.handle_keyset_changed();
+
+        let mut refresh_signatures = false;
+        let now = self.faketime_or_now();
+        if now > self.state.last_signature_refresh.clone() + self.config.signature_refresh_interval
+        {
+            println!(
+                "refresh signatures: {} > {} + {:?}",
+                now, self.state.last_signature_refresh, self.config.signature_refresh_interval
+            );
+            refresh_signatures = true;
         }
-        SetCommands::UseNsec3 { boolean } => {
-            sc.use_nsec3 = boolean;
+
+        if !load_unsigned && !apex_changed && !refresh_signatures {
+            // Nothing to do.
+            return Ok(());
         }
-        SetCommands::Algorithm { algorithm } => {
-            sc.algorithm = algorithm;
+
+        let mut iss = IncrementalSigningState::new(self)?;
+
+        let start = Instant::now();
+        load_signed_zone(&mut iss, &self.config.zonefile_out).unwrap();
+        println!("loading signed zone took {:?}", start.elapsed());
+
+        self.handle_nsec_nsec3(&mut iss);
+
+        if load_unsigned {
+            let start = Instant::now();
+            load_unsigned_zone(&mut iss, &self.config.zonefile_in).unwrap();
+            println!("loading new unsigned zone took {:?}", start.elapsed());
+        } else {
+            // Re-use the signed data.
+            load_signed_only(&mut iss);
         }
-        SetCommands::Iterations { iterations } => {
-            sc.iterations = iterations;
-            match sc.iterations {
-                500.. => Signer::write_extreme_iterations_warning(&env),
-                1.. => Signer::write_non_zero_iterations_warning(&env),
-                _ => { /* Good, nothing to warn about */ }
+
+        let start = Instant::now();
+        self.load_apex_records(&mut iss)?;
+
+        initial_diffs(&mut iss)?;
+
+        if self.config.use_nsec3 {
+            incremental_nsec3(&mut iss)?;
+        } else {
+            incremental_nsec(&mut iss)?;
+        }
+
+        self.new_nsec_nsec3_sigs(&mut iss)?;
+
+        if refresh_signatures {
+            self.refresh_some_signatures(&mut iss)?;
+            if self.state.key_roll.is_some() {
+                self.key_roll_signatures(&mut iss)?;
             }
         }
-        SetCommands::Salt { salt } => {
-            sc.salt = salt;
-        }
-        SetCommands::OptOut { boolean } => {
-            sc.opt_out = boolean;
-        }
-        SetCommands::ZoneMD { zonemd } => {
-            sc.zonemd = zonemd;
-        }
-        SetCommands::SerialPolicy { serial_policy } => {
-            sc.serial_policy = serial_policy;
-        }
-        SetCommands::NotifyCommand { args } => {
-            sc.notify_command = args;
-        }
-        SetCommands::FakeTime { opt_unixtime } => sc.faketime = opt_unixtime,
+        println!("incremental signing took {:?}", start.elapsed());
+
+        self.incremental_write_output(&iss)?;
+        Ok(())
     }
-    *config_changed = true;
-    Ok(())
+
+    fn refresh_some_signatures(&mut self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        let effective_lifetime =
+            self.config.signature_lifetime - self.config.minimal_remaining_validity;
+        let now = self.faketime_or_now();
+        let now_system_time = UNIX_EPOCH + Duration::from(now.clone());
+        let min_expire = now_system_time + self.config.minimal_remaining_validity;
+        let mut since_last_time: Duration = if now >= self.state.last_signature_refresh {
+            <UnixTime as Into<Duration>>::into(now.clone())
+                - <UnixTime as Into<Duration>>::into(self.state.last_signature_refresh.clone())
+        } else {
+            Duration::ZERO
+        };
+
+        // Limit to effective_lifetime in case of weird values.
+        if since_last_time > effective_lifetime {
+            since_last_time = effective_lifetime;
+        }
+
+        let total_signatures = iss.rrsigs.len();
+
+        let to_sign = since_last_time.as_secs_f64() * (total_signatures as f64)
+            / effective_lifetime.as_secs_f64();
+        let to_sign = to_sign.ceil() as usize;
+
+        // Collect expiration times, owner names, and types to figure out what
+        // to sign.
+        let mut expire_sigs = vec![];
+        for ((owner, rtype), r) in &iss.rrsigs {
+            let min_expiration = r
+                .iter()
+                .map(|r| {
+                    let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+                        panic!("Rrsig expected");
+                    };
+                    rrsig.expiration().to_system_time(now_system_time)
+                })
+                .min()
+                .expect("minimum should exist");
+            let v = (min_expiration, owner, rtype);
+            expire_sigs.push(v);
+        }
+
+        expire_sigs.sort();
+
+        let mut new_sigs = vec![];
+        for (i, (expire, owner, rtype)) in expire_sigs.iter().enumerate() {
+            if *expire > min_expire && i >= to_sign {
+                break;
+            }
+
+            let key = ((*owner).clone(), **rtype);
+            if **rtype == Rtype::NSEC3 {
+                let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
+                let records = [record.clone()];
+                sign_records(
+                    &records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            } else {
+                let records = iss.new_data.get(&key).expect("records should exist");
+                sign_records(
+                    records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            };
+        }
+
+        for (sigs, rtype) in new_sigs {
+            let key = (sigs[0].owner().clone(), rtype);
+            iss.rrsigs.insert(key, sigs);
+        }
+
+        if to_sign != 0 {
+            // Only update last_signature_refresh when enough time has passed
+            // that at least one record got signed.
+            self.state.last_signature_refresh = now;
+            self.state_changed = true;
+        }
+        Ok(())
+    }
+
+    fn key_roll_signatures(&mut self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        let key_roll_time = self.config.key_roll_time;
+        let key_roll_start = self.state.key_roll.as_ref().expect("should be there");
+
+        let now = self.faketime_or_now();
+
+        let since_start: Duration = <UnixTime as Into<Duration>>::into(now.clone())
+            - <UnixTime as Into<Duration>>::into(key_roll_start.clone());
+
+        if since_start > key_roll_time {
+            // Full roll. Make sure all signatures are made using the new keys.
+            // Clear key_roll when we are done.
+
+            let mut new_sigs = vec![];
+            for ((owner, rtype), r) in &iss.rrsigs {
+                let key_tags: HashSet<u16> = r
+                    .iter()
+                    .map(|r| {
+                        let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+                            panic!("Rrsig expected");
+                        };
+                        rrsig.key_tag()
+                    })
+                    .collect();
+                if key_tags == self.state.key_tags {
+                    // Nothing to do.
+                    continue;
+                }
+
+                let key = ((*owner).clone(), *rtype);
+                if *rtype == Rtype::NSEC3 {
+                    let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
+                    let records = [record.clone()];
+                    sign_records(
+                        &records,
+                        &iss.keys,
+                        iss.inception,
+                        iss.expiration,
+                        &mut new_sigs,
+                    )?;
+                } else {
+                    let records = iss.new_data.get(&key).expect("records should exist");
+                    sign_records(
+                        records,
+                        &iss.keys,
+                        iss.inception,
+                        iss.expiration,
+                        &mut new_sigs,
+                    )?;
+                };
+            }
+
+            for (sigs, rtype) in new_sigs {
+                let key = (sigs[0].owner().clone(), rtype);
+                iss.rrsigs.insert(key, sigs);
+            }
+            self.state.key_roll = None;
+            self.state_changed = true;
+            return Ok(());
+        }
+
+        let total_signatures = iss.rrsigs.len();
+
+        let to_sign =
+            since_start.as_secs_f64() * (total_signatures as f64) / key_roll_time.as_secs_f64();
+        let to_sign = to_sign.ceil() as usize;
+
+        // owner names, types, and key tags to figure out what to sign.
+        let mut sigs_key_tags = vec![];
+        for ((owner, rtype), r) in &iss.rrsigs {
+            let key_tags: Vec<u16> = r
+                .iter()
+                .map(|r| {
+                    let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+                        panic!("Rrsig expected");
+                    };
+                    rrsig.key_tag()
+                })
+                .collect();
+            let v = (owner, rtype, key_tags);
+            sigs_key_tags.push(v);
+        }
+
+        sigs_key_tags.sort();
+
+        let mut new_sigs = vec![];
+        for (i, (owner, rtype, key_tags)) in sigs_key_tags.iter().enumerate() {
+            if i >= to_sign {
+                break;
+            }
+
+            if HashSet::<u16>::from_iter(key_tags.iter().copied()) == self.state.key_tags {
+                // Nothing to do.
+                continue;
+            }
+
+            let key = ((*owner).clone(), **rtype);
+            if **rtype == Rtype::NSEC3 {
+                let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
+                let records = [record.clone()];
+                sign_records(
+                    &records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            } else {
+                let records = iss.new_data.get(&key).expect("records should exist");
+                sign_records(
+                    records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            };
+        }
+
+        for (sigs, rtype) in new_sigs {
+            let key = (sigs[0].owner().clone(), rtype);
+            iss.rrsigs.insert(key, sigs);
+        }
+        Ok(())
+    }
+
+    fn handle_keyset_changed(&mut self) -> bool {
+        if self.keyset_state_modified == self.state.keyset_state_modified {
+            // Nothing changed.
+            return false;
+        }
+        self.state.keyset_state_modified = self.keyset_state_modified.clone();
+        self.state_changed = true;
+
+        let mut apex_changed = false;
+
+        // Check the APEX RRtypes that need to be removed. We
+        // should get that from keyset, but currently we don't.
+        // Just have a fixed list.
+        let apex_remove: HashSet<Rtype> = [Rtype::DNSKEY, Rtype::CDS, Rtype::CDNSKEY].into();
+
+        if apex_remove != self.state.apex_remove {
+            println!(
+                "APEX remove RRtypes changed: from {:?} to {apex_remove:?}",
+                self.state.apex_remove
+            );
+            apex_changed = true;
+            self.state.apex_remove = apex_remove;
+        }
+
+        // Check records that need to be added to the APEX.
+        let mut apex_extra = vec![];
+        apex_extra.extend_from_slice(&self.keyset_state.dnskey_rrset);
+        apex_extra.extend_from_slice(&self.keyset_state.cds_rrset);
+        apex_extra.sort();
+
+        if apex_extra != self.state.apex_extra {
+            println!(
+                "APEX types changed: from {:?} to {apex_extra:?}",
+                self.state.apex_extra
+            );
+            apex_changed = true;
+            self.state.apex_extra = apex_extra;
+        }
+
+        // Check if a ZSK/CSK roll has started.
+        let mut key_tags = HashSet::new();
+        for v in self.keyset_state.keyset.keys().values() {
+            let signer = match v.keytype() {
+                KeyType::Ksk(_) => false,
+                KeyType::Zsk(key_state) => key_state.signer(),
+                KeyType::Csk(_, key_state) => key_state.signer(),
+                KeyType::Include(_) => false,
+            };
+
+            if !signer {
+                continue;
+            }
+
+            key_tags.insert(v.key_tag());
+        }
+
+        if key_tags != self.state.key_tags {
+            println!(
+                "key tags changed: from {:?} to {key_tags:?}",
+                self.state.key_tags
+            );
+            self.state.key_roll = Some(self.faketime_or_now());
+            self.state.key_tags = key_tags;
+        }
+        apex_changed
+    }
+
+    fn resign(&mut self) -> Result<(), Error> {
+        self.sign_incrementally(true)
+    }
+
+    fn faketime_or_now(&self) -> UnixTime {
+        self.config.faketime.clone().unwrap_or(UnixTime::now())
+    }
+
+    fn handle_nsec_nsec3(&self, iss: &mut IncrementalSigningState) {
+        // Note that we could try to regenerate the NSEC(3). Assume that
+        // switching between NSEC, NSEC3, and NSEC3 opt-out (or other NSEC3
+        // parameter changes) is rare enough that we can just resign the full
+        // zone.
+        let key = (iss.origin.clone(), Rtype::NSEC3PARAM);
+        let opt_nsec3param = iss.old_data.get(&key);
+        if let Some(nsec3param_records) = opt_nsec3param {
+            // Zone was signed with NSEC3.
+            if !self.config.use_nsec3 {
+                // Zone is signed with NSEC3 but we want NSEC.
+                todo!();
+            }
+            let ZoneRecordData::Nsec3param(nsec3param) = nsec3param_records[0].data() else {
+                panic!("ZoneRecordData::Nsec3param expected");
+            };
+            if nsec3param.hash_algorithm() != self.config.algorithm
+                || nsec3param.opt_out_flag() != self.config.opt_out
+                || nsec3param.iterations() != self.config.iterations
+                || *nsec3param.salt() != self.config.salt
+            {
+                // Parameters changed, resign.
+                todo!();
+            }
+
+            // Nothing has changed. Insert the old NSEC3PARAM records in the
+            // new zone data.
+            iss.new_data.insert(key, nsec3param_records.to_vec());
+        } else {
+            // Zone was signed with NSEC, check if that is also the target.
+            if self.config.use_nsec3 {
+                // Resign the full zone with NSEC3.
+                todo!();
+            }
+
+            // Stay with NSEC.
+        }
+    }
+
+    fn new_nsec_nsec3_sigs(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        let mut new_sigs = vec![];
+        if self.config.use_nsec3 {
+            for m in &iss.modified_nsecs {
+                let Some(nsec3) = iss.nsec3s.get(m) else {
+                    panic!("NSEC3 for {m} should exist");
+                };
+
+                let nsec3 = nsec3.clone();
+                sign_records(
+                    &[nsec3],
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            }
+        } else {
+            for m in &iss.modified_nsecs {
+                let Some(nsec) = iss.nsecs.get(m) else {
+                    panic!("NSEC for {m} should exist");
+                };
+
+                let nsec = nsec.clone();
+                sign_records(
+                    &[nsec],
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            }
+        }
+        for (sig, rtype) in new_sigs {
+            let key = (sig[0].owner().clone(), rtype);
+            iss.rrsigs.insert(key, sig);
+        }
+        Ok(())
+    }
+
+    fn incremental_write_output(&self, iss: &IncrementalSigningState) -> Result<(), Error> {
+        let start = Instant::now();
+        let mut writer = {
+            let filename = &self.config.zonefile_out;
+            let file = File::create(filename)
+                .map_err(|e| format!("unable to create file {}: {e}", filename.display()))?;
+            BufWriter::new(file)
+            // FileOrStdout::File(file)
+        };
+
+        for data in iss.new_data.values() {
+            for rr in data {
+                writer
+                    .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
+                    .map_err(|e| format!("unable write signed zone: {e}"))?;
+            }
+        }
+        for rr in iss.nsecs.values() {
+            writer
+                .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
+                .map_err(|e| format!("unable write signed zone: {e}"))?;
+        }
+        for rr in iss.nsec3s.values() {
+            writer
+                .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
+                .map_err(|e| format!("unable write signed zone: {e}"))?;
+        }
+        for data in iss.rrsigs.values() {
+            for rr in data {
+                let ZoneRecordData::Rrsig(rrsig) = rr.data() else {
+                    panic!("RRSIG expected");
+                };
+                let rr = Record::new(rr.owner(), rr.class(), rr.ttl(), YyyyMmDdHhMMSsRrsig(rrsig));
+                writer
+                    .write_fmt(format_args!("{}\n", rr.display_zonefile(DISPLAY_KIND)))
+                    .map_err(|e| format!("unable write signed zone: {e}"))?;
+            }
+        }
+        println!("writing output took {:?}", start.elapsed());
+        Ok(())
+    }
+
+    fn load_apex_records(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        // Assume that the APEX records have been copied from KeySetState to
+        // SignerState. Now update the APEX in new_data.
+
+        // Delete all types in apex_remove.
+        for t in &self.state.apex_remove {
+            let key = (iss.origin.clone(), *t);
+            iss.new_data.remove(&key);
+            iss.rrsigs.remove(&key);
+        }
+
+        for r in &self.state.apex_extra {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
+            for entry in zonefile {
+                let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
+
+                // We only care about records in a zonefile
+                let Entry::Record(record) = entry else {
+                    continue;
+                };
+
+                let owner = record.owner().to_name::<Bytes>();
+                let data = record.data().clone().try_flatten_into().unwrap();
+                let r = Record::new(owner.clone(), record.class(), record.ttl(), data);
+
+                if r.rtype() == Rtype::RRSIG {
+                    let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+                        panic!("RRSIG expected");
+                    };
+                    let key = (owner, rrsig.type_covered());
+                    let mut records = vec![r];
+                    if let Some(v) = iss.rrsigs.get_mut(&key) {
+                        v.append(&mut records);
+                    } else {
+                        iss.rrsigs.insert(key, records);
+                    }
+                } else {
+                    let key = (owner, r.rtype());
+                    let mut records = vec![r];
+                    if let Some(v) = iss.new_data.get_mut(&key) {
+                        v.append(&mut records);
+                    } else {
+                        iss.new_data.insert(key, records);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn next_owner_hash_to_name(next_owner_hash_hex: &str, apex: &StoredName) -> Result<StoredName, ()> {
@@ -1791,6 +2136,12 @@ struct SignerConfig {
     serial_policy: SerialPolicy,
     notify_command: Vec<String>,
 
+    /// Minimum period for updating signatures.
+    signature_refresh_interval: Duration,
+
+    /// Maxmimum time to resign all records with new ZSKs or CSKs.
+    key_roll_time: Duration,
+
     /// Fake time to use when signing.
     ///
     /// This is need for integration tests.
@@ -1804,6 +2155,25 @@ struct SignerState {
     zonefile_modified: UnixTime,
     minimum_expiration: UnixTime,
     previous_serial: Option<Serial>,
+
+    /// APEX RRtypes to remove. Should come from keyset, currently hardcoded.
+    #[serde(default)]
+    apex_remove: HashSet<Rtype>,
+
+    /// extra APEX records, from keyset.
+    #[serde(default)]
+    apex_extra: Vec<String>,
+
+    /// Current CSK/ZSK key tags.
+    #[serde(default)]
+    key_tags: HashSet<u16>,
+
+    /// Start time of CSK/KSK key roll.
+    #[serde(default)]
+    key_roll: Option<UnixTime>,
+
+    /// Last time some signature were refreshed.
+    last_signature_refresh: UnixTime,
 }
 
 type RtypeSet = HashSet<Rtype>;
@@ -1828,20 +2198,77 @@ struct IncrementalSigningState {
 }
 
 impl IncrementalSigningState {
-    fn new(origin: Name<Bytes>, sc: &SignerConfig) -> Self {
-        let now =
-            Into::<Duration>::into(sc.faketime.clone().unwrap_or(UnixTime::now())).as_secs() as u32;
-        let inception = (now - sc.inception_offset.as_secs() as u32).into();
-        let expiration = (now + sc.signature_lifetime.as_secs() as u32).into();
+    fn new(ws: &WorkSpace) -> Result<Self, Error> {
+        let origin = ws.keyset_state.keyset.name();
+        let origin = Name::<Bytes>::octets_from(origin.clone());
+
+        let mut keys = Vec::new();
+        for (k, v) in ws.keyset_state.keyset.keys() {
+            let signer = match v.keytype() {
+                KeyType::Ksk(_) => false,
+                KeyType::Zsk(key_state) => key_state.signer(),
+                KeyType::Csk(_, key_state) => key_state.signer(),
+                KeyType::Include(_) => false,
+            };
+
+            if signer {
+                let privref = v.privref().ok_or("missing private key")?;
+                let priv_url = Url::parse(privref).expect("valid URL expected");
+                let private_data = if priv_url.scheme() == "file" {
+                    std::fs::read_to_string(priv_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", priv_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {priv_url}");
+                };
+                let secret_key = SecretKeyBytes::parse_from_bind(&private_data)
+                    .map_err::<Error, _>(|e| {
+                        format!("unable to parse private key file {privref}: {e}").into()
+                    })?;
+                let pub_url = Url::parse(k).expect("valid URL expected");
+                let public_data = if pub_url.scheme() == "file" {
+                    std::fs::read_to_string(pub_url.path()).map_err::<Error, _>(|e| {
+                        format!("unable read from file {}: {e}", pub_url.path()).into()
+                    })?
+                } else {
+                    panic!("unsupported URL scheme in {pub_url}");
+                };
+                let public_key =
+                    parse_from_bind::<Bytes>(&public_data).map_err::<Error, _>(|e| {
+                        format!("unable to parse public key file {k}: {e}").into()
+                    })?;
+
+                let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                    .map_err::<Error, _>(|e| {
+                        format!("private key {privref} and public key {k} do not match: {e}").into()
+                    })?;
+                let signing_key = SigningKey::new(
+                    public_key.owner().clone(),
+                    public_key.data().flags(),
+                    key_pair,
+                );
+                keys.push(signing_key);
+            }
+        }
+
+        let now = ws.faketime_or_now();
+        let now_u32 = Into::<Duration>::into(now.clone()).as_secs() as u32;
+        let inception = (now_u32 - ws.config.inception_offset.as_secs() as u32).into();
+        let expiration = (now_u32 + ws.config.signature_lifetime.as_secs() as u32).into();
 
         // This is the only way to deal with opt-out. There is no data type
         // for flags or constant for opt-out. Creating an Nsec3param makes it
         // possible to set opt-out.
-        let mut nsec3param = Nsec3param::new(sc.algorithm, 0, sc.iterations, sc.salt.clone());
-        if sc.opt_out {
+        let mut nsec3param = Nsec3param::new(
+            ws.config.algorithm,
+            0,
+            ws.config.iterations,
+            ws.config.salt.clone(),
+        );
+        if ws.config.opt_out {
             nsec3param.set_opt_out_flag();
         }
-        Self {
+        Ok(Self {
             origin,
             old_data: HashMap::new(),
             new_data: BTreeMap::new(),
@@ -1850,11 +2277,11 @@ impl IncrementalSigningState {
             rrsigs: HashMap::new(),
             changes: HashMap::new(),
             modified_nsecs: HashSet::new(),
-            keys: vec![],
+            keys,
             inception,
             expiration,
             nsec3param,
-        }
+        })
     }
 }
 
@@ -2006,9 +2433,10 @@ fn load_unsigned_zone(iss: &mut IncrementalSigningState, path: &PathBuf) -> Resu
                 let record: StoredRecord = record.flatten_into();
 
                 match record.data() {
-                    ZoneRecordData::Rrsig(_) => (), // Ignore.
-                    ZoneRecordData::Nsec(_) => (),  // Ignore.
-                    ZoneRecordData::Nsec3(_) => todo!(),
+                    ZoneRecordData::Rrsig(_)
+                    | ZoneRecordData::Nsec(_)
+                    | ZoneRecordData::Nsec3(_)
+                    | ZoneRecordData::Nsec3param(_) => (), // Ignore.
                     _ => {
                         if records.is_empty() {
                             records.push(record);
@@ -2050,79 +2478,12 @@ fn load_unsigned_zone(iss: &mut IncrementalSigningState, path: &PathBuf) -> Resu
     Ok(())
 }
 
-fn load_apex_records(kss: &KeySetState, iss: &mut IncrementalSigningState) -> Result<(), Error> {
-    let mut records = vec![];
-    let mut rrsig_records = vec![];
-    for r in &kss.dnskey_rrset {
-        let zonefile =
-            domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
-        for entry in zonefile {
-            let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
+fn load_signed_only(iss: &mut IncrementalSigningState) {
+    // Copy old data to new data.
 
-            // We only care about records in a zonefile
-            let Entry::Record(record) = entry else {
-                continue;
-            };
-
-            let owner = record.owner().to_name::<Bytes>();
-            let data = record.data().clone().try_flatten_into().unwrap();
-            let r = Record::new(owner, record.class(), record.ttl(), data);
-
-            if r.rtype() == Rtype::RRSIG {
-                rrsig_records.push(r);
-            } else {
-                records.push(r);
-            }
-        }
+    for (k, v) in &iss.old_data {
+        iss.new_data.insert(k.clone(), v.clone());
     }
-
-    if !records.is_empty() {
-        let key = (records[0].owner().clone(), Rtype::DNSKEY);
-        iss.new_data.insert(key, records);
-    }
-    if !rrsig_records.is_empty() {
-        let key = (rrsig_records[0].owner().clone(), Rtype::DNSKEY);
-        iss.rrsigs.insert(key, rrsig_records);
-    }
-
-    for r in &kss.cds_rrset {
-        let zonefile =
-            domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
-        for entry in zonefile {
-            let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
-
-            // We only care about records in a zonefile
-            let Entry::Record(record) = entry else {
-                continue;
-            };
-
-            let owner = record.owner().to_name::<Bytes>();
-            let data = record.data().clone().try_flatten_into().unwrap();
-            let r = Record::new(owner.clone(), record.class(), record.ttl(), data);
-
-            if r.rtype() == Rtype::RRSIG {
-                let ZoneRecordData::Rrsig(rrsig) = r.data() else {
-                    panic!("RRSIG expected");
-                };
-                let key = (owner, rrsig.type_covered());
-                records = vec![r];
-                if let Some(v) = iss.rrsigs.get_mut(&key) {
-                    v.append(&mut records);
-                } else {
-                    iss.rrsigs.insert(key, records);
-                }
-            } else {
-                let key = (owner, r.rtype());
-                records = vec![r];
-                if let Some(v) = iss.new_data.get_mut(&key) {
-                    v.append(&mut records);
-                } else {
-                    iss.new_data.insert(key, records);
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn initial_diffs(iss: &mut IncrementalSigningState) -> Result<(), Error> {
