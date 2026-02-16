@@ -1,0 +1,13 @@
+#!/bin/sh -e
+
+case "$1" in
+configure)
+    # Create symbolic links
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-keygen
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-key2ds
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-nsec3-hash
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-notify
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-signzone
+    ln -f -s /usr/bin/dnst /usr/bin/ldns-update
+    ;;
+esac

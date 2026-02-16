@@ -1,0 +1,54 @@
+[package]
+# This is a dummy program to build a separate package with ploutos
+name = "dnst-ldnsutils"
+version = "0.2.0-rc1"
+edition = "2021"
+repository = "https://github.com/nlnetlabs/dnst/"
+authors = ["NLnet Labs <dns-team@nlnetlabs.nl>"]
+description = "Package for dnst's ldns symlinks and man pages"
+license = "BSD-3-Clause"
+
+[dependencies]
+
+# Related reading: https://wiki.debian.org/Teams/RustPackaging/Policy
+[package.metadata.deb]
+depends = "$auto, dnst"
+section = "net"
+priority = "optional"
+assets = [
+    # TODO: Extend Ploutos to generate the man pages from sources.
+    ["../../doc/manual/build/man/ldns-key2ds.1", "/usr/share/man/man1/ldns-key2ds.1", "644"],
+    ["../../doc/manual/build/man/ldns-keygen.1", "/usr/share/man/man1/ldns-keygen.1", "644"],
+    ["../../doc/manual/build/man/ldns-notify.1", "/usr/share/man/man1/ldns-notify.1", "644"],
+    ["../../doc/manual/build/man/ldns-nsec3-hash.1", "/usr/share/man/man1/ldns-nsec3-hash.1", "644"],
+    ["../../doc/manual/build/man/ldns-signzone.1", "/usr/share/man/man1/ldns-signzone.1", "644"],
+    ["../../doc/manual/build/man/ldns-update.1", "/usr/share/man/man1/ldns-update.1", "644"],
+]
+copyright = "Copyright (c) 2024, NLnet Labs. All rights reserved."
+extended-description = """\
+This is a meta package that replaces the original ldnsutils with their dnst
+counterparts (where implemented).
+"""
+maintainer-scripts = "pkg/debian"
+# See: https://www.debian.org/doc/debian-policy/ch-relationships.html#replacing-whole-packages-forcing-their-removal
+conflicts = "ldnsutils"
+replaces = "ldnsutils"
+
+# Related reading: https://docs.fedoraproject.org/en-US/packaging-guidelines/Rust/
+[package.metadata.generate-rpm]
+assets = [
+    # TODO: Extend Ploutos to generate the man pages from sources.
+    { source = "../../doc/manual/build/man/ldns-key2ds.1", dest = "/usr/share/man/man1/ldns-key2ds.1", mode = "644", doc = true },
+    { source = "../../doc/manual/build/man/ldns-keygen.1", dest = "/usr/share/man/man1/ldns-keygen.1", mode = "644", doc = true },
+    { source = "../../doc/manual/build/man/ldns-notify.1", dest = "/usr/share/man/man1/ldns-notify.1", mode = "644", doc = true },
+    { source = "../../doc/manual/build/man/ldns-nsec3-hash.1", dest = "/usr/share/man/man1/ldns-nsec3-hash.1", mode = "644", doc = true },
+    { source = "../../doc/manual/build/man/ldns-signzone.1", dest = "/usr/share/man/man1/ldns-signzone.1", mode = "644", doc = true },
+    { source = "../../doc/manual/build/man/ldns-update.1", dest = "/usr/share/man/man1/ldns-update.1", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+dnst = "*"
+
+# Set Obsoletes per https://docs.fedoraproject.org/en-US/packaging-guidelines/#renaming-or-replacing-existing-packages.
+[package.metadata.generate-rpm.obsoletes]
+ldns-utils = "< 0:1.8.4-2"
