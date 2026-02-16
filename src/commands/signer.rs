@@ -104,10 +104,6 @@ enum Commands {
         zonefile_out: Option<PathBuf>,
     },
     Sign {
-        /// Hash only, don't sign.
-        #[arg(long, action)]
-        hash_only: bool,
-
         /// Use layout in signed zone and print comments on DNSSEC records
         #[arg(long, action)]
         extra_comments: bool,
@@ -154,6 +150,15 @@ enum SetCommands {
     /// future.
     Lifetime {
         /// The lifetime.
+        #[arg(value_parser = super::keyset::cmd::parse_duration)]
+        duration: Duration,
+    },
+    /// Set how much time the signatures still have to be valid.
+    ///
+    /// New signatures will be generated before the time until the expiration
+    /// time is less than that.
+    RemainTime {
+        /// The required remaining time.
         #[arg(value_parser = super::keyset::cmd::parse_duration)]
         duration: Duration,
     },
@@ -210,7 +215,6 @@ enum SetCommands {
 
 #[derive(Default)]
 struct SigningOptions {
-    hash_only: bool,
     extra_comments: bool,
     preceed_zone_with_hash_list: bool,
     order_nsec3_rrs_by_unhashed_owner_name: bool,
@@ -360,7 +364,7 @@ impl Signer {
                 keyset_state,
                 inception_offset: Duration::from_secs(ONE_DAY),
                 signature_lifetime: Duration::from_secs(FOUR_WEEKS),
-                minimal_remaining_validity: Duration::from_secs(TWO_WEEKS),
+                remain_time: Duration::from_secs(TWO_WEEKS),
                 use_nsec3: false,
                 algorithm: Nsec3HashAlgorithm::SHA1,
                 iterations: 0,
@@ -450,7 +454,6 @@ impl Signer {
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
             Commands::Sign {
-                hash_only,
                 extra_comments,
                 preceed_zone_with_hash_list,
                 order_nsec3_rrs_by_unhashed_owner_name,
@@ -458,7 +461,6 @@ impl Signer {
                 use_yyyymmddhhmmss_rrsig_format,
             } => {
                 let options = SigningOptions {
-                    hash_only,
                     extra_comments,
                     preceed_zone_with_hash_list,
                     order_nsec3_rrs_by_unhashed_owner_name,
@@ -514,12 +516,6 @@ impl Signer {
         env: impl Env,
         options: SigningOptions,
     ) -> Result<(), Error> {
-        let signing_mode = if options.hash_only {
-            SigningMode::HashOnly
-        } else {
-            SigningMode::HashAndSign
-        };
-
         // Populate the signer state fields from keyset state.
         ws.handle_keyset_changed();
 
@@ -739,29 +735,6 @@ impl Signer {
         // Find the apex.
         let (apex, zone_class, ttl, soa_serial) = Self::find_apex(&records).unwrap();
 
-        // The original ldns-signzone filters out (with warnings) NSEC3 RRs,
-        // or RRSIG RRs covering NSEC3 RRs, where the hashed owner name
-        // doesn't correspond to an unhashed owner name in the zone. To work
-        // this out you have to NSEC3 hash every owner name during loading and
-        // filter out any NSEC3 hashed owner name that doesn't appear in the
-        // built NSEC3 hash set. To generate the NSEC3 hashes we have to know
-        // the settings that were used to NSEC3 hash the zone, i.e. we have to
-        // find an NSEC3PARAM RR at the apex, or an NSEC3 RR in the zone. But
-        // we don't know what the apex is until we find the SOA, and checking
-        // DNSKEYs and loading key files is quick so we do that first. Then
-        // once we get here we have the ordered zone, we know the apex, and we
-        // can find the NSEC3PARAM RR. Then we can generate NSEC3 hashes for
-        // owner names.
-        //
-        // However, WE DON'T DO THIS as it was (a) discovered that
-        // ldns-signzone is too simplistic in its approach as it would wrongly
-        // conclude that NSEC3 hashes for empty non-terminals lack a matching
-        // owner name in the zone because it only determined ENTs _after_
-        // ignoring and warning about hashed owner names that don't correspond
-        // to an unhashed owner name in the zone, and (b) that it would be
-        // better for ldns-signzone to strip out NSEC(3)s on loading anyway as
-        // it should only operate on unsigned zone input.
-
         if !zonemd.is_empty() {
             Self::replace_apex_zonemd_with_placeholder(
                 &mut records,
@@ -880,40 +853,24 @@ impl Signer {
         // Set last_signature_refresh to the current time.
         ws.state.last_signature_refresh = now;
 
-        let signing_config: SigningConfig<_, _> = match signing_mode {
-            SigningMode::HashOnly | SigningMode::HashAndSign => {
-                // LDNS doesn't add NSECs to a zone that already has NSECs or
-                // NSEC3s. It *does* add NSEC3 if the zone has NSECs. As noted in
-                // load_zone() we instead, as LDNS should, strip NSEC(3)s on load
-                // and thus always add NSEC(3)s when hashing.
-                //
-                // Note: Assuming that we want to later be able to support
-                // transition between NSEC <-> NSEC3 we will need to be able to
-                // sign with more than one hashing configuration at once.
-                if ws.config.use_nsec3 {
-                    let params = Nsec3param::new(
-                        ws.config.algorithm,
-                        0,
-                        ws.config.iterations,
-                        ws.config.salt.clone(),
-                    );
-                    let mut nsec3_config = GenerateNsec3Config::new(params);
-                    if ws.config.opt_out {
-                        nsec3_config = nsec3_config.with_opt_out();
-                    }
-                    SigningConfig::new(DenialConfig::Nsec3(nsec3_config), inception, expiration)
-                } else {
-                    SigningConfig::new(
-                        DenialConfig::Nsec(GenerateNsecConfig::new()),
-                        inception,
-                        expiration,
-                    )
-                }
-            } /*
-                          SigningMode::None => {
-                              SigningConfig::new(DenialConfig::AlreadyPresent, inception, expiration)
-                          }
-              */
+        let signing_config = if ws.config.use_nsec3 {
+            let params = Nsec3param::new(
+                ws.config.algorithm,
+                0,
+                ws.config.iterations,
+                ws.config.salt.clone(),
+            );
+            let mut nsec3_config = GenerateNsec3Config::new(params);
+            if ws.config.opt_out {
+                nsec3_config = nsec3_config.with_opt_out();
+            }
+            SigningConfig::new(DenialConfig::Nsec3(nsec3_config), inception, expiration)
+        } else {
+            SigningConfig::new(
+                DenialConfig::Nsec(GenerateNsecConfig::new()),
+                inception,
+                expiration,
+            )
         };
 
         records
@@ -933,17 +890,15 @@ impl Signer {
                 let _ = records.insert(zrr);
             }
 
-            if signing_mode == SigningMode::HashAndSign {
-                Self::update_zonemd_rrsig(
-                    &apex,
-                    &mut records,
-                    &signing_keys,
-                    &zonemd_rrs,
-                    inception,
-                    expiration,
-                )
-                .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
-            }
+            Self::update_zonemd_rrsig(
+                &apex,
+                &mut records,
+                &signing_keys,
+                &zonemd_rrs,
+                inception,
+                expiration,
+            )
+            .map_err(|err| format!("ZONEMD re-signing error: {err}"))?;
         }
 
         let now_ts = Timestamp::now();
@@ -1541,6 +1496,9 @@ impl WorkSpace {
             SetCommands::Lifetime { duration } => {
                 self.config.signature_lifetime = duration;
             }
+            SetCommands::RemainTime { duration } => {
+                self.config.remain_time = duration;
+            }
             SetCommands::UseNsec3 { boolean } => {
                 self.config.use_nsec3 = boolean;
             }
@@ -1635,6 +1593,12 @@ impl WorkSpace {
 
         self.new_nsec_nsec3_sigs(&mut iss)?;
 
+        if !self.config.zonemd.is_empty() {
+            let start = Instant::now();
+            self.add_zonemd(&mut iss)?;
+            println!("ZONEMD took {:?}", start.elapsed());
+        }
+
         if refresh_signatures {
             self.refresh_some_signatures(&mut iss)?;
             if self.state.key_roll.is_some() {
@@ -1648,11 +1612,10 @@ impl WorkSpace {
     }
 
     fn refresh_some_signatures(&mut self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
-        let effective_lifetime =
-            self.config.signature_lifetime - self.config.minimal_remaining_validity;
+        let effective_lifetime = self.config.signature_lifetime - self.config.remain_time;
         let now = self.faketime_or_now();
         let now_system_time = UNIX_EPOCH + Duration::from(now.clone());
-        let min_expire = now_system_time + self.config.minimal_remaining_validity;
+        let min_expire = now_system_time + self.config.remain_time;
         let mut since_last_time: Duration = if now >= self.state.last_signature_refresh {
             <UnixTime as Into<Duration>>::into(now.clone())
                 - <UnixTime as Into<Duration>>::into(self.state.last_signature_refresh.clone())
@@ -1698,7 +1661,17 @@ impl WorkSpace {
             }
 
             let key = ((*owner).clone(), **rtype);
-            if **rtype == Rtype::NSEC3 {
+            if **rtype == Rtype::NSEC {
+                let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
+                let records = [record.clone()];
+                sign_records(
+                    &records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            } else if **rtype == Rtype::NSEC3 {
                 let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                 let records = [record.clone()];
                 sign_records(
@@ -2104,6 +2077,131 @@ impl WorkSpace {
                 }
             }
         }
+
+        if !self.config.zonemd.is_empty() {
+            let zonemd = Zonemd::new(
+                0.into(),
+                ZonemdScheme::SIMPLE,
+                ZonemdAlgorithm::SHA384,
+                Bytes::new(),
+            );
+            let record = Record::new(
+                iss.origin.clone(),
+                Class::IN,
+                Ttl::ZERO,
+                ZoneRecordData::Zonemd(zonemd),
+            );
+            let records = vec![record];
+            let key = (iss.origin.clone(), Rtype::ZONEMD);
+            iss.new_data.insert(key, records);
+        }
+        Ok(())
+    }
+
+    fn add_zonemd(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        // Get the SOA record. We need that for the Serial and for the
+        // TTL.
+        let key = (iss.origin.clone(), Rtype::SOA);
+        let soa_records = iss
+            .new_data
+            .get(&key)
+            .expect("SOA record should be present");
+        let ZoneRecordData::Soa(soa) = soa_records[0].data() else {
+            panic!("SOA record expected");
+        };
+
+        let start = Instant::now();
+
+        // Create a Vec with all records to be able to sort them in canonical
+        // order. Ignore ZONEMD and RRSIGs of ZONEMD records.
+        let mut all = vec![];
+
+        let mut data: Vec<_> = iss
+            .new_data
+            .iter()
+            .filter_map(|((o, t), r)| {
+                if *o != iss.origin || *t != Rtype::ZONEMD {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+        all.append(&mut data);
+
+        let mut data: Vec<_> = iss.nsecs.values().collect();
+        all.append(&mut data);
+
+        let mut data: Vec<_> = iss.nsec3s.values().collect();
+        all.append(&mut data);
+
+        let mut data: Vec<_> = iss
+            .rrsigs
+            .iter()
+            .filter_map(|((o, t), r)| {
+                if *o != iss.origin || *t != Rtype::ZONEMD {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+        all.append(&mut data);
+
+        //all.sort_by(|e1, e2| CanonicalOrd::canonical_cmp(*e1, *e2));
+        all.par_sort_by(|e1, e2| CanonicalOrd::canonical_cmp(*e1, *e2));
+
+        println!("ZONEMD prepare and sort took {:?}", start.elapsed());
+
+        let start = Instant::now();
+
+        let mut zonemd_records = vec![];
+        for z in &self.config.zonemd {
+            if z.0 != ZonemdScheme::SIMPLE {
+                return Err("unsupported zonemd scheme (only SIMPLE is supported)".into());
+            }
+            let mut buf: Vec<u8> = Vec::new();
+            let mut ctx = match z.1 {
+                ZonemdAlgorithm::SHA384 => digest::Context::new(&digest::SHA384),
+                ZonemdAlgorithm::SHA512 => digest::Context::new(&digest::SHA512),
+                _ => unreachable!(),
+            };
+            for r in &all {
+                buf.clear();
+                with_infallible(|| r.compose_canonical(&mut buf));
+                ctx.update(&buf);
+            }
+            let digest = ctx.finish();
+            let zonemd = Zonemd::new(
+                soa.serial(),
+                z.0,
+                z.1,
+                Bytes::copy_from_slice(digest.as_ref()),
+            );
+            let record = Record::new(
+                iss.origin.clone(),
+                soa_records[0].class(),
+                soa_records[0].ttl(),
+                ZoneRecordData::Zonemd(zonemd),
+            );
+            zonemd_records.push(record);
+        }
+
+        println!("ZONEMD hash took {:?}", start.elapsed());
+
+        let key = (iss.origin.clone(), Rtype::ZONEMD);
+        let mut new_sigs = vec![];
+        sign_records(
+            &zonemd_records,
+            &iss.keys,
+            iss.inception,
+            iss.expiration,
+            &mut new_sigs,
+        )?;
+        iss.new_data.insert(key.clone(), zonemd_records);
+        iss.rrsigs.insert(key, new_sigs[0].0.clone());
         Ok(())
     }
 }
@@ -2126,7 +2224,7 @@ struct SignerConfig {
 
     inception_offset: Duration,
     signature_lifetime: Duration,
-    minimal_remaining_validity: Duration,
+    remain_time: Duration,
     use_nsec3: bool,
     algorithm: Nsec3HashAlgorithm,
     iterations: u16,
@@ -2328,7 +2426,8 @@ fn load_signed_zone(iss: &mut IncrementalSigningState, path: &PathBuf) -> Result
                         if record.owner() == rrsig_records[0].owner()
                             && rrsig.type_covered() == type_covered
                         {
-                            todo!();
+                            rrsig_records.push(record);
+                            continue;
                         }
 
                         let key = (rrsig_records[0].owner().clone(), type_covered);
@@ -2436,7 +2535,8 @@ fn load_unsigned_zone(iss: &mut IncrementalSigningState, path: &PathBuf) -> Resu
                     ZoneRecordData::Rrsig(_)
                     | ZoneRecordData::Nsec(_)
                     | ZoneRecordData::Nsec3(_)
-                    | ZoneRecordData::Nsec3param(_) => (), // Ignore.
+                    | ZoneRecordData::Nsec3param(_)
+                    | ZoneRecordData::Zonemd(_) => (), // Ignore.
                     _ => {
                         if records.is_empty() {
                             records.push(record);
@@ -3713,18 +3813,6 @@ fn sign_records(
     }
     new_sigs.push((rrsig_records, rrset.rtype()));
     Ok(())
-}
-
-//------------ SigningMode ---------------------------------------------------
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-enum SigningMode {
-    /// Both hash (NSEC/NSEC3) and sign zone records.
-    #[default]
-    HashAndSign,
-
-    /// Only hash (NSEC/NSEC3) zone records, don't sign them.
-    HashOnly,
 }
 
 //------------ ZonemdTuple ---------------------------------------------------
