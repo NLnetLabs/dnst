@@ -337,6 +337,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "smallvec",
  "supports-color",
  "tempfile",
  "test_bin",
@@ -349,7 +350,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#80ca8b57d8b7d551b4cf5fea020674e694eeecd3"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#3172a68fe3c6734d3b083e6475d65c563b3e7f23"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -395,7 +396,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#80ca8b57d8b7d551b4cf5fea020674e694eeecd3"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#3172a68fe3c6734d3b083e6475d65c563b3e7f23"
 dependencies = [
  "proc-macro2",
  "quote",
