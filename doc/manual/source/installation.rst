@@ -359,14 +359,14 @@ a specific version, if needed.
          
           sudo yum install -y dnst-0.1.0~rc1
 
-    .. group-tab:: Docker
+   .. group-tab:: Docker
 
-        All release versions of dnst, as well as release candidates and
-        builds based on the latest main branch are available on `Docker Hub
-        <https://hub.docker.com/r/nlnetlabs/dnst/tags?page=1&ordering=last_updated>`_.
+       All release versions of dnst, as well as release candidates and
+       builds based on the latest main branch are available on `Docker Hub
+       <https://hub.docker.com/r/nlnetlabs/dnst/tags?page=1&ordering=last_updated>`_.
+
+       For example, installing dnst 0.1.1 RC1 is as simple as:
  
-        For example, installing dnst 0.1.1 RC1 is as simple as:
+       .. code-block:: text
  
-        .. code-block:: text
- 
-           sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
+          sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
