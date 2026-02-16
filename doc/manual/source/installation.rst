@@ -247,7 +247,7 @@ Updating
           sudo docker pull nlnetlabs/dnst
 
        If you have a persistent container with dnst, you need to remove it and
-        create a new one with the same arguments you used before:
+       create a new one with the same arguments you used before:
 
        .. code-block:: bash
 
