@@ -24,7 +24,6 @@ ln -s ${FORCE} /usr/bin/dnst /usr/bin/ldns-update
 
 post_uninstall_script = '''
 #!/bin/bash -e
-#RPM_SYSTEMD_MACROS#
 
 # See: https://docs.fedoraproject.org/en-US/packaging-guidelines/Scriptlets/#_syntax
 if [ $1 -eq 0 ] ; then
