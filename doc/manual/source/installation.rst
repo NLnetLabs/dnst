@@ -6,10 +6,11 @@ Binary Packages
 
 Getting started with dnst is really easy by installing a binary package
 for either Debian and Ubuntu or for Red Hat Enterprise Linux (RHEL) and
-compatible systems such as Rocky Linux. 
+compatible systems such as Rocky Linux. Alternatively, you can run dnst
+with Docker. 
 
 You can also build dnst from the source code using Cargo, Rust's build
-system and package manager. Cargo lets you to run dnst on almost any
+system and package manager. Cargo lets you run dnst on almost any
 operating system and CPU architecture. Refer to the :doc:`building` section
 to get started.
 
@@ -150,6 +151,28 @@ to get started.
 
           sudo yum install -y dnst
 
+   .. group-tab:: Docker
+
+       dnst Docker images are built with Alpine Linux. The supported
+       CPU architectures are shown on the `Docker Hub dnst page
+       <https://hub.docker.com/r/nlnetlabs/dnst/tags>`_ per dnst
+       version (aka Docker "tag") in the ``OS/ARCH`` column.
+
+       Running dnst as a one-shot container can be done like so:
+
+       .. code-block:: bash
+
+          sudo docker run --rm nlnetlabs/dnst
+
+       To give dnst access to files and to save files created by dnst locally
+       (e.g. for :any:`keygen <man/dnst-keygen>` or :any:`signzone
+       <man/dnst-signzone>`), you need to bind mount a local directory (e.g.
+       ``./``) into the container like so:
+
+       .. code-block:: bash
+
+          sudo docker run <your usual arguments> -v .:/data nlnetlabs/dnst
+
 Updating
 --------
 
@@ -213,6 +236,23 @@ Updating
        .. code-block:: bash
          
           sudo yum update -y dnst
+
+   .. group-tab:: Docker
+
+       Assuming that you run Docker with image `nlnetlabs/dnst`, upgrading
+       to the latest version can be done by running the following commands:
+
+       .. code-block:: bash
+
+          sudo docker pull nlnetlabs/dnst
+
+       If you have a persistent container with dnst, you need to remove it and
+       create a new one with the same arguments you used before:
+
+       .. code-block:: bash
+
+          sudo docker rm --force dnst
+          sudo docker run <your usual arguments> nlnetlabs/dnst
 
 Installing Specific Versions
 ----------------------------
@@ -319,4 +359,14 @@ a specific version, if needed.
          
           sudo yum install -y dnst-0.1.0~rc1
 
-               
+    .. group-tab:: Docker
+
+       All release versions of dnst, as well as release candidates and
+       builds based on the latest main branch are available on `Docker Hub
+       <https://hub.docker.com/r/nlnetlabs/dnst/tags?page=1&ordering=last_updated>`_.
+
+       For example, installing dnst 0.1.1 RC1 is as simple as:
+
+       .. code-block:: text
+
+          sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
