@@ -361,12 +361,12 @@ a specific version, if needed.
 
     .. group-tab:: Docker
 
-       All release versions of dnst, as well as release candidates and
-       builds based on the latest main branch are available on `Docker Hub
-       <https://hub.docker.com/r/nlnetlabs/dnst/tags?page=1&ordering=last_updated>`_.
-
-       For example, installing dnst 0.1.1 RC1 is as simple as:
-
-       .. code-block:: text
-
-          sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
+        All release versions of dnst, as well as release candidates and
+        builds based on the latest main branch are available on `Docker Hub
+        <https://hub.docker.com/r/nlnetlabs/dnst/tags?page=1&ordering=last_updated>`_.
+ 
+        For example, installing dnst 0.1.1 RC1 is as simple as:
+ 
+        .. code-block:: text
+ 
+           sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
