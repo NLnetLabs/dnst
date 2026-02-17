@@ -3,12 +3,6 @@
 #![warn(clippy::missing_docs_in_private_items)]
 
 // TODO:
-// - file locking
-//   - update the state file atomically by writing to a different file and
-//     then renaming. This helps downstream users.
-//   - option: overwrite the config file. This is risky but simplifies locking.
-//   - option: update the config file atomically. This makes locking more
-//     complex.
 // - add a autoremove_delay option. Delete stale keys only some time after
 //   their withdrawn times.
 // - move dnskey_rrset, cds_rrset, ns_rrset into apex_extra (ds_rrset remains).
@@ -16,6 +10,7 @@
 //   the apex.
 // - add a -v option to keyset. Remove the -v option from status. Add
 //   verbose output for creation and deletion of keys.
+// - add a way for status and other read commands to by-pass the lock.
 
 use crate::env::Env;
 use crate::error::Error;
@@ -59,15 +54,17 @@ use domain_kmip as kmip;
 use domain_kmip::dep::kmip::client::pool::SyncConnPool;
 #[cfg(feature = "kmip")]
 use domain_kmip::KeyUrl;
+use fs2::FileExt;
 use futures::future::join_all;
 use jiff::{Span, SpanRelativeTo};
+use same_file::Handle;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::From;
 use std::ffi::OsStr;
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::{create_dir_all, remove_file, File};
+use std::fs::{create_dir_all, remove_file, rename, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
@@ -87,6 +84,9 @@ use super::kmip::{format_key_label, kmip_command, KmipCommands, KmipState};
 /// Maximum tries to generate new key with a key tag that does not conclict
 /// with the key tags of existing keys.
 const MAX_KEY_TAG_TRIES: u8 = 10;
+
+/// Number of times to try locking a file.
+const MAX_FILE_LOCK_TRIES: u8 = 10;
 
 /// Wait this amount before retrying for network errors, DNS errors, etc.
 const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
@@ -632,6 +632,9 @@ struct WorkSpace {
     /// Whether the command to update DS records has to be executed.
     run_update_ds_command: bool,
 
+    /// Store the locked config file to avoid accidental unlocking.
+    _locked_config_file: Option<File>,
+
     #[cfg(feature = "kmip")]
     /// The current set of KMIP server pools.
     pools: HashMap<String, SyncConnPool>,
@@ -713,32 +716,26 @@ impl Keyset {
                 )
             })?;
 
-            let json = serde_json::to_string_pretty(&kss).expect("should not fail");
-            let mut file = File::create(&state_file)
-                .map_err(|e| format!("unable to create file {}: {e}", state_file.display()))?;
-            write!(file, "{json}")
-                .map_err(|e| format!("unable to write to file {}: {e}", state_file.display()))?;
+            let ws = WorkSpace {
+                config: ksc,
+                state: kss,
+                config_changed: false,
+                state_changed: false,
+                run_update_ds_command: false,
+                _locked_config_file: None,
+                #[cfg(feature = "kmip")]
+                pools: HashMap::new(),
+            };
 
-            let json = serde_json::to_string_pretty(&ksc).expect("should not fail");
-            let mut file = File::create(&self.keyset_conf).map_err(|e| {
-                format!("unable to create file {}: {e}", self.keyset_conf.display())
-            })?;
-            write!(file, "{json}").map_err(|e| {
-                format!(
-                    "unable to write to file {}: {e}",
-                    self.keyset_conf.display()
-                )
-            })?;
+            ws.write_state()?;
+            ws.write_config(&self.keyset_conf)?;
+
             return Ok(());
         }
 
-        let file = File::open(self.keyset_conf.clone()).map_err(|e| {
-            format!(
-                "unable to open config file {}: {e}",
-                self.keyset_conf.display()
-            )
-        })?;
-        let ksc: KeySetConfig = serde_json::from_reader(file)
+        let config_file = write_locked_file(&self.keyset_conf)?;
+
+        let ksc: KeySetConfig = serde_json::from_reader(&config_file)
             .map_err(|e| format!("error loading {:?}: {e}\n", self.keyset_conf))?;
         let file = File::open(ksc.state_file.clone()).map_err(|e| {
             format!(
@@ -755,6 +752,7 @@ impl Keyset {
             config_changed: false,
             state_changed: false,
             run_update_ds_command: false,
+            _locked_config_file: Some(config_file),
             #[cfg(feature = "kmip")]
             pools: HashMap::new(),
         };
@@ -1477,31 +1475,10 @@ impl Keyset {
             ws.state_changed = true;
         }
         if ws.config_changed {
-            let json = serde_json::to_string_pretty(&ws.config).expect("should not fail");
-            let mut file = File::create(&self.keyset_conf).map_err(|e| {
-                format!("unable to create file {}: {e}", self.keyset_conf.display())
-            })?;
-            write!(file, "{json}").map_err(|e| {
-                format!(
-                    "unable to write to file {}: {e}",
-                    self.keyset_conf.display()
-                )
-            })?;
+            ws.write_config(&self.keyset_conf)?;
         }
         if ws.state_changed {
-            let json = serde_json::to_string_pretty(&ws.state).expect("should not fail");
-            let mut file = File::create(&ws.config.state_file).map_err(|e| {
-                format!(
-                    "unable to create file {}: {e}",
-                    ws.config.state_file.display()
-                )
-            })?;
-            write!(file, "{json}").map_err(|e| {
-                format!(
-                    "unable to write to file {}: {e}",
-                    ws.config.state_file.display()
-                )
-            })?;
+            ws.write_state()?;
         }
 
         // Now check if we need to run the update_ds_command. Make sure that
@@ -3703,6 +3680,65 @@ impl WorkSpace {
         let new_algs = HashSet::from([self.config.algorithm.to_generate_params().algorithm()]);
         curr_algs != new_algs
     }
+
+    /// Write config to a file.
+    ///
+    /// First write to a new filename and then rename to make sure that
+    /// changes are atomic.
+    fn write_config(&self, keyset_conf: &PathBuf) -> Result<(), Error> {
+        let json = serde_json::to_string_pretty(&self.config).expect("should not fail");
+        let mut conf_file_new = keyset_conf.clone();
+
+        // It would be nice to use add_extension here, but it is only in
+        // Rust 1.91.0 and above. Use strings instead.
+        // if !conf_file_new.add_extension("new") {
+        //	return Err(format!("unable to add extension 'new' to {}",
+        //		keyset_conf.display()).into());
+        // }
+        conf_file_new.as_mut_os_string().push(".new");
+
+        let mut file = File::create(&conf_file_new)
+            .map_err(|e| format!("unable to create file {}: {e}", conf_file_new.display()))?;
+        write!(file, "{json}")
+            .map_err(|e| format!("unable to write to file {}: {e}", conf_file_new.display()))?;
+
+        rename(&conf_file_new, keyset_conf).map_err(|e| {
+            format!(
+                "unable to rename {} to {}: {e}",
+                conf_file_new.display(),
+                keyset_conf.display()
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Write state to a file.
+    ///
+    /// First write to a new filename and then rename to make sure that
+    /// changes are atomic.
+    fn write_state(&self) -> Result<(), Error> {
+        let json = serde_json::to_string_pretty(&self.state).expect("should not fail");
+        let mut state_file_new = self.config.state_file.clone();
+        // It would be nice to use add_extension here, but it is only in
+        // Rust 1.91.0 and above. Use strings instead.
+        // if !state_file_new.add_extension("new") {
+        //	return Err(format!("unable to add extension 'new' to {}",
+        //		ws.config.state_file.display()).into());
+        // }
+        state_file_new.as_mut_os_string().push(".new");
+        let mut file = File::create(&state_file_new)
+            .map_err(|e| format!("unable to create file {}: {e}", state_file_new.display()))?;
+        write!(file, "{json}")
+            .map_err(|e| format!("unable to write to file {}: {e}", state_file_new.display()))?;
+        rename(&state_file_new, &self.config.state_file).map_err(|e| {
+            format!(
+                "unable to rename {} to {}: {e}",
+                state_file_new.display(),
+                self.config.state_file.display()
+            )
+        })?;
+        Ok(())
+    }
 }
 
 /// Create CDS and CDNSKEY RRsets.
@@ -5599,6 +5635,46 @@ fn show_automatic_roll_state(
             }
         }
     }
+}
+
+/// Open filename, get an exclusive lock and return the open file.
+///
+/// Assume changes are saved by creating a new file and renaming. After
+/// locking the file, the function has to check if the locked file is this
+/// the current fine under that name.
+fn write_locked_file(filename: &PathBuf) -> Result<File, Error> {
+    // The config file is updated by writing to a new file and the renaming.
+    // Might have locked the old file. Check. Try a number of times and
+    // then give up. Lock contention is expected to be low.
+    for _try in 0..MAX_FILE_LOCK_TRIES {
+        let file = File::open(filename)
+            .map_err(|e| format!("unable to open file {}: {e}", filename.display()))?;
+
+        file.lock_exclusive()
+            .map_err(|e| format!("unable to lock {}: {e}", filename.display()))?;
+
+        let file_clone = file
+            .try_clone()
+            .map_err(|e| format!("unable to clone locked file {}: {e}", filename.display()))?;
+        let locked_file_handle = Handle::from_file(file_clone).map_err(|e| {
+            format!(
+                "Unable to get handle from locked file {}: {e}",
+                filename.display()
+            )
+        })?;
+        let current_file_handle = Handle::from_path(filename)
+            .map_err(|e| format!("Unable to get handle from file {}: {e}", filename.display()))?;
+
+        if locked_file_handle != current_file_handle {
+            continue;
+        }
+        return Ok(file);
+    }
+    Err(format!(
+        "unable to lock {} after {MAX_FILE_LOCK_TRIES} tries",
+        filename.display()
+    )
+    .into())
 }
 
 /*
