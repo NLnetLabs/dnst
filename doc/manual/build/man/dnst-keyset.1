@@ -685,7 +685,8 @@ Give detailed information about all keys in the key set.
 get
 .sp
 Get the values of the following configuration variables: use\-csk,
-autoremove, algorithm, ds\-algorithm, dnskey\-lifetime, cds\-lifetime.
+autoremove, autoremove\-delay, algorithm, ds\-algorithm, dnskey\-lifetime,
+cds\-lifetime.
 This is a subset of all configuration variables.
 .sp
 Additionally, the dnskey argument returns the current DNSKEY RRset plus
@@ -707,7 +708,11 @@ will be created.
 autoremove <BOOLEAN>
 .sp
 When true, keys that are stale will be removed automatically.
-Currently there is no delay in removing keys.
+.IP \(bu 2
+autoremove\-delay <DELAY>
+.sp
+Set the delay between the time keys become stale and automatic
+removal.
 .IP \(bu 2
 algorithm <ALGORITHM>
 .sp
