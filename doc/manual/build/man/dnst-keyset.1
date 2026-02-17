@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Jan 23, 2026" "0.1.1-dev" "dnst"
+.TH "DNST-KEYSET" "1" "Feb 16, 2026" "0.1.1-dev" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -781,11 +781,19 @@ Set a command to to run when the DS records in the parent zone need
 to be updated.
 This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
+.IP \(bu 2
+fake\-time
+.sp
+Set the \(aqwall clock\(aq time to be used for testing.
+The argument is either the Unix time as seconds since Epoch or the string
+\(aqoff\(aq to disable fake\-time.
 .UNINDENT
 .IP \(bu 2
 show
 .sp
 Show all configuration variables.
+.sp
+Note that \(aqfake\-time\(aq is only printed when it is set.
 .IP \(bu 2
 cron
 .sp
