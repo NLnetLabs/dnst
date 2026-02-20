@@ -2612,8 +2612,9 @@ impl WorkSpace {
 
         // Otherwise use Ring/OpenSSL based key generation.
         let (secret_key, public_key, key_tag) = loop {
-            let (secret_key, public_key) = domain::crypto::sign::generate(algorithm.clone(), flags)
-                .map_err(|e| format!("key generation failed: {e}\n"))?;
+            let (secret_key, public_key) =
+                domain::crypto::sign::generate(&algorithm.clone(), flags)
+                    .map_err(|e| format!("key generation failed: {e}\n"))?;
 
             let key_tag = public_key.key_tag();
             if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
@@ -2804,8 +2805,8 @@ impl WorkSpace {
                 KeyType::Include(_) => false,
             };
 
-            let rrset =
-                Rrset::new(&dnskeys).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let rrset = Rrset::new_from_owned(&dnskeys)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
             if dnskey_signer {
                 let privref = v.privref().ok_or("missing private key")?;
@@ -2949,10 +2950,10 @@ impl WorkSpace {
                 KeyType::Include(_) => false,
             };
 
-            let cds_rrset =
-                Rrset::new(&cds_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
-            let cdnskey_rrset =
-                Rrset::new(&cdnskey_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let cds_rrset = Rrset::new_from_owned(&cds_list)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let cdnskey_rrset = Rrset::new_from_owned(&cdnskey_list)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
             if dnskey_signer {
                 let privref = v.privref().ok_or("missing private key")?;
