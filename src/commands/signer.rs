@@ -633,106 +633,10 @@ impl Signer {
         // Make sure, zonemd arguments are unique
         let zonemd: HashSet<ZonemdTuple> = HashSet::from_iter(ws.config.zonemd.clone());
 
-        // implement SOA serial policies. There are four policies:
-        // 1) Keep. Copy the serial from the unsigned zone. Refuse to sign
-        //    if the serial did not change.
-        // 2) Increment. Copy the serial from the unsigned zone but increment
-        //    the serial if the zone needs to be signed an the serial in
-        //    the unsigned zone did not change.
-        // 3) Unix timestamp. The current time in Unix seconds. Increment if
-        //    that does not result in a higher serial.
-        // 4) Broken down time (YYYYMMDDnn). The current day plus a serial
-        //    number. Implies increment to generate different serial numbers
-        //    over a day.
-
         // SAFETY: Already checked before this point.
-        let zone_soa_rr = records.find_soa().unwrap();
-        let ZoneRecordData::Soa(zone_soa) = zone_soa_rr.first().data() else {
-            unreachable!();
-        };
-
-        match ws.config.serial_policy {
-            SerialPolicy::Keep => {
-                if let Some(previous_serial) = ws.state.previous_serial {
-                    if zone_soa.serial() <= previous_serial {
-                        return Err(
-                            "Serial policy is Keep but upstream serial did not increase".into()
-                        );
-                    }
-                }
-
-                ws.state.previous_serial = Some(zone_soa.serial());
-            }
-            SerialPolicy::Increment => {
-                let mut serial = zone_soa.serial();
-                if let Some(previous_serial) = ws.state.previous_serial {
-                    if serial <= previous_serial {
-                        serial = previous_serial.add(1);
-
-                        let new_soa = ZoneRecordData::Soa(Soa::new(
-                            zone_soa.mname().clone(),
-                            zone_soa.rname().clone(),
-                            serial,
-                            zone_soa.refresh(),
-                            zone_soa.retry(),
-                            zone_soa.expire(),
-                            zone_soa.minimum(),
-                        ));
-
-                        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-                    }
-                }
-                ws.state.previous_serial = Some(serial);
-            }
-            SerialPolicy::UnixSeconds => {
-                let mut serial = Serial::now();
-                if let Some(previous_serial) = ws.state.previous_serial {
-                    if serial <= previous_serial {
-                        serial = previous_serial.add(1);
-                    }
-                }
-
-                let new_soa = ZoneRecordData::Soa(Soa::new(
-                    zone_soa.mname().clone(),
-                    zone_soa.rname().clone(),
-                    serial,
-                    zone_soa.refresh(),
-                    zone_soa.retry(),
-                    zone_soa.expire(),
-                    zone_soa.minimum(),
-                ));
-
-                records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-                ws.state.previous_serial = Some(serial);
-            }
-            SerialPolicy::Date => {
-                let ts = JiffTimestamp::now();
-                let zone = Zoned::new(ts, TimeZone::UTC);
-                let serial = ((zone.year() as u32 * 100 + zone.month() as u32) * 100
-                    + zone.day() as u32)
-                    * 100;
-                let mut serial: Serial = serial.into();
-
-                if let Some(previous_serial) = ws.state.previous_serial {
-                    if serial <= previous_serial {
-                        serial = previous_serial.add(1);
-                    }
-                }
-
-                let new_soa = ZoneRecordData::Soa(Soa::new(
-                    zone_soa.mname().clone(),
-                    zone_soa.rname().clone(),
-                    serial,
-                    zone_soa.refresh(),
-                    zone_soa.retry(),
-                    zone_soa.expire(),
-                    zone_soa.minimum(),
-                ));
-
-                records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa);
-                ws.state.previous_serial = Some(serial);
-            }
-        }
+        let zone_soa_rr = records.find_soa().expect("should exist");
+        let new_soa = ws.update_soa_serial(zone_soa_rr.first())?;
+        records.update_data(|rr| rr.rtype() == Rtype::SOA, new_soa.into_data());
 
         // Find the apex.
         let (apex, zone_class, ttl, soa_serial) = Self::find_apex(&records).unwrap();
@@ -2039,7 +1943,7 @@ impl WorkSpace {
         Ok(())
     }
 
-    fn load_apex_records(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+    fn load_apex_records(&mut self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
         // Assume that the APEX records have been copied from KeySetState to
         // SignerState. Now update the APEX in new_data.
 
@@ -2105,6 +2009,14 @@ impl WorkSpace {
             let key = (iss.origin.clone(), Rtype::ZONEMD);
             iss.new_data.insert(key, records);
         }
+
+        // Update the SOA serial.
+        let key = (iss.origin.clone(), Rtype::SOA);
+        let zone_soa_rr = &iss.new_data.get(&key).expect("SOA should exist")[0];
+        let new_soa = self.update_soa_serial(zone_soa_rr)?;
+        let new_rrset = vec![new_soa];
+        iss.new_data.insert(key, new_rrset);
+
         Ok(())
     }
 
@@ -2213,6 +2125,136 @@ impl WorkSpace {
         iss.new_data.insert(key.clone(), zonemd_records);
         iss.rrsigs.insert(key, new_sigs[0].0.clone());
         Ok(())
+    }
+
+    fn update_soa_serial(&mut self, old_soa: &Zrd) -> Result<Zrd, Error> {
+        // Implement SOA serial policies. There are four policies:
+        // 1) Keep. Copy the serial from the unsigned zone. Refuse to sign
+        //    if the serial did not change.
+        // 2) Increment. Copy the serial from the unsigned zone but increment
+        //    the serial if the zone needs to be signed an the serial in
+        //    the unsigned zone did not change.
+        // 3) Unix timestamp. The current time in Unix seconds. Increment if
+        //    that does not result in a higher serial.
+        // 4) Broken down time (YYYYMMDDnn). The current day plus a serial
+        //    number. Implies increment to generate different serial numbers
+        //    over a day.
+
+        let ZoneRecordData::Soa(zone_soa) = old_soa.data() else {
+            unreachable!();
+        };
+
+        // Assume that we will change the state.
+        self.state_changed = true;
+
+        match self.config.serial_policy {
+            SerialPolicy::Keep => {
+                if let Some(previous_serial) = self.state.previous_serial {
+                    if zone_soa.serial() <= previous_serial {
+                        return Err(
+                            "Serial policy is Keep but upstream serial did not increase".into()
+                        );
+                    }
+                }
+
+                self.state.previous_serial = Some(zone_soa.serial());
+                Ok(old_soa.clone())
+            }
+            SerialPolicy::Increment => {
+                let mut serial = zone_soa.serial();
+                if let Some(previous_serial) = self.state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+                        self.state.previous_serial = Some(serial);
+
+                        let new_soa = ZoneRecordData::Soa(Soa::new(
+                            zone_soa.mname().clone(),
+                            zone_soa.rname().clone(),
+                            serial,
+                            zone_soa.refresh(),
+                            zone_soa.retry(),
+                            zone_soa.expire(),
+                            zone_soa.minimum(),
+                        ));
+                        let record = Record::new(
+                            old_soa.owner().clone(),
+                            old_soa.class(),
+                            old_soa.ttl(),
+                            new_soa,
+                        );
+
+                        return Ok(record);
+                    }
+                }
+
+                self.state.previous_serial = Some(serial);
+                Ok(old_soa.clone())
+            }
+            SerialPolicy::UnixSeconds => {
+                let mut serial = Serial::now();
+                if let Some(previous_serial) = self.state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+                    }
+                }
+
+                self.state.previous_serial = Some(serial);
+
+                let new_soa = ZoneRecordData::Soa(Soa::new(
+                    zone_soa.mname().clone(),
+                    zone_soa.rname().clone(),
+                    serial,
+                    zone_soa.refresh(),
+                    zone_soa.retry(),
+                    zone_soa.expire(),
+                    zone_soa.minimum(),
+                ));
+
+                let record = Record::new(
+                    old_soa.owner().clone(),
+                    old_soa.class(),
+                    old_soa.ttl(),
+                    new_soa,
+                );
+
+                Ok(record)
+            }
+            SerialPolicy::Date => {
+                let ts = JiffTimestamp::now();
+                let zone = Zoned::new(ts, TimeZone::UTC);
+                let serial = ((zone.year() as u32 * 100 + zone.month() as u32) * 100
+                    + zone.day() as u32)
+                    * 100;
+                let mut serial: Serial = serial.into();
+
+                if let Some(previous_serial) = self.state.previous_serial {
+                    if serial <= previous_serial {
+                        serial = previous_serial.add(1);
+                    }
+                }
+
+                self.state.previous_serial = Some(serial);
+
+                let new_soa = ZoneRecordData::Soa(Soa::new(
+                    zone_soa.mname().clone(),
+                    zone_soa.rname().clone(),
+                    serial,
+                    zone_soa.refresh(),
+                    zone_soa.retry(),
+                    zone_soa.expire(),
+                    zone_soa.minimum(),
+                ));
+
+                let record = Record::new(
+                    old_soa.owner().clone(),
+                    old_soa.class(),
+                    old_soa.ttl(),
+                    new_soa,
+                );
+
+                Ok(record)
+            }
+        }
     }
 }
 
