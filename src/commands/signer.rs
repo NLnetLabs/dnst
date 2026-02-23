@@ -22,12 +22,14 @@ use domain::crypto::sign::{KeyPair, SecretKeyBytes};
 use domain::dep::octseq::OctetsFrom;
 use domain::dnssec::common::{nsec3_hash, parse_from_bind};
 use domain::dnssec::sign::denial::config::DenialConfig;
-use domain::dnssec::sign::denial::nsec::GenerateNsecConfig;
-use domain::dnssec::sign::denial::nsec3::{mk_hashed_nsec3_owner_name, GenerateNsec3Config};
+use domain::dnssec::sign::denial::nsec::{generate_nsecs, GenerateNsecConfig};
+use domain::dnssec::sign::denial::nsec3::{
+    generate_nsec3s, mk_hashed_nsec3_owner_name, GenerateNsec3Config, Nsec3ParamTtlMode,
+};
 use domain::dnssec::sign::error::SigningError;
 use domain::dnssec::sign::keys::keyset::{KeyType, UnixTime};
 use domain::dnssec::sign::keys::SigningKey;
-use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::dnssec::sign::records::{DefaultSorter, OwnerRrs, RecordsIter, Rrset, SortedRecords};
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
 use domain::dnssec::sign::SigningConfig;
@@ -1569,7 +1571,7 @@ impl WorkSpace {
         load_signed_zone(&mut iss, &self.config.zonefile_out).unwrap();
         println!("loading signed zone took {:?}", start.elapsed());
 
-        self.handle_nsec_nsec3(&mut iss);
+        self.handle_nsec_nsec3(&mut iss)?;
 
         if load_unsigned {
             let start = Instant::now();
@@ -1908,7 +1910,7 @@ impl WorkSpace {
         self.config.faketime.clone().unwrap_or(UnixTime::now())
     }
 
-    fn handle_nsec_nsec3(&self, iss: &mut IncrementalSigningState) {
+    fn handle_nsec_nsec3(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
         // Note that we could try to regenerate the NSEC(3). Assume that
         // switching between NSEC, NSEC3, and NSEC3 opt-out (or other NSEC3
         // parameter changes) is rare enough that we can just resign the full
@@ -1919,18 +1921,22 @@ impl WorkSpace {
             // Zone was signed with NSEC3.
             if !self.config.use_nsec3 {
                 // Zone is signed with NSEC3 but we want NSEC.
-                todo!();
+                let start = Instant::now();
+                remove_nsec_nsec3(iss);
+                new_nsec_chain(iss)?;
+                println!("replacing NSEC3 with NSEC took {:?}", start.elapsed());
+                return Ok(());
             }
             let ZoneRecordData::Nsec3param(nsec3param) = nsec3param_records[0].data() else {
                 panic!("ZoneRecordData::Nsec3param expected");
             };
-            if nsec3param.hash_algorithm() != self.config.algorithm
-                || nsec3param.opt_out_flag() != self.config.opt_out
-                || nsec3param.iterations() != self.config.iterations
-                || *nsec3param.salt() != self.config.salt
-            {
+            if *nsec3param != iss.nsec3param {
                 // Parameters changed, resign.
-                todo!();
+                let start = Instant::now();
+                remove_nsec_nsec3(iss);
+                new_nsec3_chain(iss)?;
+                println!("updating NSEC3 parameters took {:?}", start.elapsed());
+                return Ok(());
             }
 
             // Nothing has changed. Insert the old NSEC3PARAM records in the
@@ -1940,11 +1946,15 @@ impl WorkSpace {
             // Zone was signed with NSEC, check if that is also the target.
             if self.config.use_nsec3 {
                 // Resign the full zone with NSEC3.
-                todo!();
+                let start = Instant::now();
+                remove_nsec_nsec3(iss);
+                new_nsec3_chain(iss)?;
+                println!("replacing NSEC with NSEC3 took {:?}", start.elapsed());
+                return Ok(());
             }
-
             // Stay with NSEC.
         }
+        Ok(())
     }
 
     fn new_nsec_nsec3_sigs(&self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
@@ -2204,6 +2214,118 @@ impl WorkSpace {
         iss.rrsigs.insert(key, new_sigs[0].0.clone());
         Ok(())
     }
+}
+
+fn remove_nsec_nsec3(iss: &mut IncrementalSigningState) {
+    for k in iss.nsecs.keys() {
+        let key = (k.clone(), Rtype::NSEC);
+        iss.rrsigs.remove(&key);
+    }
+    iss.nsecs = BTreeMap::new();
+
+    for k in iss.nsec3s.keys() {
+        let key = (k.clone(), Rtype::NSEC3);
+        iss.rrsigs.remove(&key);
+    }
+    iss.nsec3s = BTreeMap::new();
+}
+
+fn new_nsec_chain(iss: &mut IncrementalSigningState) -> Result<(), Error> {
+    let records = get_unsigned_sorted(iss);
+    let records_iter = RecordsIter::new_from_refs(&records);
+    let config = GenerateNsecConfig::new();
+    let nsec_records = generate_nsecs(&iss.origin, records_iter, &config)
+        .map_err(|e| format!("generate_nsec3s failed: {e}"))?;
+
+    // Collect signatures here.
+    let mut new_sigs = vec![];
+
+    for r in nsec_records {
+        let record = Record::new(
+            r.owner().clone(),
+            r.class(),
+            r.ttl(),
+            ZoneRecordData::Nsec(r.data().clone()),
+        );
+        iss.nsecs.insert(record.owner().clone(), record.clone());
+        sign_records(
+            &[record],
+            &iss.keys,
+            iss.inception,
+            iss.expiration,
+            &mut new_sigs,
+        )?;
+    }
+    for (sig, rtype) in new_sigs {
+        let key = (sig[0].owner().clone(), rtype);
+        iss.rrsigs.insert(key, sig);
+    }
+    Ok(())
+}
+
+fn new_nsec3_chain(iss: &mut IncrementalSigningState) -> Result<(), Error> {
+    let records = get_unsigned_sorted(iss);
+    let records_iter = RecordsIter::new_from_refs(&records);
+    let config = GenerateNsec3Config::<_, DefaultSorter>::new(iss.nsec3param.clone())
+        .with_ttl_mode(Nsec3ParamTtlMode::SoaMinimum);
+    let nsec3_records = generate_nsec3s(&iss.origin, records_iter, &config)
+        .map_err(|e| format!("generate_nsec3s failed: {e}"))?;
+
+    // Collect signatures here.
+    let mut new_sigs = vec![];
+
+    let r = nsec3_records.nsec3param;
+    let record = Record::new(
+        r.owner().clone(),
+        r.class(),
+        r.ttl(),
+        ZoneRecordData::Nsec3param(r.data().clone()),
+    );
+    let key = (record.owner().clone(), Rtype::NSEC3PARAM);
+    let records = vec![record.clone()];
+
+    // Insert in both old and new data.
+    sign_records(
+        &[record],
+        &iss.keys,
+        iss.inception,
+        iss.expiration,
+        &mut new_sigs,
+    )?;
+    iss.old_data.insert(key.clone(), records.clone());
+    iss.new_data.insert(key, records);
+
+    for r in nsec3_records.nsec3s {
+        let record = Record::new(
+            r.owner().clone(),
+            r.class(),
+            r.ttl(),
+            ZoneRecordData::Nsec3(r.data().clone()),
+        );
+        iss.nsec3s.insert(record.owner().clone(), record.clone());
+        sign_records(
+            &[record],
+            &iss.keys,
+            iss.inception,
+            iss.expiration,
+            &mut new_sigs,
+        )?;
+    }
+    for (sig, rtype) in new_sigs {
+        let key = (sig[0].owner().clone(), rtype);
+        iss.rrsigs.insert(key, sig);
+    }
+    Ok(())
+}
+
+fn get_unsigned_sorted(iss: &IncrementalSigningState) -> Vec<&Zrd> {
+    // Create a Vec with all unsigned records to be able to sort them in
+    // canonical order.
+
+    let mut data: Vec<_> = iss.old_data.values().flatten().collect();
+    data.par_sort_by(|e1, e2| CanonicalOrd::canonical_cmp(*e1, *e2));
+
+    data
 }
 
 fn next_owner_hash_to_name(next_owner_hash_hex: &str, apex: &StoredName) -> Result<StoredName, ()> {
@@ -3798,7 +3920,7 @@ fn sign_records(
         return Ok(());
     }
 
-    let rrset = Rrset::new(records).map_err(|e| format!("Rrset::new failed: {e}"))?;
+    let rrset = Rrset::new_from_owned(records).map_err(|e| format!("Rrset::new failed: {e}"))?;
     let mut rrsig_records = vec![];
     for key in keys {
         let rrsig = sign_rrset(key, &rrset, inception, expiration)
