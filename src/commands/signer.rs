@@ -1478,8 +1478,8 @@ impl Signer {
         expiration: Timestamp,
     ) -> Result<(), SigningError> {
         if !zonemd_rrs.is_empty() {
-            let zonemd_rrset =
-                Rrset::new(zonemd_rrs).expect("zonemd_rrs is not empty so new should not fail");
+            let zonemd_rrset = Rrset::new_from_owned(zonemd_rrs)
+                .expect("zonemd_rrs is not empty so new should not fail");
             let mut new_rrsig_recs = zonemd_rrset.sign(apex, keys, inception, expiration)?;
             records.update_data(|rr| {
                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
