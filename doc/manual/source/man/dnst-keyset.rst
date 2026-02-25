@@ -267,9 +267,9 @@ case new keys will be created by keyset and stored as files.
 
 Authentication can be done either with a user name and password or with
 a client-side certificate.
-The user name and password are KMIP concepts that are mapped by the kmip2pkcs11
-server to a PKCS #11 slot or token name and the PIN.
-With this approach the kmip2pkcs11 server des not have to store secrets
+The user name and password are KMIP concepts that are mapped by the
+cascade-hsm-bridge server to a PKCS #11 slot or token name and the PIN.
+With this approach the cascade-hsm-bridge server des not have to store secrets
 that provide access to the HSM.
 User names and passwords are stored in a separate file to avoid storing
 secrets in the keyset configuration or state files.
