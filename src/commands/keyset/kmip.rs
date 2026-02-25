@@ -1546,7 +1546,7 @@ impl KmipServerConnectionConfig {
     /// Currently supports only one credential type:
     ///   - Username and optional password.
     ///
-    /// In the case of cascade-hsm-relay the username is the PKCS#11 slot
+    /// In the case of cascade-hsm-bridge the username is the PKCS#11 slot
     /// label and the password is the PKCS#11 user PIN.
     fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
         if let Some(p) = &self.client_credentials_path {
