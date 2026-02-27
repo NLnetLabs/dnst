@@ -225,6 +225,15 @@ steps must be done manually in order to be able to insert extra manual steps.
 The ``report`` and ``done`` automations require that keyset has network access
 to all nameservers of the zone and all nameservers of the parent.
 
+The configuration variables ``autoremove`` and ``autoremove-delay``
+control the automatic removal of keys that are no longer needed.
+The variable ``autoremove`` defaults to false.
+In this case, stale keys have to be removed manually.
+When ``autoremove`` is set to true, the ``cron`` subcommand checks if any
+keys have been stale for at least ``autoremove-delay``, and if so, removes
+those keys.
+The ``autoremove-delay`` variable defaults to one week.
+
 HSM Support (KMIP)
 ~~~~~~~~~~~~~~~~~~
 
@@ -267,9 +276,9 @@ case new keys will be created by keyset and stored as files.
 
 Authentication can be done either with a user name and password or with
 a client-side certificate.
-The user name and password are KMIP concepts that are mapped by the kmip2pkcs11
-server to a PKCS #11 slot or token name and the PIN.
-With this approach the kmip2pkcs11 server des not have to store secrets
+The user name and password are KMIP concepts that are mapped by the
+cascade-hsm-bridge server to a PKCS #11 slot or token name and the PIN.
+With this approach the cascade-hsm-bridge server des not have to store secrets
 that provide access to the HSM.
 User names and passwords are stored in a separate file to avoid storing
 secrets in the keyset configuration or state files.
@@ -667,7 +676,8 @@ The keyset subcommand provides the following commands:
 * get
 
   Get the values of the following configuration variables: use-csk,
-  autoremove, algorithm, ds-algorithm, dnskey-lifetime, cds-lifetime.
+  autoremove, autoremove-delay, algorithm, ds-algorithm, dnskey-lifetime,
+  cds-lifetime.
   This is a subset of all configuration variables.
 
   Additionally, the dnskey argument returns the current DNSKEY RRset plus
@@ -688,7 +698,11 @@ The keyset subcommand provides the following commands:
   * autoremove <BOOLEAN>
 
     When true, keys that are stale will be removed automatically.
-    Currently there is no delay in removing keys.
+
+  * autoremove-delay <DELAY>
+
+    Set the delay between the time keys become stale and automatic
+    removal.
 
   * algorithm <ALGORITHM>
 

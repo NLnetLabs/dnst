@@ -2,21 +2,6 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
-// TODO:
-// - file locking
-//   - update the state file atomically by writing to a different file and
-//     then renaming. This helps downstream users.
-//   - option: overwrite the config file. This is risky but simplifies locking.
-//   - option: update the config file atomically. This makes locking more
-//     complex.
-// - add a autoremove_delay option. Delete stale keys only some time after
-//   their withdrawn times.
-// - move dnskey_rrset, cds_rrset, ns_rrset into apex_extra (ds_rrset remains).
-//   add apex_remove with a list of Rtype that the signer should remove from
-//   the apex.
-// - add a -v option to keyset. Remove the -v option from status. Add
-//   verbose output for creation and deletion of keys.
-
 use crate::env::Env;
 use crate::error::Error;
 use crate::util;
@@ -93,6 +78,10 @@ const DEFAULT_WAIT: Duration = Duration::from_secs(10 * 60);
 
 /// The default TTL for creating a new config file.
 const DEFAULT_TTL: Ttl = Ttl::from_secs(3600);
+
+/// The default delay in automatically removing a key pair after it has become
+/// stale.
+const DEFAULT_AUTOREMOVE_DELAY: Duration = Duration::from_secs(7 * 24 * 3600);
 
 // Types to simplify some HashSet types.
 /// Type for a Name that uses a Vec.
@@ -284,6 +273,8 @@ enum GetCommands {
     UseCsk,
     /// Get the state of the autoremove config variable.
     Autoremove,
+    /// Get the autoremove delay config variable.
+    AutoremoveDelay,
     /// Get the state of the algorithm config variable.
     Algorithm,
     /// Get the state of the ds_algorithm config variable.
@@ -314,6 +305,12 @@ enum SetCommands {
         /// The value of the config variable.
         #[arg(action = clap::ArgAction::Set)]
         boolean: bool,
+    },
+    /// Set the autoremove delay config variable.
+    AutoremoveDelay {
+        /// The delay.
+        #[arg(value_parser = parse_duration)]
+        delay: Duration,
     },
     /// Set the algorithm config variable.
     Algorithm {
@@ -718,6 +715,7 @@ impl Keyset {
                 ds_algorithm: DsAlgorithm::Sha256,
                 default_ttl: DEFAULT_TTL,
                 autoremove: false,
+                autoremove_delay: DEFAULT_AUTOREMOVE_DELAY,
                 update_ds_command: Vec::new(),
             };
 
@@ -1051,7 +1049,13 @@ impl Keyset {
                         if keystate.stale() {
                             println!("key {pubref} is stale");
                             if ws.config.autoremove {
-                                println!("this key will be removed automatically after the next key roll");
+                                println!(
+                                    "this key will be removed automatically after {}",
+                                    k.timestamps()
+                                        .withdrawn()
+                                        .expect("should be set when stale")
+                                        + ws.config.autoremove_delay
+                                );
                             } else {
                                 println!("remove manually (autoremove is false)");
                             }
@@ -1215,6 +1219,7 @@ impl Keyset {
                 println!("ds-algorithm: {:?}", ws.config.ds_algorithm);
                 println!("default-ttl: {:?}", ws.config.default_ttl);
                 println!("autoremove: {:?}", ws.config.autoremove);
+                println!("autoremove-delay: {:?}", ws.config.autoremove_delay);
                 println!("update_ds_command: {:?}", ws.config.update_ds_command);
             }
             Commands::Cron => {
@@ -1355,6 +1360,53 @@ impl Keyset {
                     env,
                 )
                 .await?;
+
+                let autoremove = ws.config.autoremove;
+                let autoremove_delay = ws.config.autoremove_delay;
+                let now = UnixTime::now();
+                if autoremove {
+                    let key_urls: Vec<_> = ws
+                        .state
+                        .keyset
+                        .keys()
+                        .iter()
+                        .filter(|(_, key)| {
+                            let state = match key.keytype() {
+                                KeyType::Ksk(state) => state,
+                                KeyType::Zsk(state) => state,
+                                KeyType::Csk(state, _) => state,
+                                KeyType::Include(state) => state,
+                            };
+                            state.stale()
+                                && key
+                                    .timestamps()
+                                    .withdrawn()
+                                    .expect("should be present if stale")
+                                    + autoremove_delay
+                                    <= now
+                        })
+                        .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
+                        .collect();
+                    if !key_urls.is_empty() {
+                        for u in key_urls {
+                            let (pubref, privref) = &u;
+                            ws.state
+                                .keyset
+                                .delete_key(pubref)
+                                .map_err(|e| format!("unable to remove key {pubref}: {e}\n"))?;
+                            if let Some(privref) = privref {
+                                let priv_url = Url::parse(privref).map_err(|e| {
+                                    format!("unable to parse {privref} as URL: {e}")
+                                })?;
+                                ws.remove_key(priv_url)?;
+                            }
+                            let pub_url = Url::parse(pubref)
+                                .map_err(|e| format!("unable to parse {pubref} as URL: {e}"))?;
+                            ws.remove_key(pub_url)?;
+                        }
+                        ws.state_changed = true;
+                    }
+                }
             }
 
             #[cfg(feature = "kmip")]
@@ -1494,6 +1546,33 @@ impl Keyset {
             &mut cron_next,
         )?;
 
+        if ws.config.autoremove {
+            let mut next_list: Vec<_> = ws
+                .state
+                .keyset
+                .keys()
+                .iter()
+                .filter(|(_, key)| {
+                    let state = match key.keytype() {
+                        KeyType::Ksk(state) => state,
+                        KeyType::Zsk(state) => state,
+                        KeyType::Csk(state, _) => state,
+                        KeyType::Include(state) => state,
+                    };
+                    state.stale()
+                })
+                .map(|(_, key)| {
+                    Some(
+                        key.timestamps()
+                            .withdrawn()
+                            .expect("should be set when stale")
+                            + ws.config.autoremove_delay,
+                    )
+                })
+                .collect();
+            cron_next.append(&mut next_list);
+        }
+
         let cron_next = cron_next.iter().filter_map(|e| e.clone()).min();
 
         if cron_next != ws.state.cron_next {
@@ -1623,6 +1702,11 @@ struct KeySetConfig {
 
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
+
+    /// Delay after a key pair has become stale when it can be removed
+    /// automatically.
+    #[serde(default = "default_autoremove_delay")]
+    autoremove_delay: Duration,
 
     /// Command to run when the DS records at the parent need updating.
     update_ds_command: Vec<String>,
@@ -1888,6 +1972,13 @@ impl WorkSpace {
             GetCommands::Autoremove => {
                 println!("{}", self.config.autoremove);
             }
+            GetCommands::AutoremoveDelay => {
+                let span = Span::try_from(self.config.autoremove_delay).expect("should not fail");
+                let dur = span
+                    .to_duration(SpanRelativeTo::days_are_24_hours())
+                    .expect("should not fail");
+                println!("{dur:#}");
+            }
             GetCommands::Algorithm => {
                 println!("{}", self.config.algorithm);
             }
@@ -1936,6 +2027,9 @@ impl WorkSpace {
             }
             SetCommands::Autoremove { boolean } => {
                 self.config.autoremove = boolean;
+            }
+            SetCommands::AutoremoveDelay { delay } => {
+                self.config.autoremove_delay = delay;
             }
             SetCommands::Algorithm { algorithm, bits } => {
                 self.config.algorithm = KeyParameters::new(&algorithm, bits)?;
@@ -2722,8 +2816,9 @@ impl WorkSpace {
 
         // Otherwise use Ring/OpenSSL based key generation.
         let (secret_key, public_key, key_tag) = loop {
-            let (secret_key, public_key) = domain::crypto::sign::generate(algorithm.clone(), flags)
-                .map_err(|e| format!("key generation failed: {e}\n"))?;
+            let (secret_key, public_key) =
+                domain::crypto::sign::generate(&algorithm.clone(), flags)
+                    .map_err(|e| format!("key generation failed: {e}\n"))?;
 
             let key_tag = public_key.key_tag();
             if !keys.iter().any(|(_, k)| k.key_tag() == key_tag) {
@@ -2914,8 +3009,8 @@ impl WorkSpace {
                 KeyType::Include(_) => false,
             };
 
-            let rrset =
-                Rrset::new(&dnskeys).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let rrset = Rrset::new_from_owned(&dnskeys)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
             if dnskey_signer {
                 let privref = v.privref().ok_or("missing private key")?;
@@ -3059,10 +3154,10 @@ impl WorkSpace {
                 KeyType::Include(_) => false,
             };
 
-            let cds_rrset =
-                Rrset::new(&cds_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
-            let cdnskey_rrset =
-                Rrset::new(&cdnskey_list).map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let cds_rrset = Rrset::new_from_owned(&cds_list)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+            let cdnskey_rrset = Rrset::new_from_owned(&cdnskey_list)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
 
             if dnskey_signer {
                 let privref = v.privref().ok_or("missing private key")?;
@@ -3285,7 +3380,6 @@ impl WorkSpace {
 
     /// Execute the done action.
     fn do_done(&mut self, roll_type: RollType) -> Result<(), Error> {
-        let autoremove = self.config.autoremove;
         let actions = self.state.keyset.roll_done(roll_type);
 
         let actions = match actions {
@@ -3305,43 +3399,6 @@ impl WorkSpace {
 
         self.state.internal.remove(&roll_type);
 
-        // Remove old keys.
-        if autoremove {
-            let key_urls: Vec<_> = self
-                .state
-                .keyset
-                .keys()
-                .iter()
-                .filter(|(_, key)| {
-                    let state = match key.keytype() {
-                        KeyType::Ksk(state) => state,
-                        KeyType::Zsk(state) => state,
-                        KeyType::Csk(state, _) => state,
-                        KeyType::Include(state) => state,
-                    };
-                    state.stale()
-                })
-                .map(|(pubref, key)| (pubref.clone(), key.privref().map(|r| r.to_string())))
-                .collect();
-            if !key_urls.is_empty() {
-                for u in key_urls {
-                    let (pubref, privref) = &u;
-                    self.state
-                        .keyset
-                        .delete_key(pubref)
-                        .map_err(|e| format!("unable to remove key {pubref}: {e}\n"))?;
-                    if let Some(privref) = privref {
-                        let priv_url = Url::parse(privref)
-                            .map_err(|e| format!("unable to parse {privref} as URL: {e}"))?;
-                        self.remove_key(priv_url)?;
-                    }
-                    let pub_url = Url::parse(pubref)
-                        .map_err(|e| format!("unable to parse {pubref} as URL: {e}"))?;
-                    self.remove_key(pub_url)?;
-                }
-                println!();
-            }
-        }
         Ok(())
     }
 
@@ -3644,8 +3701,8 @@ impl WorkSpace {
                         .state
                         .keyset
                         .keys()
-                        .iter()
-                        .filter_map(|(_, k)| {
+                        .values()
+                        .filter_map(|k| {
                             if let Some(keystate) = match_keytype(k.keytype()) {
                                 if !keystate.stale() {
                                     k.timestamps()
@@ -3796,8 +3853,8 @@ impl WorkSpace {
             .state
             .keyset
             .keys()
-            .iter()
-            .filter_map(|(_, k)| {
+            .values()
+            .filter_map(|k| {
                 if let Some(keystate) = match k.keytype() {
                     KeyType::Ksk(keystate) => Some(keystate),
                     KeyType::Zsk(keystate) => Some(keystate),
@@ -5294,8 +5351,8 @@ fn cron_next_auto_start(
                 let next = kss
                     .keyset
                     .keys()
-                    .iter()
-                    .filter_map(|(_, k)| {
+                    .values()
+                    .filter_map(|k| {
                         if let Some(keystate) = match_keytype(k.keytype()) {
                             if !keystate.stale() {
                                 k.timestamps().published()
@@ -5615,8 +5672,8 @@ async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
 fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u16)> {
     kss.keyset
         .keys()
-        .iter()
-        .filter_map(|(_, k)| match k.keytype() {
+        .values()
+        .filter_map(|k| match k.keytype() {
             KeyType::Ksk(_) | KeyType::Include(_) => None,
             KeyType::Zsk(keystate) => Some((keystate, k.algorithm(), k.key_tag())),
             KeyType::Csk(_, keystate) => Some((keystate, k.algorithm(), k.key_tag())),
@@ -5713,6 +5770,13 @@ fn show_automatic_roll_state(
             }
         }
     }
+}
+
+/// Helper function for serde.
+///
+/// Return the default autoremove delay.
+fn default_autoremove_delay() -> Duration {
+    DEFAULT_AUTOREMOVE_DELAY
 }
 
 /*
