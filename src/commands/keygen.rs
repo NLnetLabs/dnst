@@ -330,7 +330,7 @@ impl Keygen {
         // TODO: Attempt repeated generation to avoid key tag collisions.
         // TODO: Add a high-level operation in 'domain' to select flags?
         let flags = if self.make_ksk { 257 } else { 256 };
-        let (secret_key, public_key) = domain::crypto::sign::generate(params, flags)
+        let (secret_key, public_key) = domain::crypto::sign::generate(&params, flags)
             .map_err(|err| format!("an implementation error occurred: {err}").into())
             .context("generating a cryptographic keypair")?;
         let digest = self.make_ksk.then(|| {
