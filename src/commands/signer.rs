@@ -1008,26 +1008,7 @@ impl Signer {
 
         writer.flush().map_err(|e| format!("flush failed: {e}"))?;
 
-        if !ws.config.notify_command.is_empty() {
-            let output = Command::new(&ws.config.notify_command[0])
-                .args(&ws.config.notify_command[1..])
-                .output()
-                .map_err(|e| {
-                    format!(
-                        "unable to create new Command for {}: {e}",
-                        ws.config.notify_command[0]
-                    )
-                })?;
-            if !output.status.success() {
-                println!("notify command failed with: {}", output.status);
-                io::stdout()
-                    .write_all(&output.stdout)
-                    .map_err(|e| format!("unable to write to stdout: {e}"))?;
-                io::stderr()
-                    .write_all(&output.stderr)
-                    .map_err(|e| format!("unable to write to stderr: {e}"))?;
-            }
-        }
+        ws.run_notify_command()?;
 
         Ok(())
     }
@@ -1514,6 +1495,9 @@ impl WorkSpace {
         println!("incremental signing took {:?}", start.elapsed());
 
         self.incremental_write_output(&iss)?;
+
+        self.run_notify_command()?;
+
         Ok(())
     }
 
@@ -2255,6 +2239,32 @@ impl WorkSpace {
                 Ok(record)
             }
         }
+    }
+
+    fn run_notify_command(&self) -> Result<(), Error> {
+        if self.config.notify_command.is_empty() {
+            return Ok(()); // Nothing to do.
+        }
+
+        let output = Command::new(&self.config.notify_command[0])
+            .args(&self.config.notify_command[1..])
+            .output()
+            .map_err(|e| {
+                format!(
+                    "unable to create new Command for {}: {e}",
+                    self.config.notify_command[0]
+                )
+            })?;
+        if !output.status.success() {
+            println!("notify command failed with: {}", output.status);
+            io::stdout()
+                .write_all(&output.stdout)
+                .map_err(|e| format!("unable to write to stdout: {e}"))?;
+            io::stderr()
+                .write_all(&output.stderr)
+                .map_err(|e| format!("unable to write to stderr: {e}"))?;
+        }
+        Ok(())
     }
 }
 
