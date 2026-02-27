@@ -3586,8 +3586,8 @@ impl WorkSpace {
                         .state
                         .keyset
                         .keys()
-                        .iter()
-                        .filter_map(|(_, k)| {
+                        .values()
+                        .filter_map(|k| {
                             if let Some(keystate) = match_keytype(k.keytype()) {
                                 if !keystate.stale() {
                                     k.timestamps()
@@ -3738,8 +3738,8 @@ impl WorkSpace {
             .state
             .keyset
             .keys()
-            .iter()
-            .filter_map(|(_, k)| {
+            .values()
+            .filter_map(|k| {
                 if let Some(keystate) = match k.keytype() {
                     KeyType::Ksk(keystate) => Some(keystate),
                     KeyType::Zsk(keystate) => Some(keystate),
@@ -5236,8 +5236,8 @@ fn cron_next_auto_start(
                 let next = kss
                     .keyset
                     .keys()
-                    .iter()
-                    .filter_map(|(_, k)| {
+                    .values()
+                    .filter_map(|k| {
                         if let Some(keystate) = match_keytype(k.keytype()) {
                             if !keystate.stale() {
                                 k.timestamps().published()
@@ -5557,8 +5557,8 @@ async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
 fn get_expected_zsk_key_tags(kss: &KeySetState) -> HashSet<(SecurityAlgorithm, u16)> {
     kss.keyset
         .keys()
-        .iter()
-        .filter_map(|(_, k)| match k.keytype() {
+        .values()
+        .filter_map(|k| match k.keytype() {
             KeyType::Ksk(_) | KeyType::Include(_) => None,
             KeyType::Zsk(keystate) => Some((keystate, k.algorithm(), k.key_tag())),
             KeyType::Csk(_, keystate) => Some((keystate, k.algorithm(), k.key_tag())),
