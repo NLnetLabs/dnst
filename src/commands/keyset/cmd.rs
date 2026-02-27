@@ -1546,7 +1546,6 @@ impl Keyset {
                     )
                 })
                 .collect();
-            dbg!(&next_list);
             cron_next.append(&mut next_list);
         }
 
@@ -1672,7 +1671,7 @@ struct KeySetConfig {
     /// Automatically remove keys that are no long in use.
     autoremove: bool,
 
-    /// Delay after a key pair has become stable when it can be removed
+    /// Delay after a key pair has become stale when it can be removed
     /// automatically.
     #[serde(default = "default_autoremove_delay")]
     autoremove_delay: Duration,
