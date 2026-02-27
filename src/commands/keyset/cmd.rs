@@ -161,7 +161,7 @@ type OptDuration = Option<Duration>;
 
 /// Type for an optional UnixTime. A separate type is needed because CLAP
 /// treats Option<T> special.
-type OptUnixTime = Option<UnixTime>;
+pub type OptUnixTime = Option<UnixTime>;
 
 /// The subcommands of the keyset utility.
 #[allow(clippy::large_enum_variant)]
@@ -397,7 +397,7 @@ enum SetCommands {
     /// Set the amount inception times of signatures over the DNSKEY RRset
     /// are backdated.
     ///
-    /// Note that positive values are subtract from the current time.
+    /// Note that positive values are subtracted from the current time.
     DnskeyInceptionOffset {
         /// The offset.
         #[arg(value_parser = parse_duration)]
@@ -4354,7 +4354,7 @@ fn parse_unixtime(value: &str) -> Result<UnixTime, Error> {
 
 /// Parse an optional UnixTime from a string but also allow 'off' to signal
 /// no UnixTime.
-fn parse_opt_unixtime(value: &str) -> Result<Option<UnixTime>, Error> {
+pub fn parse_opt_unixtime(value: &str) -> Result<Option<UnixTime>, Error> {
     if value == "off" {
         return Ok(None);
     }

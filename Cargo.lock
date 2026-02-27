@@ -343,6 +343,7 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "smallvec",
  "supports-color",
  "tempfile",
  "test_bin",
