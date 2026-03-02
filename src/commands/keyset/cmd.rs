@@ -328,6 +328,20 @@ enum SetCommands {
         algorithm: String,
     },
 
+    /// Set the type of KSK roll to perform.
+    KskRollType {
+        /// The type of KSK roll.
+        #[arg(value_parser = KskRollType::new)]
+        value: KskRollType,
+    },
+
+    /// Set the type of ZSK roll to perform.
+    ZskRollType {
+        /// The type of ZSK roll.
+        #[arg(value_parser = ZskRollType::new)]
+        value: ZskRollType,
+    },
+
     /// Set the config values for automatic KSK rolls.
     AutoKsk {
         /// Whether to automatically start a key roll.
@@ -607,12 +621,18 @@ enum RollVariant {
 
 impl RollVariant {
     /// Return the right RollType for a RollVariant.
-    fn roll_variant_to_roll(self) -> RollType {
+    fn roll_variant_to_roll(self, config: &KeySetConfig) -> RollType {
         // For key types, such as KSK and ZSK, that can have different rolls,
         // we should find out which variant is used.
         match self {
-            RollVariant::Ksk => RollType::KskRoll,
-            RollVariant::Zsk => RollType::ZskRoll,
+            RollVariant::Ksk => match config.ksk_roll_type {
+                KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+                KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
+            },
+            RollVariant::Zsk => match config.zsk_roll_type {
+                ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+                ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+            },
             RollVariant::Csk => RollType::CskRoll,
             RollVariant::Algorithm => RollType::AlgorithmRoll,
         }
@@ -685,6 +705,8 @@ impl Keyset {
                 keys_dir,
                 use_csk: false,
                 algorithm: KeyParameters::EcdsaP256Sha256,
+                ksk_roll_type: KskRollType::DoubleSignatureKskRoll,
+                zsk_roll_type: ZskRollType::PrePublishZskRoll,
                 ksk_validity: None,
                 zsk_validity: None,
                 csk_validity: None,
@@ -1149,6 +1171,8 @@ impl Keyset {
                 println!("state-file: {:?}", ws.config.state_file);
                 println!("use-csk: {}", ws.config.use_csk);
                 println!("algorithm: {}", ws.config.algorithm);
+                println!("ksk-roll-type: {}", ws.config.ksk_roll_type);
+                println!("zsk-roll-type: {}", ws.config.zsk_roll_type);
                 println!("ksk-validity: {:?}", ws.config.ksk_validity);
                 println!("zsk-validity: {:?}", ws.config.zsk_validity);
                 println!("csk-validity: {:?}", ws.config.csk_validity);
@@ -1609,6 +1633,14 @@ struct KeySetConfig {
     /// Algorithm and other parameters for key generation.
     algorithm: KeyParameters,
 
+    /// Type of KSK roll to perform.
+    #[serde(default)]
+    ksk_roll_type: KskRollType,
+
+    /// Type of ZSK roll to perform.
+    #[serde(default)]
+    zsk_roll_type: ZskRollType,
+
     /// Validity of KSKs.
     ksk_validity: Option<Duration>,
     /// Validity of ZSKs.
@@ -1673,6 +1705,78 @@ struct AutoConfig {
     expire: bool,
     /// Whether to handle the done step automatically.
     done: bool,
+}
+
+/// Type of KSK roll to perform.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+enum KskRollType {
+    #[default]
+    /// KSK roll that first adds the new KSK to the DNSKEY RRset and add an
+    /// additional signature over the DNSKEY RRset from that key before
+    /// replace the DS for the old key with one for the new key.
+    DoubleSignatureKskRoll,
+
+    /// KSK roll that first publishes an additional DS record for the new
+    /// before switching to the new key in the DNSKEY RRset and signing the
+    /// DNSKEY RRset with the new key.
+    DoubleDsKskRoll,
+}
+
+impl KskRollType {
+    /// Create a new KskRollType based on the roll name.
+    fn new(roll: &str) -> Result<Self, Error> {
+        if roll == "double-signature-ksk-roll" {
+            Ok(KskRollType::DoubleSignatureKskRoll)
+        } else if roll == "double-ds-ksk-roll" {
+            Ok(KskRollType::DoubleDsKskRoll)
+        } else {
+            Err(format!("unknown roll name {roll}\n").into())
+        }
+    }
+}
+
+impl Display for KskRollType {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            KskRollType::DoubleSignatureKskRoll => write!(fmt, "double-signature-ksk-roll"),
+            KskRollType::DoubleDsKskRoll => write!(fmt, "double-ds-ksk-roll"),
+        }
+    }
+}
+
+/// Type of ZSK key roll to use.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+enum ZskRollType {
+    #[default]
+    /// Type of ZSK roll where the new ZSK is first added to the DNSKEY
+    /// RRset and then the zone is signed with the new key.
+    PrePublishZskRoll,
+
+    /// Type of ZSK roll where the zone is signed with both the old and the
+    /// new ZSK for some period of time.
+    DoubleSignatureZskRoll,
+}
+
+impl ZskRollType {
+    /// Create a new ZskRollType based on the roll name.
+    fn new(roll: &str) -> Result<Self, Error> {
+        if roll == "pre-publish-zsk-roll" {
+            Ok(ZskRollType::PrePublishZskRoll)
+        } else if roll == "double-signature-zsk-roll" {
+            Ok(ZskRollType::DoubleSignatureZskRoll)
+        } else {
+            Err(format!("unknown roll name {roll}\n").into())
+        }
+    }
+}
+
+impl Display for ZskRollType {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            ZskRollType::PrePublishZskRoll => write!(fmt, "pre-publish-zsk-roll"),
+            ZskRollType::DoubleSignatureZskRoll => write!(fmt, "double-signature-zsk-roll"),
+        }
+    }
 }
 
 /// Persistent state for the keyset command.
@@ -1912,6 +2016,12 @@ impl WorkSpace {
             SetCommands::Algorithm { algorithm, bits } => {
                 self.config.algorithm = KeyParameters::new(&algorithm, bits)?;
             }
+            SetCommands::KskRollType { value } => {
+                self.config.ksk_roll_type = value;
+            }
+            SetCommands::ZskRollType { value } => {
+                self.config.zsk_roll_type = value;
+            }
             SetCommands::AutoKsk {
                 start,
                 report,
@@ -2030,23 +2140,23 @@ impl WorkSpace {
                 return Ok(());
             }
             RollCommands::Propagation1Complete { ttl } => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.propagation1_complete(roll, ttl)
             }
             RollCommands::CacheExpired1 => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.cache_expired1(roll)
             }
             RollCommands::Propagation2Complete { ttl } => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.propagation2_complete(roll, ttl)
             }
             RollCommands::CacheExpired2 => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state.keyset.cache_expired2(roll)
             }
             RollCommands::RollDone => {
-                let roll = roll_variant.roll_variant_to_roll();
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.do_done(roll)?;
                 self.state_changed = true;
                 return Ok(());
@@ -3276,7 +3386,10 @@ impl WorkSpace {
 
     /// Start a KSK roll.
     fn start_ksk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
-        let roll_type = RollType::KskRoll;
+        let roll_type = match self.config.ksk_roll_type {
+            KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
+            KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
+        };
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3351,7 +3464,10 @@ impl WorkSpace {
 
     /// Start a ZSK roll.
     fn start_zsk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
-        let roll_type = RollType::ZskRoll;
+        let roll_type = match self.config.zsk_roll_type {
+            ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
+            ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
+        };
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3387,8 +3503,6 @@ impl WorkSpace {
             .map(|(name, _)| name.clone())
             .collect();
         let old: Vec<_> = old_stored.iter().map(|name| name.as_ref()).collect();
-
-        // Collect algorithms. Maybe this needs to be in the library.
 
         // Create a new ZSK
         let (zsk_pub_url, zsk_priv_url, algorithm, key_tag) = self.new_keys(false, env)?;
