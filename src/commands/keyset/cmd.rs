@@ -1695,7 +1695,7 @@ struct KeySetConfig {
 
     /// Fake time to use when signing.
     ///
-    /// This is need for integration tests.
+    /// This is needed for integration tests.
     faketime: Option<UnixTime>,
 }
 
