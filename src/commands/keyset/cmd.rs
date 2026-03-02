@@ -3744,59 +3744,37 @@ impl WorkSpace {
     }
 
     /// Write config to a file.
-    ///
-    /// First write to a new filename and then rename to make sure that
-    /// changes are atomic.
     fn write_config(&self, keyset_conf: &PathBuf) -> Result<(), Error> {
         let json = serde_json::to_string_pretty(&self.config).expect("should not fail");
-        let mut conf_file_new = keyset_conf.clone();
-
-        // It would be nice to use add_extension here, but it is only in
-        // Rust 1.91.0 and above. Use strings instead.
-        // if !conf_file_new.add_extension("new") {
-        //	return Err(format!("unable to add extension 'new' to {}",
-        //		keyset_conf.display()).into());
-        // }
-        conf_file_new.as_mut_os_string().push(".new");
-
-        let mut file = File::create(&conf_file_new)
-            .map_err(|e| format!("unable to create file {}: {e}", conf_file_new.display()))?;
-        write!(file, "{json}")
-            .map_err(|e| format!("unable to write to file {}: {e}", conf_file_new.display()))?;
-
-        rename(&conf_file_new, keyset_conf).map_err(|e| {
-            format!(
-                "unable to rename {} to {}: {e}",
-                conf_file_new.display(),
-                keyset_conf.display()
-            )
-        })?;
-        Ok(())
+        Self::write_to_new_and_rename(&json, keyset_conf)
     }
 
     /// Write state to a file.
-    ///
-    /// First write to a new filename and then rename to make sure that
-    /// changes are atomic.
     fn write_state(&self) -> Result<(), Error> {
         let json = serde_json::to_string_pretty(&self.state).expect("should not fail");
-        let mut state_file_new = self.config.state_file.clone();
+        Self::write_to_new_and_rename(&json, &self.config.state_file)
+    }
+
+    /// First write to a new filename and then rename to make sure that
+    /// changes are atomic.
+    fn write_to_new_and_rename(json: &str, filename: &PathBuf) -> Result<(), Error> {
+        let mut filename_new = filename.clone();
         // It would be nice to use add_extension here, but it is only in
         // Rust 1.91.0 and above. Use strings instead.
         // if !state_file_new.add_extension("new") {
         //	return Err(format!("unable to add extension 'new' to {}",
         //		ws.config.state_file.display()).into());
         // }
-        state_file_new.as_mut_os_string().push(".new");
-        let mut file = File::create(&state_file_new)
-            .map_err(|e| format!("unable to create file {}: {e}", state_file_new.display()))?;
+        filename_new.as_mut_os_string().push(".new");
+        let mut file = File::create(&filename_new)
+            .map_err(|e| format!("unable to create file {}: {e}", filename_new.display()))?;
         write!(file, "{json}")
-            .map_err(|e| format!("unable to write to file {}: {e}", state_file_new.display()))?;
-        rename(&state_file_new, &self.config.state_file).map_err(|e| {
+            .map_err(|e| format!("unable to write to file {}: {e}", filename_new.display()))?;
+        rename(&filename_new, filename).map_err(|e| {
             format!(
                 "unable to rename {} to {}: {e}",
-                state_file_new.display(),
-                self.config.state_file.display()
+                filename_new.display(),
+                filename.display()
             )
         })?;
         Ok(())
