@@ -53,7 +53,9 @@ use domain::dnssec::sign::denial::nsec3::mk_hashed_nsec3_owner_name;
 use domain::dnssec::sign::denial::nsec3::{GenerateNsec3Config, Nsec3ParamTtlMode};
 use domain::dnssec::sign::error::SigningError;
 use domain::dnssec::sign::keys::SigningKey;
-use domain::dnssec::sign::records::{OwnerRrs, RecordsIter, Rrset, SortedRecords};
+use domain::dnssec::sign::records::{
+    OwnerRrs, RecordsIter, Rrset, SliceRefsOrOwned, SortedRecords,
+};
 use domain::dnssec::sign::signatures::rrsigs::sign_rrset;
 use domain::dnssec::sign::traits::{Signable, SignableZoneInPlace};
 use domain::dnssec::sign::SigningConfig;
@@ -841,10 +843,10 @@ impl SignZone {
             let mut dnskey_extra = Vec::new();
             let mut all_dnskeys = Vec::new();
             let empty_records: [Record<_, _>; 0] = [];
-            for r in dnskey_rrset
-                .as_ref()
-                .map_or(empty_records.iter(), |r| r.iter())
-            {
+            for r in dnskey_rrset.as_ref().map_or(
+                SliceRefsOrOwned::new_from_owned(&empty_records).iter(),
+                |r| r.iter(),
+            ) {
                 all_dnskeys.push(r.clone());
             }
             if !self.do_not_add_keys_to_zone {
@@ -857,7 +859,10 @@ impl SignZone {
                     let pubkey = k.dnskey();
                     if !dnskey_rrset
                         .as_ref()
-                        .map_or(empty_records.iter(), |r| r.iter())
+                        .map_or(
+                            SliceRefsOrOwned::new_from_owned(&empty_records).iter(),
+                            |r| r.iter(),
+                        )
                         .any(|k| {
                             if let ZoneRecordData::Dnskey(dnskey) = k.data() {
                                 *dnskey == pubkey
@@ -875,7 +880,7 @@ impl SignZone {
                 }
             }
 
-            let all_dnskeys = Rrset::new(&all_dnskeys);
+            let all_dnskeys = Rrset::new_from_owned(&all_dnskeys);
 
             let mut dnskey_rrsigs = Vec::new();
             if let Ok(all_dnskeys) = all_dnskeys {
@@ -1816,8 +1821,8 @@ impl SignZone {
         expiration: Timestamp,
     ) -> Result<(), SigningError> {
         if !zonemd_rrs.is_empty() {
-            let zonemd_rrset =
-                Rrset::new(zonemd_rrs).expect("zonemd_rrs is not empty so new should not fail");
+            let zonemd_rrset = Rrset::new_from_owned(zonemd_rrs)
+                .expect("zonemd_rrs is not empty so new should not fail");
             let mut new_rrsig_recs = zonemd_rrset.sign(apex, keys, inception, expiration)?;
             records.update_data(|rr| {
                 matches!(rr.data(), ZoneRecordData::Rrsig(rrsig) if rr.owner() == apex && rrsig.type_covered() == Rtype::ZONEMD)
