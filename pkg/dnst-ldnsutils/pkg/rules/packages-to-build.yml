@@ -2,7 +2,7 @@
 # workflow inputs.
 ---
 pkg:
-  - 'dnst'
+  - 'dnst-ldnsutils'
 image:
   - "ubuntu:jammy"    # ubuntu/22.04
   - "ubuntu:noble"    # ubuntu/24.04
@@ -17,17 +17,25 @@ target:
 include:
   # package for the Raspberry Pi 4b as an ARMv7 cross compiled variant of the Debian Bullseye upon which
   # Raspbian 11 is based.
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'debian:bullseye'
     target: 'armv7-unknown-linux-musleabihf'
 
   # package for the Raspberry Pi 1b as an ARMv6 cross compiled variant of the Debian Buster upon which
   # Raspbian 10 is based.
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'debian:buster'
     target: 'arm-unknown-linux-musleabihf'
 
   # package for the ROCK64 as an AARCH64 cross compiled variant of Debian Buster upon which Armbian 21 is based.
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'debian:buster'
     target: 'aarch64-unknown-linux-musl'
+
+  # Set rpmlint filters for RHEL rpmlint
+  - image: 'almalinux:8'
+    rpm_rpmlint_check_filters: no-binary
+  - image: 'almalinux:9'
+    rpm_rpmlint_check_filters: no-binary
+  - image: 'almalinux:10'
+    rpm_rpmlint_check_filters: no-binary

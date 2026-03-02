@@ -2,7 +2,5 @@
 
 # case "$1" in
 # upgrade|remove)
-#     # Remove symbolic links
-#     rm -f /usr/bin/ldns-nsec3-hash
 #     ;;
 # esac

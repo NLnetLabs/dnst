@@ -2,7 +2,7 @@
 # workflow inputs.
 ---
 pkg:
-  - 'dnst'
+  - 'dnst-ldnsutils'
 image:
   - "ubuntu:jammy"    # ubuntu/22.04
   - "ubuntu:noble"    # ubuntu/24.04
@@ -25,36 +25,36 @@ test-mode:
   - 'fresh-install'
   - 'upgrade-from-published'
 include:
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:8'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:8'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
     rpm_yum_extra_args: --enablerepo powertools
 
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:9'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:9'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
     published_pkg: 'ldns-utils'
     rpm_yum_extra_args: --enablerepo crb
 
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:10'
     target: 'x86_64'
     test-mode: 'fresh-install'
 
-  - pkg: 'dnst'
+  - pkg: 'dnst-ldnsutils'
     image: 'almalinux:10'
     target: 'x86_64'
     test-mode: 'upgrade-from-published'
