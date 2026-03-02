@@ -1372,7 +1372,7 @@ impl Keyset {
 
                 let autoremove = ws.config.autoremove;
                 let autoremove_delay = ws.config.autoremove_delay;
-                let now = UnixTime::now();
+                let now = ws.faketime_or_now();
                 if autoremove {
                     let key_urls: Vec<_> = ws
                         .state
