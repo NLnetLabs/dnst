@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Feb 25, 2026" "0.1.1-dev" "dnst"
+.TH "DNST-KEYSET" "1" "Mar 02, 2026" "0.1.1-dev" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys.
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
 The \fBkeyset\fP subcommand manages signing keys and generates a signed DNSKEY RRset.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -240,6 +240,15 @@ steps must be done manually in order to be able to insert extra manual steps.
 .sp
 The \fBreport\fP and \fBdone\fP automations require that keyset has network access
 to all nameservers of the zone and all nameservers of the parent.
+.sp
+The configuration variables \fBautoremove\fP and \fBautoremove\-delay\fP
+control the automatic removal of keys that are no longer needed.
+The variable \fBautoremove\fP defaults to false.
+In this case, stale keys have to be removed manually.
+When \fBautoremove\fP is set to true, the \fBcron\fP subcommand checks if any
+keys have been stale for at least \fBautoremove\-delay\fP, and if so, removes
+those keys.
+The \fBautoremove\-delay\fP variable defaults to one week.
 .SS HSM Support (KMIP)
 .sp
 The keyset subcommand supports keys in Hardware Security Modules (HSM) through
@@ -796,11 +805,19 @@ Set a command to to run when the DS records in the parent zone need
 to be updated.
 This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
+.IP \(bu 2
+fake\-time
+.sp
+Set the \(aqwall clock\(aq time to be used for testing.
+The argument is either the Unix time as seconds since Epoch or the string
+\(aqoff\(aq to disable fake\-time.
 .UNINDENT
 .IP \(bu 2
 show
 .sp
 Show all configuration variables.
+.sp
+Note that \(aqfake\-time\(aq is only printed when it is set.
 .IP \(bu 2
 cron
 .sp

@@ -59,8 +59,9 @@ use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{absolute, Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::net::TcpStream;
 #[cfg(feature = "kmip")]
 use tracing::{debug, error, warn};
@@ -162,6 +163,10 @@ pub struct Keyset {
 /// Type for an optional Duration. A separate type is needed because CLAP
 /// treats Option<T> special.
 type OptDuration = Option<Duration>;
+
+/// Type for an optional UnixTime. A separate type is needed because CLAP
+/// treats Option<T> special.
+type OptUnixTime = Option<UnixTime>;
 
 /// The subcommands of the keyset utility.
 #[allow(clippy::large_enum_variant)]
@@ -488,6 +493,14 @@ enum SetCommands {
         /// Command and arguments.
         args: Vec<String>,
     },
+
+    /// Set the fake time to use when signing and other time related
+    /// operations.
+    FakeTime {
+        /// The time value as Unix seconds.
+        #[arg(value_parser = parse_opt_unixtime)]
+        opt_unixtime: OptUnixTime,
+    },
 }
 
 /// The various subcommands of a key roll command.
@@ -725,6 +738,7 @@ impl Keyset {
                 autoremove: false,
                 autoremove_delay: DEFAULT_AUTOREMOVE_DELAY,
                 update_ds_command: Vec::new(),
+                faketime: None,
             };
 
             // Create the parent directies.
@@ -782,6 +796,7 @@ impl Keyset {
             pools: HashMap::new(),
         };
 
+        let now = ws.faketime_or_now();
         match self.cmd {
             Commands::Create { .. } => unreachable!(),
             Commands::Init => {
@@ -884,7 +899,7 @@ impl Keyset {
                             if let Err(keyset::Error::Wait(remain)) = res {
                                 println!(
                                     "Wait until {} to let caches expire",
-                                    UnixTime::now() + remain
+                                    now.clone() + remain
                                 );
                             } else if let Err(e) = res {
                                 return Err(format!(
@@ -1031,10 +1046,14 @@ impl Keyset {
                     println!();
                 }
 
-                if sig_renew(&ws.state.dnskey_rrset, &ws.config.dnskey_remain_time) {
+                if sig_renew(
+                    &ws.state.dnskey_rrset,
+                    &ws.config.dnskey_remain_time,
+                    now.clone(),
+                ) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
                 }
-                if sig_renew(&ws.state.cds_rrset, &ws.config.cds_remain_time) {
+                if sig_renew(&ws.state.cds_rrset, &ws.config.cds_remain_time, now.clone()) {
                     println!("CDS/CDNSKEY RRSIG(s) need to be renewed");
                 }
 
@@ -1224,14 +1243,25 @@ impl Keyset {
                 println!("autoremove: {:?}", ws.config.autoremove);
                 println!("autoremove-delay: {:?}", ws.config.autoremove_delay);
                 println!("update_ds_command: {:?}", ws.config.update_ds_command);
+                // Only print faketime when it exists.
+                if let Some(faketime) = &ws.config.faketime {
+                    println!(
+                        "fake-time: {}",
+                        <UnixTime as Into<Duration>>::into(faketime.clone()).as_secs()
+                    );
+                }
             }
             Commands::Cron => {
-                if sig_renew(&ws.state.dnskey_rrset, &ws.config.dnskey_remain_time) {
+                if sig_renew(
+                    &ws.state.dnskey_rrset,
+                    &ws.config.dnskey_remain_time,
+                    now.clone(),
+                ) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
                     ws.update_dnskey_rrset(env, false)?;
                     ws.state_changed = true;
                 }
-                if sig_renew(&ws.state.cds_rrset, &ws.config.cds_remain_time) {
+                if sig_renew(&ws.state.cds_rrset, &ws.config.cds_remain_time, now.clone()) {
                     println!("CDS/CDNSKEY RRSIGs need to be renewed");
                     ws.create_cds_rrset(env, false)?;
                     ws.state_changed = true;
@@ -1366,7 +1396,7 @@ impl Keyset {
 
                 let autoremove = ws.config.autoremove;
                 let autoremove_delay = ws.config.autoremove_delay;
-                let now = UnixTime::now();
+                let now = ws.faketime_or_now();
                 if autoremove {
                     let key_urls: Vec<_> = ws
                         .state
@@ -1428,11 +1458,13 @@ impl Keyset {
         cron_next.push(compute_cron_next(
             &ws.state.dnskey_rrset,
             &ws.config.dnskey_remain_time,
+            now.clone(),
         ));
 
         cron_next.push(compute_cron_next(
             &ws.state.cds_rrset,
             &ws.config.cds_remain_time,
+            now,
         ));
 
         let need_algorithm_roll = ws.algorithm_roll_needed();
@@ -1524,25 +1556,25 @@ impl Keyset {
             &mut cron_next,
         );
 
-        cron_next_auto_report_expire_done(
+        ws.cron_next_auto_report_expire_done(
             &ws.config.auto_ksk,
             &[RollType::KskRoll, RollType::KskDoubleDsRoll],
             &ws.state,
             &mut cron_next,
         )?;
-        cron_next_auto_report_expire_done(
+        ws.cron_next_auto_report_expire_done(
             &ws.config.auto_zsk,
             &[RollType::ZskRoll, RollType::ZskDoubleSignatureRoll],
             &ws.state,
             &mut cron_next,
         )?;
-        cron_next_auto_report_expire_done(
+        ws.cron_next_auto_report_expire_done(
             &ws.config.auto_csk,
             &[RollType::CskRoll],
             &ws.state,
             &mut cron_next,
         )?;
-        cron_next_auto_report_expire_done(
+        ws.cron_next_auto_report_expire_done(
             &ws.config.auto_algorithm,
             &[RollType::AlgorithmRoll],
             &ws.state,
@@ -1692,6 +1724,11 @@ struct KeySetConfig {
 
     /// Command to run when the DS records at the parent need updating.
     update_ds_command: Vec<String>,
+
+    /// Fake time to use when signing.
+    ///
+    /// This is needed for integration tests.
+    faketime: Option<UnixTime>,
 }
 
 /// Configuration for key roll automation.
@@ -2114,6 +2151,7 @@ impl WorkSpace {
             SetCommands::UpdateDsCommand { args } => {
                 self.config.update_ds_command = args;
             }
+            SetCommands::FakeTime { opt_unixtime } => self.config.faketime = opt_unixtime,
         }
         self.config_changed = true;
         Ok(())
@@ -2180,6 +2218,7 @@ impl WorkSpace {
 
     /// Implementation of the Import subcommands.
     fn import_command(&mut self, subcommand: ImportCommands, env: &impl Env) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         match subcommand {
             ImportCommands::PublicKey { path } => {
                 let public_data = std::fs::read_to_string(&path)
@@ -2198,7 +2237,7 @@ impl WorkSpace {
                         public_key_url.clone(),
                         public_key.data().algorithm(),
                         public_key.data().key_tag(),
-                        UnixTime::now(),
+                        now.clone(),
                         true,
                     )
                     .map_err(|e| format!("unable to add public key {public_key_url}: {e}\n"))?;
@@ -2212,7 +2251,7 @@ impl WorkSpace {
                 // unconditionally.
                 self.state
                     .keyset
-                    .set_visible(&public_key_url, UnixTime::now())
+                    .set_visible(&public_key_url, now)
                     .expect("should not happen");
             }
             ImportCommands::Ksk { subcommand } => {
@@ -2241,6 +2280,7 @@ impl WorkSpace {
         subcommand: ImportKeyCommands,
         key_variant: KeyVariant,
     ) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         let (public_key_url, private_key_url, algorithm, key_tag, coupled) = match subcommand {
             ImportKeyCommands::File {
                 path,
@@ -2349,7 +2389,7 @@ impl WorkSpace {
                         Some(private_key_url.clone()),
                         algorithm,
                         key_tag,
-                        UnixTime::now(),
+                        now.clone(),
                         Available::Available,
                     )
                     .map_err(|e| {
@@ -2365,7 +2405,7 @@ impl WorkSpace {
                         Some(private_key_url.clone()),
                         algorithm,
                         key_tag,
-                        UnixTime::now(),
+                        now.clone(),
                         Available::Available,
                     )
                     .map_err(|e| format!("unable to add ZSK {public_key_url}: {e}\n"))?;
@@ -2379,7 +2419,7 @@ impl WorkSpace {
                         Some(private_key_url.clone()),
                         algorithm,
                         key_tag,
-                        UnixTime::now(),
+                        now.clone(),
                         Available::Available,
                     )
                     .map_err(|e| format!("unable to add CSK {public_key_url}: {e}\n"))?;
@@ -2398,7 +2438,7 @@ impl WorkSpace {
         // now. Just set it unconditionally.
         self.state
             .keyset
-            .set_visible(&public_key_url, UnixTime::now())
+            .set_visible(&public_key_url, now.clone())
             .expect("should not happen");
 
         self.state
@@ -2422,7 +2462,7 @@ impl WorkSpace {
             // now. Just set it unconditionally.
             self.state
                 .keyset
-                .set_ds_visible(&public_key_url, UnixTime::now())
+                .set_ds_visible(&public_key_url, now.clone())
                 .expect("should not happen");
         }
         if set_rrsig_visible {
@@ -2431,7 +2471,7 @@ impl WorkSpace {
             // now. Just set it unconditionally.
             self.state
                 .keyset
-                .set_rrsig_visible(&public_key_url, UnixTime::now())
+                .set_rrsig_visible(&public_key_url, now)
                 .expect("should not happen");
         }
         Ok(())
@@ -2862,6 +2902,7 @@ impl WorkSpace {
 
     /// Create a new CSK key or KSK and ZSK keys if use_csk is false.
     fn new_csk_or_ksk_zsk(&mut self, env: &impl Env) -> Result<(Vec<Url>, Vec<Url>), Error> {
+        let now = self.faketime_or_now();
         let (new_stored, new_urls) = if self.config.use_csk {
             let mut new_urls = Vec::new();
 
@@ -2876,7 +2917,7 @@ impl WorkSpace {
                     Some(csk_priv_url.to_string()),
                     algorithm,
                     key_tag,
-                    UnixTime::now(),
+                    now,
                     Available::Available,
                 )
                 .map_err(|e| format!("unable to add CSK {csk_pub_url}: {e}\n"))?;
@@ -2897,7 +2938,7 @@ impl WorkSpace {
                     Some(ksk_priv_url.to_string()),
                     algorithm,
                     key_tag,
-                    UnixTime::now(),
+                    now.clone(),
                     Available::Available,
                 )
                 .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
@@ -2913,7 +2954,7 @@ impl WorkSpace {
                     Some(zsk_priv_url.to_string()),
                     algorithm,
                     key_tag,
-                    UnixTime::now(),
+                    now,
                     Available::Available,
                 )
                 .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
@@ -2957,6 +2998,7 @@ impl WorkSpace {
     /// Collect all keys where present() returns true and sign the DNSKEY RRset
     /// with all KSK and CSK (KSK state) where signer() returns true.
     fn update_dnskey_rrset(&mut self, env: &impl Env, verbose: bool) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         let mut dnskeys = Vec::new();
         // Clone needed because of public_key_from_url takes &mut KeySetState.
         let keys = self.state.keyset.keys().clone();
@@ -2974,9 +3016,9 @@ impl WorkSpace {
                 dnskeys.push(public_key);
             }
         }
-        let now = Timestamp::now().into_int();
-        let inception = (now - self.config.dnskey_inception_offset.as_secs() as u32).into();
-        let expiration = (now + self.config.dnskey_signature_lifetime.as_secs() as u32).into();
+        let now_u32 = Into::<Duration>::into(now).as_secs() as u32;
+        let inception = (now_u32 - self.config.dnskey_inception_offset.as_secs() as u32).into();
+        let expiration = (now_u32 + self.config.dnskey_signature_lifetime.as_secs() as u32).into();
 
         let mut sigs = Vec::new();
         for (k, v) in &keys {
@@ -3095,6 +3137,7 @@ impl WorkSpace {
     /// The CDS and CDNSKEY RRsets contain the keys where at_parent() returns
     /// true. The RRsets are signed with all keys that sign the DNSKEY RRset.
     fn create_cds_rrset(&mut self, env: &impl Env, verbose: bool) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         let digest_alg = self.config.ds_algorithm.to_digest_algorithm();
         let mut cds_list = Vec::new();
         let mut cdnskey_list = Vec::new();
@@ -3117,9 +3160,9 @@ impl WorkSpace {
             // Need to sign
         }
 
-        let now = Timestamp::now().into_int();
-        let inception = (now - self.config.cds_inception_offset.as_secs() as u32).into();
-        let expiration = (now + self.config.cds_signature_lifetime.as_secs() as u32).into();
+        let now_u32 = Into::<Duration>::into(now).as_secs() as u32;
+        let inception = (now_u32 - self.config.cds_inception_offset.as_secs() as u32).into();
+        let expiration = (now_u32 + self.config.cds_signature_lifetime.as_secs() as u32).into();
 
         let mut cds_sigs = Vec::new();
         let mut cdnskey_sigs = Vec::new();
@@ -3390,6 +3433,7 @@ impl WorkSpace {
             KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
             KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
         };
+        let now = self.faketime_or_now();
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3435,7 +3479,7 @@ impl WorkSpace {
                 Some(ksk_priv_url.to_string()),
                 algorithm,
                 key_tag,
-                UnixTime::now(),
+                now,
                 Available::Available,
             )
             .map_err(|e| format!("unable to add KSK {ksk_pub_url}: {e}\n"))?;
@@ -3468,6 +3512,7 @@ impl WorkSpace {
             ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
             ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
         };
+        let now = self.faketime_or_now();
 
         assert!(!self.state.keyset.keys().is_empty());
 
@@ -3513,7 +3558,7 @@ impl WorkSpace {
                 Some(zsk_priv_url.to_string()),
                 algorithm,
                 key_tag,
-                UnixTime::now(),
+                now,
                 Available::Available,
             )
             .map_err(|e| format!("unable to add ZSK {zsk_pub_url}: {e}\n"))?;
@@ -3667,6 +3712,7 @@ impl WorkSpace {
         match_keytype: impl Fn(KeyType) -> Option<KeyState>,
         start_roll: impl Fn(&mut WorkSpace, Env, bool) -> Result<Vec<Action>, Error>,
     ) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         if let Some(validity) = validity {
             if auto.start {
                 // If there is no conficting roll, and this
@@ -3699,7 +3745,7 @@ impl WorkSpace {
                         })
                         .min();
                     if let Some(next) = next {
-                        if next < UnixTime::now() {
+                        if next < now {
                             start_roll(self, env, false)?;
                             self.state_changed = true;
                         }
@@ -3723,6 +3769,7 @@ impl WorkSpace {
         roll_list: &[RollType],
         env: &impl Env,
     ) -> Result<(), Error> {
+        let now = self.faketime_or_now();
         if auto.report {
             // If there is currently a roll in one of the
             // propagation states and this flags is set and all
@@ -3742,6 +3789,7 @@ impl WorkSpace {
                         &self.state,
                         report_state,
                         &mut self.state_changed,
+                        now.clone(),
                     )
                     .await
                     {
@@ -3809,6 +3857,7 @@ impl WorkSpace {
                         &self.state,
                         report_state,
                         &mut self.state_changed,
+                        now.clone(),
                     )
                     .await
                     {
@@ -3855,6 +3904,166 @@ impl WorkSpace {
             .collect();
         let new_algs = HashSet::from([self.config.algorithm.to_generate_params().algorithm()]);
         curr_algs != new_algs
+    }
+
+    /// Helper function that either returns the configured fake time or the
+    /// current time.
+    fn faketime_or_now(&self) -> UnixTime {
+        self.config.faketime.clone().unwrap_or(UnixTime::now())
+    }
+
+    /// Check whether automatic actions are done or not. If not, return until
+    /// when to wait to try again.
+    fn check_auto_actions(
+        &self,
+        actions: &[Action],
+        report_state: &Mutex<ReportState>,
+    ) -> AutoActionsResult {
+        let now = self.faketime_or_now();
+        for a in actions {
+            match a {
+                Action::UpdateDnskeyRrset
+                | Action::CreateCdsRrset
+                | Action::RemoveCdsRrset
+                | Action::UpdateDsRrset
+                | Action::UpdateRrsig => (),
+                Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    if let Some(dnskey_status) = &report_state_locked.dnskey {
+                        match dnskey_status {
+                            AutoReportActionsResult::Wait(next) => {
+                                return AutoActionsResult::Wait(next.clone())
+                            }
+                            AutoReportActionsResult::Report(_) => continue,
+                        }
+                    }
+                    drop(report_state_locked);
+
+                    // No status, request cron
+                    return AutoActionsResult::Wait(now);
+                }
+                Action::ReportDsPropagated | Action::WaitDsPropagated => {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    if let Some(ds_status) = &report_state_locked.ds {
+                        match ds_status {
+                            AutoReportActionsResult::Wait(next) => {
+                                return AutoActionsResult::Wait(next.clone())
+                            }
+                            AutoReportActionsResult::Report(_) => continue,
+                        }
+                    }
+                    drop(report_state_locked);
+
+                    // No status, request cron
+                    return AutoActionsResult::Wait(now);
+                }
+                Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    if let Some(rrsig_status) = &report_state_locked.rrsig {
+                        match rrsig_status {
+                            AutoReportRrsigResult::Wait(next)
+                            | AutoReportRrsigResult::WaitRecord { next, .. }
+                            | AutoReportRrsigResult::WaitNextSerial { next, .. }
+                            | AutoReportRrsigResult::WaitSoa { next, .. } => {
+                                return AutoActionsResult::Wait(next.clone())
+                            }
+                            AutoReportRrsigResult::Report(_) => continue,
+                        }
+                    }
+                    drop(report_state_locked);
+
+                    // No status, request cron
+                    return AutoActionsResult::Wait(now);
+                }
+            }
+        }
+        AutoActionsResult::Ok
+    }
+
+    /// This function computes when next to try to move to the next state.
+    ///
+    /// For the Report and Wait actions that involves checking when propagation
+    /// should be tested again. For the expire step it computes when the
+    /// keyset object in the domain library accepts the cache_expired1 or
+    /// cache_expired2 methods.
+    fn cron_next_auto_report_expire_done(
+        &self,
+        auto: &AutoConfig,
+        roll_list: &[RollType],
+        kss: &KeySetState,
+        cron_next: &mut Vec<Option<UnixTime>>,
+    ) -> Result<(), Error> {
+        let now = self.faketime_or_now();
+        if auto.report {
+            // If there is currently a roll in one of the propagation
+            // states and this flags is set take when to check again for
+            // actions to complete
+            for r in roll_list {
+                if let Some(state) = kss.keyset.rollstates().get(r) {
+                    let report_state = kss.internal.get(r).expect("should not fail");
+                    let report_state = match state {
+                        RollState::Propagation1 => &report_state.propagation1,
+                        RollState::Propagation2 => &report_state.propagation2,
+                        _ => continue,
+                    };
+                    let actions = kss.keyset.actions(*r);
+                    match self.check_auto_actions(&actions, report_state) {
+                        AutoActionsResult::Ok => {
+                            // All actions are ready. Request cron.
+                            cron_next.push(Some(now.clone()));
+                        }
+                        AutoActionsResult::Wait(next) => cron_next.push(Some(next)),
+                    }
+                }
+            }
+        }
+
+        if auto.expire {
+            // If there is currently a roll in one of the cache expire
+            // states and this flag is set, use the remaining time until caches
+            // are expired. Try to issue the cache_expire[12] method on a
+            // clone of keyset.
+            let mut keyset = kss.keyset.clone();
+            for r in roll_list {
+                if let Some(state) = keyset.rollstates().get(r) {
+                    let actions = match state {
+                        RollState::CacheExpire1(_) => keyset.cache_expired1(*r),
+                        RollState::CacheExpire2(_) => keyset.cache_expired2(*r),
+                        _ => continue,
+                    };
+                    if let Err(keyset::Error::Wait(remain)) = actions {
+                        cron_next.push(Some(now.clone() + remain));
+                        continue;
+                    }
+                    let _ = actions
+                        .map_err(|e| format!("cache_expired[12] failed for state {r:?}: {e}"))?;
+
+                    // Time to call cron. Report the current time.
+                    cron_next.push(Some(now.clone()));
+                }
+            }
+        }
+
+        if auto.done {
+            // If there is current a roll in the done state and all
+            // and this flag is set, take when the check again for actions to
+            // complete
+            for r in roll_list {
+                if let Some(RollState::Done) = kss.keyset.rollstates().get(r) {
+                    let report_state = kss.internal.get(r).expect("should not fail");
+                    match self.check_auto_actions(&kss.keyset.actions(*r), &report_state.done) {
+                        AutoActionsResult::Ok => {
+                            // All actions are ready. Request cron.
+                            cron_next.push(Some(now.clone()));
+                        }
+                        AutoActionsResult::Wait(next) => {
+                            cron_next.push(Some(next));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Write config to a file.
@@ -4014,18 +4223,38 @@ fn parse_opt_duration(value: &str) -> Result<Option<Duration>, Error> {
     Ok(Some(duration))
 }
 
+/// Parse a UnixTime from string.
+///
+/// Those accepts both both a seconds value and a broken down time value
+/// without punctuation.
+fn parse_unixtime(value: &str) -> Result<UnixTime, Error> {
+    let timestamp = Timestamp::from_str(value)
+        .map_err(|e| format!("unable to parse Unix time {value}: {e}"))?;
+    Ok(UnixTime::from(timestamp))
+}
+
+/// Parse an optional UnixTime from a string but also allow 'off' to signal
+/// no UnixTime.
+fn parse_opt_unixtime(value: &str) -> Result<Option<UnixTime>, Error> {
+    if value == "off" {
+        return Ok(None);
+    }
+    let unixtime = parse_unixtime(value)?;
+    Ok(Some(unixtime))
+}
+
 /// Check whether signatures need to be renewed.
 ///
 /// The input is an RRset plus signatures in zonefile format plus a
 /// duration how long the signatures are required to remain valid.
-fn sig_renew(rrset: &[String], remain_time: &Duration) -> bool {
+fn sig_renew(rrset: &[String], remain_time: &Duration, now: UnixTime) -> bool {
     let mut zonefile = Zonefile::new();
     for r in rrset {
         zonefile.extend_from_slice(r.as_ref());
         zonefile.extend_from_slice(b"\n");
     }
-    let now = Timestamp::now();
-    let renew = now.into_int() as u64 + remain_time.as_secs();
+    let now_u64 = Into::<Duration>::into(now).as_secs();
+    let renew = now_u64 + remain_time.as_secs();
     for e in zonefile {
         let e = e.expect("should not fail");
         match e {
@@ -4074,14 +4303,14 @@ fn make_parent_dir(filename: PathBuf) -> PathBuf {
 
 /// Compute when the cron subcommand should be called to refresh signatures
 /// for an RRset.
-fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTime> {
+fn compute_cron_next(rrset: &[String], remain_time: &Duration, now: UnixTime) -> Option<UnixTime> {
     let mut zonefile = Zonefile::new();
     for r in rrset {
         zonefile.extend_from_slice(r.as_ref());
         zonefile.extend_from_slice(b"\n");
     }
 
-    let now = SystemTime::now();
+    let now_system_time = UNIX_EPOCH + Duration::from(now.clone());
     let min_expiration = zonefile
         .map(|r| r.expect("should not fail"))
         .filter_map(|r| match r {
@@ -4095,7 +4324,7 @@ fn compute_cron_next(rrset: &[String], remain_time: &Duration) -> Option<UnixTim
                 None
             }
         })
-        .map(|t| t.to_system_time(now))
+        .map(|t| t.to_system_time(now_system_time))
         .min();
 
     // Map to the Unix epoch in case of failure.
@@ -4178,6 +4407,7 @@ async fn auto_wait_actions(
     state: &KeySetState,
     report_state: &Mutex<ReportState>,
     state_changed: &mut bool,
+    now: UnixTime,
 ) -> AutoActionsResult {
     for a in actions {
         match a {
@@ -4194,7 +4424,7 @@ async fn auto_wait_actions(
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
                             AutoReportActionsResult::Wait(next) => {
-                                if *next > UnixTime::now() {
+                                if *next > now {
                                     return AutoActionsResult::Wait(next.clone());
                                 }
                             }
@@ -4205,7 +4435,7 @@ async fn auto_wait_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_dnskey_propagated(state).await;
+                let result = report_dnskey_propagated(state, now.clone()).await;
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.dnskey = Some(result.clone());
@@ -4224,7 +4454,7 @@ async fn auto_wait_actions(
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
                             AutoReportActionsResult::Wait(next) => {
-                                if *next > UnixTime::now() {
+                                if *next > now {
                                     return AutoActionsResult::Wait(next.clone());
                                 }
                             }
@@ -4234,10 +4464,12 @@ async fn auto_wait_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_ds_propagated(state).await.unwrap_or_else(|e| {
-                    warn!("Check DS propagation failed: {e}");
-                    AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT)
-                });
+                let result = report_ds_propagated(state, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check DS propagation failed: {e}");
+                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.ds = Some(result.clone());
@@ -4263,7 +4495,7 @@ async fn auto_wait_actions(
                 if let Some(rrsig_status) = opt_rrsig_status {
                     match rrsig_status {
                         AutoReportRrsigResult::Wait(next) => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoActionsResult::Wait(next.clone());
                             }
                         }
@@ -4274,13 +4506,16 @@ async fn auto_wait_actions(
                             ttl,
                             report_ttl,
                         } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoActionsResult::Wait(next.clone());
                             }
-                            let res = check_soa(serial, state).await.unwrap_or_else(|e| {
-                                warn!("Check SOA propagation failed: {e}");
-                                false
-                            });
+                            let res =
+                                check_soa(serial, state, now.clone())
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        warn!("Check SOA propagation failed: {e}");
+                                        false
+                                    });
                             if res {
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
@@ -4290,7 +4525,7 @@ async fn auto_wait_actions(
                                 *state_changed = true;
                                 continue;
                             } else {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -4310,7 +4545,7 @@ async fn auto_wait_actions(
                             rtype,
                             ttl,
                         } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoActionsResult::Wait(next.clone());
                             }
                             let res =
@@ -4321,7 +4556,7 @@ async fn auto_wait_actions(
                                         false
                                     });
                             if !res {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -4340,7 +4575,7 @@ async fn auto_wait_actions(
                             // the zone.
                         }
                         AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoActionsResult::Wait(next.clone());
                             }
                             let res = check_next_serial(serial, state).await.unwrap_or_else(|e| {
@@ -4348,7 +4583,7 @@ async fn auto_wait_actions(
                                 false
                             });
                             if !res {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -4367,10 +4602,12 @@ async fn auto_wait_actions(
                     }
                 }
 
-                let result = report_rrsig_propagated(state).await.unwrap_or_else(|e| {
-                    warn!("Check RRSIG propagation failed: {e}");
-                    AutoReportRrsigResult::Wait(UnixTime::now() + DEFAULT_WAIT)
-                });
+                let result = report_rrsig_propagated(state, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check RRSIG propagation failed: {e}");
+                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.rrsig = Some(result.clone());
@@ -4405,6 +4642,7 @@ async fn auto_report_actions(
     kss: &KeySetState,
     report_state: &Mutex<ReportState>,
     state_changed: &mut bool,
+    now: UnixTime,
 ) -> AutoReportActionsResult {
     assert!(!actions.is_empty());
     let mut max_ttl = Ttl::from_secs(0);
@@ -4417,7 +4655,7 @@ async fn auto_report_actions(
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
                             AutoReportActionsResult::Wait(next) => {
-                                if *next > UnixTime::now() {
+                                if *next > now {
                                     return dnskey_status.clone();
                                 }
                             }
@@ -4430,7 +4668,7 @@ async fn auto_report_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_dnskey_propagated(kss).await;
+                let result = report_dnskey_propagated(kss, now.clone()).await;
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.dnskey = Some(result.clone());
@@ -4451,7 +4689,7 @@ async fn auto_report_actions(
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
                             AutoReportActionsResult::Wait(next) => {
-                                if *next > UnixTime::now() {
+                                if *next > now {
                                     return ds_status.clone();
                                 }
                             }
@@ -4464,10 +4702,12 @@ async fn auto_report_actions(
                     drop(report_state_locked);
                 }
 
-                let result = report_ds_propagated(kss).await.unwrap_or_else(|e| {
-                    warn!("Check DS propagation failed: {e}");
-                    AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT)
-                });
+                let result = report_ds_propagated(kss, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check DS propagation failed: {e}");
+                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.ds = Some(result.clone());
@@ -4495,7 +4735,7 @@ async fn auto_report_actions(
                 if let Some(rrsig_status) = opt_rrsig_status {
                     match rrsig_status {
                         AutoReportRrsigResult::Wait(next) => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
                         }
@@ -4509,13 +4749,16 @@ async fn auto_report_actions(
                             ttl,
                             report_ttl,
                         } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
-                            let res = check_soa(serial, kss).await.unwrap_or_else(|e| {
-                                warn!("Check SOA propagation failed: {e}");
-                                false
-                            });
+                            let res =
+                                check_soa(serial, kss, now.clone())
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        warn!("Check SOA propagation failed: {e}");
+                                        false
+                                    });
                             if res {
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
@@ -4526,7 +4769,7 @@ async fn auto_report_actions(
                                 max_ttl = max(max_ttl, report_ttl);
                                 continue;
                             } else {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
@@ -4546,7 +4789,7 @@ async fn auto_report_actions(
                             rtype,
                             ttl,
                         } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
                             let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
@@ -4554,7 +4797,7 @@ async fn auto_report_actions(
                                 false
                             });
                             if !res {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -4573,7 +4816,7 @@ async fn auto_report_actions(
                             // the zone.
                         }
                         AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
-                            if next > UnixTime::now() {
+                            if next > now {
                                 return AutoReportActionsResult::Wait(next.clone());
                             }
                             let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
@@ -4581,7 +4824,7 @@ async fn auto_report_actions(
                                 false
                             });
                             if !res {
-                                let next = UnixTime::now() + ttl.into();
+                                let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -4600,10 +4843,12 @@ async fn auto_report_actions(
                     }
                 }
 
-                let result = report_rrsig_propagated(kss).await.unwrap_or_else(|e| {
-                    warn!("Check RRSIG propagation failed: {e}");
-                    AutoReportRrsigResult::Wait(UnixTime::now() + DEFAULT_WAIT)
-                });
+                let result = report_rrsig_propagated(kss, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check RRSIG propagation failed: {e}");
+                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
                 report_state_locked.rrsig = Some(result.clone());
@@ -4639,75 +4884,12 @@ async fn auto_report_actions(
     AutoReportActionsResult::Report(max_ttl)
 }
 
-/// Check whether automatic actions are done or not. If not, return until
-/// when to wait to try again.
-fn check_auto_actions(actions: &[Action], report_state: &Mutex<ReportState>) -> AutoActionsResult {
-    for a in actions {
-        match a {
-            Action::UpdateDnskeyRrset
-            | Action::CreateCdsRrset
-            | Action::RemoveCdsRrset
-            | Action::UpdateDsRrset
-            | Action::UpdateRrsig => (),
-            Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
-                let report_state_locked = report_state.lock().expect("lock() should not fail");
-                if let Some(dnskey_status) = &report_state_locked.dnskey {
-                    match dnskey_status {
-                        AutoReportActionsResult::Wait(next) => {
-                            return AutoActionsResult::Wait(next.clone())
-                        }
-                        AutoReportActionsResult::Report(_) => continue,
-                    }
-                }
-                drop(report_state_locked);
-
-                // No status, request cron
-                return AutoActionsResult::Wait(UnixTime::now());
-            }
-            Action::ReportDsPropagated | Action::WaitDsPropagated => {
-                let report_state_locked = report_state.lock().expect("lock() should not fail");
-                if let Some(ds_status) = &report_state_locked.ds {
-                    match ds_status {
-                        AutoReportActionsResult::Wait(next) => {
-                            return AutoActionsResult::Wait(next.clone())
-                        }
-                        AutoReportActionsResult::Report(_) => continue,
-                    }
-                }
-                drop(report_state_locked);
-
-                // No status, request cron
-                return AutoActionsResult::Wait(UnixTime::now());
-            }
-            Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
-                let report_state_locked = report_state.lock().expect("lock() should not fail");
-                if let Some(rrsig_status) = &report_state_locked.rrsig {
-                    match rrsig_status {
-                        AutoReportRrsigResult::Wait(next)
-                        | AutoReportRrsigResult::WaitRecord { next, .. }
-                        | AutoReportRrsigResult::WaitNextSerial { next, .. }
-                        | AutoReportRrsigResult::WaitSoa { next, .. } => {
-                            return AutoActionsResult::Wait(next.clone())
-                        }
-                        AutoReportRrsigResult::Report(_) => continue,
-                    }
-                }
-                drop(report_state_locked);
-
-                // No status, request cron
-                return AutoActionsResult::Wait(UnixTime::now());
-            }
-        }
-    }
-    AutoActionsResult::Ok
-}
-
 /// Check whether a new DNSKEY RRset has propagated.
 ///
 /// Compile a list of nameservers for the zone and their addresses and
 /// query each address for the DNSKEY RRset. The function
 /// check_dnskey_for_address does the actual work.
-async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult {
+async fn report_dnskey_propagated(kss: &KeySetState, now: UnixTime) -> AutoReportActionsResult {
     // Convert the DNSKEY RRset plus RRSIGs into a HashSet.
     // Find the address of all name servers of zone
     // Ask each nameserver for the DNSKEY RRset. Check if it matches the
@@ -4729,7 +4911,7 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
         Ok(a) => a,
         Err(e) => {
             warn!("Getting nameserver addresses for {zone} failed: {e}");
-            return AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT);
+            return AutoReportActionsResult::Wait(now + DEFAULT_WAIT);
         }
     };
 
@@ -4738,7 +4920,7 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
 
     let futures: Vec<_> = addresses
         .iter()
-        .map(|a| check_dnskey_for_address(zone, a, target_dnskey.clone()))
+        .map(|a| check_dnskey_for_address(zone, a, target_dnskey.clone(), now.clone()))
         .collect();
     let res: Vec<_> = join_all(futures).await;
 
@@ -4751,7 +4933,7 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
             Ok(r) => r,
             Err(e) => {
                 warn!("DNSKEY check failed: {e}");
-                return AutoReportActionsResult::Wait(UnixTime::now() + DEFAULT_WAIT);
+                return AutoReportActionsResult::Wait(now + DEFAULT_WAIT);
             }
         };
         match r {
@@ -4776,7 +4958,10 @@ async fn report_dnskey_propagated(kss: &KeySetState) -> AutoReportActionsResult 
 /// query each address for the DS RRset. The function
 /// check_ds_for_address does the actual work. The CDNSKEY RRset is
 /// used as the reference for the DS RRset.
-async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResult, Error> {
+async fn report_ds_propagated(
+    kss: &KeySetState,
+    now: UnixTime,
+) -> Result<AutoReportActionsResult, Error> {
     // Convert the CDNSKEY RRset into a HashSet.
     // Find the name of the parent zone.
     // Find the address of all name servers of the parent zone.
@@ -4814,7 +4999,7 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
 
     let futures: Vec<_> = addresses
         .iter()
-        .map(|a| check_ds_for_address(zone, a, target_dnskey.clone()))
+        .map(|a| check_ds_for_address(zone, a, target_dnskey.clone(), now.clone()))
         .collect();
     let res: Vec<_> = join_all(futures).await;
     let mut max_ttl = None;
@@ -4846,7 +5031,10 @@ async fn report_ds_propagated(kss: &KeySetState) -> Result<AutoReportActionsResu
 /// the entire zone. NSEC3 is special because it is not possible to directly
 /// query for NSEC3 records. In that case, wait for high SOA serial and check
 /// the entire zone again.
-async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
+async fn report_rrsig_propagated(
+    kss: &KeySetState,
+    now: UnixTime,
+) -> Result<AutoReportRrsigResult, Error> {
     // This function assume a single signer. Multi-signer is not supported
     // at all, but any kind of active-passive or active-active setup would also
     // need changes. With more than one signer, each signer needs to be
@@ -4855,7 +5043,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
     // Check the zone. If the zone checks out, make sure that all nameservers
     // have at least the version of the zone that was checked.
 
-    let result = check_zone(kss).await?;
+    let result = check_zone(kss, now.clone()).await?;
     let (serial, ttl, report_ttl) = match result {
         // check_zone never returns Report or Wait.
         AutoReportRrsigResult::Report(_) | AutoReportRrsigResult::Wait(_) => unreachable!(),
@@ -4871,14 +5059,17 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
     };
 
     Ok(
-        if check_soa(serial, kss).await.unwrap_or_else(|e| {
-            warn!("Check SOA propagation failed: {e}");
-            false
-        }) {
+        if check_soa(serial, kss, now.clone())
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Check SOA propagation failed: {e}");
+                false
+            })
+        {
             AutoReportRrsigResult::Report(report_ttl)
         } else {
             AutoReportRrsigResult::WaitSoa {
-                next: UnixTime::now() + ttl.into(),
+                next: now + ttl.into(),
                 serial,
                 ttl,
                 report_ttl,
@@ -4900,7 +5091,7 @@ async fn report_rrsig_propagated(kss: &KeySetState) -> Result<AutoReportRrsigRes
 /// a HashSet of type as the value. Check that each name and type has a
 /// corresponding complete RRSIG set.
 /// Ignore delegated records
-async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
+async fn check_zone(kss: &KeySetState, now: UnixTime) -> Result<AutoReportRrsigResult, Error> {
     let expected_set = get_expected_zsk_key_tags(kss);
 
     let zone = kss.keyset.name();
@@ -4989,14 +5180,14 @@ async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
                     let res = check_rrsigs(treemap, sigmap, zone, expected_set);
                     return match res {
                         CheckRrsigsResult::Done => Ok(AutoReportRrsigResult::WaitSoa {
-                            next: UnixTime::now(),
+                            next: now,
                             serial,
                             ttl: r.ttl(),
                             report_ttl: max_ttl,
                         }),
                         CheckRrsigsResult::WaitRecord { name, rtype } => {
                             Ok(AutoReportRrsigResult::WaitRecord {
-                                next: UnixTime::now() + r.ttl().into(),
+                                next: now + r.ttl().into(),
                                 name,
                                 rtype,
                                 ttl: r.ttl(),
@@ -5004,7 +5195,7 @@ async fn check_zone(kss: &KeySetState) -> Result<AutoReportRrsigResult, Error> {
                         }
                         CheckRrsigsResult::WaitNextSerial => {
                             Ok(AutoReportRrsigResult::WaitNextSerial {
-                                next: UnixTime::now() + r.ttl().into(),
+                                next: now + r.ttl().into(),
                                 serial,
                                 ttl: r.ttl(),
                             })
@@ -5113,6 +5304,7 @@ async fn check_dnskey_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
     mut target_dnskey: HashSet<RecordZoneRecordData>,
+    now: UnixTime,
 ) -> Result<AutoReportActionsResult, Error> {
     let records = lookup_name_rtype_at_address(zone, Rtype::DNSKEY, address).await?;
 
@@ -5140,9 +5332,7 @@ async fn check_dnskey_for_address(
                 // The current record is not found in the target set. Wait
                 // until the TTL has expired.
                 debug!("Check DNSKEY RRset: DNSKEY record not expected");
-                return Ok(AutoReportActionsResult::Wait(
-                    UnixTime::now() + r.ttl().into_duration(),
-                ));
+                return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
             }
             continue;
         }
@@ -5167,9 +5357,7 @@ async fn check_dnskey_for_address(
                 // The current record is not found in the target set. Wait
                 // until the TTL has expired.
                 debug!("Check DNSKEY RRset: RRSIG record not expected");
-                return Ok(AutoReportActionsResult::Wait(
-                    UnixTime::now() + r.ttl().into_duration(),
-                ));
+                return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
             }
             continue;
         }
@@ -5177,9 +5365,7 @@ async fn check_dnskey_for_address(
     if let Some(record) = target_dnskey.iter().next() {
         // Not all DNSKEY records were found.
         warn!("Not all required DNSKEY records were found for {zone}");
-        Ok(AutoReportActionsResult::Wait(
-            UnixTime::now() + record.ttl().into(),
-        ))
+        Ok(AutoReportActionsResult::Wait(now + record.ttl().into()))
     } else {
         Ok(AutoReportActionsResult::Report(max_ttl))
     }
@@ -5190,6 +5376,7 @@ async fn check_ds_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
     mut target_dnskey: HashSet<RecordDnskey>,
+    now: UnixTime,
 ) -> Result<AutoReportActionsResult, Error> {
     let records = lookup_name_rtype_at_address::<Ds<_>>(zone, Rtype::DS, address).await?;
 
@@ -5217,9 +5404,7 @@ async fn check_ds_for_address(
             // The current record is not found in the target set. Wait
             // until the TTL has expired.
             debug!("Check DS RRset: DS record not expected");
-            return Ok(AutoReportActionsResult::Wait(
-                UnixTime::now() + r.ttl().into_duration(),
-            ));
+            return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
         }
         continue;
     }
@@ -5227,9 +5412,7 @@ async fn check_ds_for_address(
     if let Some(dnskey) = dnskey {
         debug!("Check DS RRset: expected DS record not present");
         let ttl = dnskey.ttl();
-        Ok(AutoReportActionsResult::Wait(
-            UnixTime::now() + ttl.into_duration(),
-        ))
+        Ok(AutoReportActionsResult::Wait(now + ttl.into_duration()))
     } else {
         Ok(AutoReportActionsResult::Report(max_ttl))
     }
@@ -5241,13 +5424,12 @@ async fn check_soa_for_address(
     zone: &Name<Vec<u8>>,
     address: &IpAddr,
     serial: Serial,
+    now: UnixTime,
 ) -> Result<AutoReportActionsResult, Error> {
     let records = lookup_name_rtype_at_address::<Soa<_>>(zone, Rtype::SOA, address).await?;
 
     if records.is_empty() {
-        return Ok(AutoReportActionsResult::Wait(
-            UnixTime::now() + DEFAULT_WAIT,
-        ));
+        return Ok(AutoReportActionsResult::Wait(now + DEFAULT_WAIT));
     }
 
     if let Some(ttl) = records
@@ -5261,7 +5443,7 @@ async fn check_soa_for_address(
         })
         .next()
     {
-        return Ok(AutoReportActionsResult::Wait(UnixTime::now() + ttl.into()));
+        return Ok(AutoReportActionsResult::Wait(now + ttl.into()));
     }
     // Return a dummy TTL. The caller knows the real TTL to report.
     Ok(AutoReportActionsResult::Report(Ttl::from_secs(0)))
@@ -5388,91 +5570,6 @@ fn cron_next_auto_start(
             }
         }
     }
-}
-
-/// This function computes when next to try to move to the next state.
-///
-/// For the Report and Wait actions that involves checking when propagation
-/// should be tested again. For the expire step it computes when the
-/// keyset object in the domain library accepts the cache_expired1 or
-/// cache_expired2 methods.
-fn cron_next_auto_report_expire_done(
-    auto: &AutoConfig,
-    roll_list: &[RollType],
-    kss: &KeySetState,
-    cron_next: &mut Vec<Option<UnixTime>>,
-) -> Result<(), Error> {
-    if auto.report {
-        // If there is currently a roll in one of the propagation
-        // states and this flags is set take when to check again for
-        // actions to complete
-        for r in roll_list {
-            if let Some(state) = kss.keyset.rollstates().get(r) {
-                let report_state = kss.internal.get(r).expect("should not fail");
-                let report_state = match state {
-                    RollState::Propagation1 => &report_state.propagation1,
-                    RollState::Propagation2 => &report_state.propagation2,
-                    _ => continue,
-                };
-                let actions = kss.keyset.actions(*r);
-                match check_auto_actions(&actions, report_state) {
-                    AutoActionsResult::Ok => {
-                        // All actions are ready. Request cron.
-                        cron_next.push(Some(UnixTime::now()));
-                    }
-                    AutoActionsResult::Wait(next) => cron_next.push(Some(next)),
-                }
-            }
-        }
-    }
-
-    if auto.expire {
-        // If there is currently a roll in one of the cache expire
-        // states and this flag is set, use the remaining time until caches
-        // are expired. Try to issue the cache_expire[12] method on a
-        // clone of keyset.
-        let mut keyset = kss.keyset.clone();
-        for r in roll_list {
-            if let Some(state) = keyset.rollstates().get(r) {
-                let actions = match state {
-                    RollState::CacheExpire1(_) => keyset.cache_expired1(*r),
-                    RollState::CacheExpire2(_) => keyset.cache_expired2(*r),
-                    _ => continue,
-                };
-                if let Err(keyset::Error::Wait(remain)) = actions {
-                    cron_next.push(Some(UnixTime::now() + remain));
-                    continue;
-                }
-                let _ = actions
-                    .map_err(|e| format!("cache_expired[12] failed for state {r:?}: {e}"))?;
-
-                // Time to call cron. Report the current time.
-                cron_next.push(Some(UnixTime::now()));
-            }
-        }
-    }
-
-    if auto.done {
-        // If there is current a roll in the done state and all
-        // and this flag is set, take when the check again for actions to
-        // complete
-        for r in roll_list {
-            if let Some(RollState::Done) = kss.keyset.rollstates().get(r) {
-                let report_state = kss.internal.get(r).expect("should not fail");
-                match check_auto_actions(&kss.keyset.actions(*r), &report_state.done) {
-                    AutoActionsResult::Ok => {
-                        // All actions are ready. Request cron.
-                        cron_next.push(Some(UnixTime::now()));
-                    }
-                    AutoActionsResult::Wait(next) => {
-                        cron_next.push(Some(next));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// The result of checking whether all RRSIG records are present.
@@ -5656,7 +5753,7 @@ async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Er
 
 /// Check if all addresses of all nameservers of the zone to see if they
 /// have at least the SOA serial passed as parameter.
-async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
+async fn check_soa(serial: Serial, kss: &KeySetState, now: UnixTime) -> Result<bool, Error> {
     // Find the address of all name servers of zone
     // Ask each nameserver for the SOA record.
     // Check that it's version is at least the version we checked.
@@ -5668,7 +5765,7 @@ async fn check_soa(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
     let addresses = addresses_for_zone(zone).await?;
     let futures: Vec<_> = addresses
         .iter()
-        .map(|a| check_soa_for_address(zone, a, serial))
+        .map(|a| check_soa_for_address(zone, a, serial, now.clone()))
         .collect();
     let res: Vec<_> = join_all(futures).await;
 
