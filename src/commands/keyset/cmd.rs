@@ -5705,7 +5705,7 @@ fn show_automatic_roll_state(
 /// locking the file, the function has to check if the locked file is this
 /// the current fine under that name.
 fn write_locked_file(filename: &PathBuf) -> Result<File, Error> {
-    // The config file is updated by writing to a new file and the renaming.
+    // The config file is updated by writing to a new file and then renaming.
     // Might have locked the old file. Check. Try a number of times and
     // then give up. Lock contention is expected to be low.
     for _try in 0..MAX_FILE_LOCK_TRIES {
