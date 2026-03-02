@@ -81,6 +81,9 @@ pub struct Signer {
     #[arg(short = 'c')]
     signer_config: PathBuf,
 
+    #[arg(short = 'v')]
+    verbose: bool,
+
     /// Subcommand
     #[command(subcommand)]
     cmd: Commands,
@@ -449,6 +452,7 @@ impl Signer {
             config_changed: false,
             state: signer_state,
             state_changed: false,
+            verbose: self.verbose,
         };
 
         let mut res = Ok(());
@@ -1372,6 +1376,7 @@ struct WorkSpace {
     config_changed: bool,
     state: SignerState,
     state_changed: bool,
+    verbose: bool,
 }
 
 impl WorkSpace {
@@ -1438,10 +1443,12 @@ impl WorkSpace {
         let now = self.faketime_or_now();
         if now > self.state.last_signature_refresh.clone() + self.config.signature_refresh_interval
         {
-            println!(
-                "refresh signatures: {} > {} + {:?}",
-                now, self.state.last_signature_refresh, self.config.signature_refresh_interval
-            );
+            if self.verbose {
+                println!(
+                    "refresh signatures: {} > {} + {:?}",
+                    now, self.state.last_signature_refresh, self.config.signature_refresh_interval
+                );
+            }
             refresh_signatures = true;
         }
 
@@ -1454,14 +1461,18 @@ impl WorkSpace {
 
         let start = Instant::now();
         load_signed_zone(&mut iss, &self.config.zonefile_out).unwrap();
-        println!("loading signed zone took {:?}", start.elapsed());
+        if self.verbose {
+            println!("loading signed zone took {:?}", start.elapsed());
+        }
 
         self.handle_nsec_nsec3(&mut iss)?;
 
         if load_unsigned {
             let start = Instant::now();
             load_unsigned_zone(&mut iss, &self.config.zonefile_in).unwrap();
-            println!("loading new unsigned zone took {:?}", start.elapsed());
+            if self.verbose {
+                println!("loading new unsigned zone took {:?}", start.elapsed());
+            }
         } else {
             // Re-use the signed data.
             load_signed_only(&mut iss);
@@ -1483,7 +1494,9 @@ impl WorkSpace {
         if !self.config.zonemd.is_empty() {
             let start = Instant::now();
             self.add_zonemd(&mut iss)?;
-            println!("ZONEMD took {:?}", start.elapsed());
+            if self.verbose {
+                println!("ZONEMD took {:?}", start.elapsed());
+            }
         }
 
         if refresh_signatures {
@@ -1492,7 +1505,9 @@ impl WorkSpace {
                 self.key_roll_signatures(&mut iss)?;
             }
         }
-        println!("incremental signing took {:?}", start.elapsed());
+        if self.verbose {
+            println!("incremental signing took {:?}", start.elapsed());
+        }
 
         self.incremental_write_output(&iss)?;
 
@@ -1823,7 +1838,9 @@ impl WorkSpace {
                 let start = Instant::now();
                 remove_nsec_nsec3(iss);
                 new_nsec3_chain(iss)?;
-                println!("updating NSEC3 parameters took {:?}", start.elapsed());
+                if self.verbose {
+                    println!("updating NSEC3 parameters took {:?}", start.elapsed());
+                }
                 return Ok(());
             }
 
@@ -1923,7 +1940,9 @@ impl WorkSpace {
                     .map_err(|e| format!("unable write signed zone: {e}"))?;
             }
         }
-        println!("writing output took {:?}", start.elapsed());
+        if self.verbose {
+            println!("writing output took {:?}", start.elapsed());
+        }
         Ok(())
     }
 
@@ -2059,7 +2078,9 @@ impl WorkSpace {
         //all.sort_by(|e1, e2| CanonicalOrd::canonical_cmp(*e1, *e2));
         all.par_sort_by(|e1, e2| CanonicalOrd::canonical_cmp(*e1, *e2));
 
-        println!("ZONEMD prepare and sort took {:?}", start.elapsed());
+        if self.verbose {
+            println!("ZONEMD prepare and sort took {:?}", start.elapsed());
+        }
 
         let start = Instant::now();
 
@@ -2095,7 +2116,9 @@ impl WorkSpace {
             zonemd_records.push(record);
         }
 
-        println!("ZONEMD hash took {:?}", start.elapsed());
+        if self.verbose {
+            println!("ZONEMD hash took {:?}", start.elapsed());
+        }
 
         let key = (iss.origin.clone(), Rtype::ZONEMD);
         let mut new_sigs = vec![];
