@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Feb 25, 2026" "0.1.1-dev" "dnst"
+.TH "DNST-KEYSET" "1" "Feb 16, 2026" "0.1.1-dev" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys.
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys.
 This subcommand is meant to be part of a DNSSEC signing solution.
 The \fBkeyset\fP subcommand manages signing keys and generates a signed DNSKEY RRset.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -283,9 +283,9 @@ case new keys will be created by keyset and stored as files.
 .sp
 Authentication can be done either with a user name and password or with
 a client\-side certificate.
-The user name and password are KMIP concepts that are mapped by the
-cascade\-hsm\-bridge server to a PKCS #11 slot or token name and the PIN.
-With this approach the cascade\-hsm\-bridge server des not have to store secrets
+The user name and password are KMIP concepts that are mapped by the kmip2pkcs11
+server to a PKCS #11 slot or token name and the PIN.
+With this approach the kmip2pkcs11 server des not have to store secrets
 that provide access to the HSM.
 User names and passwords are stored in a separate file to avoid storing
 secrets in the keyset configuration or state files.
@@ -685,8 +685,7 @@ Give detailed information about all keys in the key set.
 get
 .sp
 Get the values of the following configuration variables: use\-csk,
-autoremove, autoremove\-delay, algorithm, ds\-algorithm, dnskey\-lifetime,
-cds\-lifetime.
+autoremove, algorithm, ds\-algorithm, dnskey\-lifetime, cds\-lifetime.
 This is a subset of all configuration variables.
 .sp
 Additionally, the dnskey argument returns the current DNSKEY RRset plus
@@ -708,11 +707,7 @@ will be created.
 autoremove <BOOLEAN>
 .sp
 When true, keys that are stale will be removed automatically.
-.IP \(bu 2
-autoremove\-delay <DELAY>
-.sp
-Set the delay between the time keys become stale and automatic
-removal.
+Currently there is no delay in removing keys.
 .IP \(bu 2
 algorithm <ALGORITHM>
 .sp
@@ -786,11 +781,19 @@ Set a command to to run when the DS records in the parent zone need
 to be updated.
 This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
+.IP \(bu 2
+fake\-time
+.sp
+Set the \(aqwall clock\(aq time to be used for testing.
+The argument is either the Unix time as seconds since Epoch or the string
+\(aqoff\(aq to disable fake\-time.
 .UNINDENT
 .IP \(bu 2
 show
 .sp
 Show all configuration variables.
+.sp
+Note that \(aqfake\-time\(aq is only printed when it is set.
 .IP \(bu 2
 cron
 .sp

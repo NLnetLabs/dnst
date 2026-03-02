@@ -776,9 +776,17 @@ The keyset subcommand provides the following commands:
     This command can, for example, alert the operator or use an API provided
     by the parent zone to update the DS records automatically.
 
+  * fake-time
+
+    Set the 'wall clock' time to be used for testing.
+    The argument is either the Unix time as seconds since Epoch or the string
+    'off' to disable fake-time.
+
 * show
 
   Show all configuration variables.
+
+  Note that 'fake-time' is only printed when it is set.
 
 * cron
 
