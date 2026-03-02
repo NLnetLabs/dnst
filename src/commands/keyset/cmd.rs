@@ -3992,255 +3992,6 @@ impl WorkSpace {
     }
 }
 
-/// Handle automatic report actions.
-// Note that we cannot pass an &mut WorkSpace because report_state borrows
-// the WorkSpace object as well.
-async fn auto_report_actions(
-    actions: &[Action],
-    kss: &KeySetState,
-    report_state: &Mutex<ReportState>,
-    state_changed: &mut bool,
-    now: UnixTime,
-) -> AutoReportActionsResult {
-    assert!(!actions.is_empty());
-    let mut max_ttl = Ttl::from_secs(0);
-    for a in actions {
-        match a {
-            Action::ReportDnskeyPropagated => {
-                // Clippy problem
-                {
-                    let report_state_locked = report_state.lock().expect("lock() should not fail");
-                    if let Some(dnskey_status) = &report_state_locked.dnskey {
-                        match dnskey_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
-                                    return dnskey_status.clone();
-                                }
-                            }
-                            AutoReportActionsResult::Report(ttl) => {
-                                max_ttl = max(max_ttl, *ttl);
-                                continue;
-                            }
-                        }
-                    }
-                    drop(report_state_locked);
-                }
-
-                let result = report_dnskey_propagated(kss, now.clone()).await;
-
-                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
-                report_state_locked.dnskey = Some(result.clone());
-                drop(report_state_locked);
-                *state_changed = true;
-
-                match result {
-                    AutoReportActionsResult::Wait(_) => return result,
-                    AutoReportActionsResult::Report(ttl) => {
-                        max_ttl = max(max_ttl, ttl);
-                    }
-                }
-            }
-            Action::ReportDsPropagated => {
-                // Clippy problem
-                {
-                    let report_state_locked = report_state.lock().expect("lock() should not fail");
-                    if let Some(ds_status) = &report_state_locked.ds {
-                        match ds_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
-                                    return ds_status.clone();
-                                }
-                            }
-                            AutoReportActionsResult::Report(ttl) => {
-                                max_ttl = max(max_ttl, *ttl);
-                                continue;
-                            }
-                        }
-                    }
-                    drop(report_state_locked);
-                }
-
-                let result = report_ds_propagated(kss, now.clone())
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!("Check DS propagation failed: {e}");
-                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
-                    });
-
-                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
-                report_state_locked.ds = Some(result.clone());
-                drop(report_state_locked);
-                *state_changed = true;
-
-                match result {
-                    AutoReportActionsResult::Wait(_) => return result,
-                    AutoReportActionsResult::Report(ttl) => {
-                        max_ttl = max(max_ttl, ttl);
-                    }
-                }
-            }
-            Action::ReportRrsigPropagated => {
-                // Clippy problem
-                let opt_rrsig_status = {
-                    let report_state_locked = report_state.lock().expect("lock() should not fail");
-                    // Make a copy of the state. We need to release the lock
-                    // before calling await.
-                    let opt_rrsig_status = report_state_locked.rrsig.clone();
-                    drop(report_state_locked);
-                    opt_rrsig_status
-                };
-
-                if let Some(rrsig_status) = opt_rrsig_status {
-                    match rrsig_status {
-                        AutoReportRrsigResult::Wait(next) => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
-                            }
-                        }
-                        AutoReportRrsigResult::Report(ttl) => {
-                            max_ttl = max(max_ttl, ttl);
-                            continue;
-                        }
-                        AutoReportRrsigResult::WaitSoa {
-                            next,
-                            serial,
-                            ttl,
-                            report_ttl,
-                        } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
-                            }
-                            let res =
-                                check_soa(serial, kss, now.clone())
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        warn!("Check SOA propagation failed: {e}");
-                                        false
-                                    });
-                            if res {
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig =
-                                    Some(AutoReportRrsigResult::Report(report_ttl));
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                max_ttl = max(max_ttl, report_ttl);
-                                continue;
-                            } else {
-                                let next = now + ttl.into();
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
-                                    next: next.clone(),
-                                    serial,
-                                    ttl,
-                                    report_ttl,
-                                });
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
-                            }
-                        }
-                        AutoReportRrsigResult::WaitRecord {
-                            next,
-                            name,
-                            rtype,
-                            ttl,
-                        } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
-                            }
-                            let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
-                                warn!("record check failed: {e}");
-                                false
-                            });
-                            if !res {
-                                let next = now + ttl.into();
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig =
-                                    Some(AutoReportRrsigResult::WaitRecord {
-                                        next: next.clone(),
-                                        name: name.clone(),
-                                        rtype,
-                                        ttl,
-                                    });
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
-                            }
-
-                            // This record has the right signatures. Check
-                            // the zone.
-                        }
-                        AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
-                            }
-                            let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
-                                warn!("next serial check failed: {e}");
-                                false
-                            });
-                            if !res {
-                                let next = now + ttl.into();
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig =
-                                    Some(AutoReportRrsigResult::WaitNextSerial {
-                                        next: next.clone(),
-                                        serial,
-                                        ttl,
-                                    });
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
-                            }
-
-                            // A new serial. Check the zone.
-                        }
-                    }
-                }
-
-                let result = report_rrsig_propagated(kss, now.clone())
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!("Check RRSIG propagation failed: {e}");
-                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
-                    });
-
-                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
-                report_state_locked.rrsig = Some(result.clone());
-                drop(report_state_locked);
-                *state_changed = true;
-
-                match result {
-                    AutoReportRrsigResult::Wait(next)
-                    | AutoReportRrsigResult::WaitRecord { next, .. }
-                    | AutoReportRrsigResult::WaitNextSerial { next, .. }
-                    | AutoReportRrsigResult::WaitSoa { next, .. } => {
-                        return AutoReportActionsResult::Wait(next)
-                    }
-                    AutoReportRrsigResult::Report(ttl) => {
-                        max_ttl = max(max_ttl, ttl);
-                    }
-                }
-            }
-            Action::UpdateDnskeyRrset
-            | Action::CreateCdsRrset
-            | Action::RemoveCdsRrset
-            | Action::UpdateDsRrset
-            | Action::UpdateRrsig => (),
-
-            // These actions should not occur here. Actions in this functions
-            // need to be no-ops or report a TTL. Wait actions are not
-            // compatible with this.
-            Action::WaitDnskeyPropagated
-            | Action::WaitDsPropagated
-            | Action::WaitRrsigPropagated => unreachable!(),
-        }
-    }
-    AutoReportActionsResult::Report(max_ttl)
-}
 /// Create CDS and CDNSKEY RRsets.
 fn create_cds_rrset_helper(
     digest_alg: DigestAlgorithm,
@@ -4769,6 +4520,256 @@ async fn auto_wait_actions(
         }
     }
     AutoActionsResult::Ok
+}
+
+/// Handle automatic report actions.
+// Note that we cannot pass an &mut WorkSpace because report_state borrows
+// the WorkSpace object as well.
+async fn auto_report_actions(
+    actions: &[Action],
+    kss: &KeySetState,
+    report_state: &Mutex<ReportState>,
+    state_changed: &mut bool,
+    now: UnixTime,
+) -> AutoReportActionsResult {
+    assert!(!actions.is_empty());
+    let mut max_ttl = Ttl::from_secs(0);
+    for a in actions {
+        match a {
+            Action::ReportDnskeyPropagated => {
+                // Clippy problem
+                {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    if let Some(dnskey_status) = &report_state_locked.dnskey {
+                        match dnskey_status {
+                            AutoReportActionsResult::Wait(next) => {
+                                if *next > now {
+                                    return dnskey_status.clone();
+                                }
+                            }
+                            AutoReportActionsResult::Report(ttl) => {
+                                max_ttl = max(max_ttl, *ttl);
+                                continue;
+                            }
+                        }
+                    }
+                    drop(report_state_locked);
+                }
+
+                let result = report_dnskey_propagated(kss, now.clone()).await;
+
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
+                report_state_locked.dnskey = Some(result.clone());
+                drop(report_state_locked);
+                *state_changed = true;
+
+                match result {
+                    AutoReportActionsResult::Wait(_) => return result,
+                    AutoReportActionsResult::Report(ttl) => {
+                        max_ttl = max(max_ttl, ttl);
+                    }
+                }
+            }
+            Action::ReportDsPropagated => {
+                // Clippy problem
+                {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    if let Some(ds_status) = &report_state_locked.ds {
+                        match ds_status {
+                            AutoReportActionsResult::Wait(next) => {
+                                if *next > now {
+                                    return ds_status.clone();
+                                }
+                            }
+                            AutoReportActionsResult::Report(ttl) => {
+                                max_ttl = max(max_ttl, *ttl);
+                                continue;
+                            }
+                        }
+                    }
+                    drop(report_state_locked);
+                }
+
+                let result = report_ds_propagated(kss, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check DS propagation failed: {e}");
+                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
+
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
+                report_state_locked.ds = Some(result.clone());
+                drop(report_state_locked);
+                *state_changed = true;
+
+                match result {
+                    AutoReportActionsResult::Wait(_) => return result,
+                    AutoReportActionsResult::Report(ttl) => {
+                        max_ttl = max(max_ttl, ttl);
+                    }
+                }
+            }
+            Action::ReportRrsigPropagated => {
+                // Clippy problem
+                let opt_rrsig_status = {
+                    let report_state_locked = report_state.lock().expect("lock() should not fail");
+                    // Make a copy of the state. We need to release the lock
+                    // before calling await.
+                    let opt_rrsig_status = report_state_locked.rrsig.clone();
+                    drop(report_state_locked);
+                    opt_rrsig_status
+                };
+
+                if let Some(rrsig_status) = opt_rrsig_status {
+                    match rrsig_status {
+                        AutoReportRrsigResult::Wait(next) => {
+                            if next > now {
+                                return AutoReportActionsResult::Wait(next.clone());
+                            }
+                        }
+                        AutoReportRrsigResult::Report(ttl) => {
+                            max_ttl = max(max_ttl, ttl);
+                            continue;
+                        }
+                        AutoReportRrsigResult::WaitSoa {
+                            next,
+                            serial,
+                            ttl,
+                            report_ttl,
+                        } => {
+                            if next > now {
+                                return AutoReportActionsResult::Wait(next.clone());
+                            }
+                            let res =
+                                check_soa(serial, kss, now.clone())
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        warn!("Check SOA propagation failed: {e}");
+                                        false
+                                    });
+                            if res {
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::Report(report_ttl));
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                max_ttl = max(max_ttl, report_ttl);
+                                continue;
+                            } else {
+                                let next = now + ttl.into();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
+                                    next: next.clone(),
+                                    serial,
+                                    ttl,
+                                    report_ttl,
+                                });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoReportActionsResult::Wait(next);
+                            }
+                        }
+                        AutoReportRrsigResult::WaitRecord {
+                            next,
+                            name,
+                            rtype,
+                            ttl,
+                        } => {
+                            if next > now {
+                                return AutoReportActionsResult::Wait(next.clone());
+                            }
+                            let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
+                                warn!("record check failed: {e}");
+                                false
+                            });
+                            if !res {
+                                let next = now + ttl.into();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::WaitRecord {
+                                        next: next.clone(),
+                                        name: name.clone(),
+                                        rtype,
+                                        ttl,
+                                    });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoReportActionsResult::Wait(next);
+                            }
+
+                            // This record has the right signatures. Check
+                            // the zone.
+                        }
+                        AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
+                            if next > now {
+                                return AutoReportActionsResult::Wait(next.clone());
+                            }
+                            let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
+                                warn!("next serial check failed: {e}");
+                                false
+                            });
+                            if !res {
+                                let next = now + ttl.into();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig =
+                                    Some(AutoReportRrsigResult::WaitNextSerial {
+                                        next: next.clone(),
+                                        serial,
+                                        ttl,
+                                    });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoReportActionsResult::Wait(next);
+                            }
+
+                            // A new serial. Check the zone.
+                        }
+                    }
+                }
+
+                let result = report_rrsig_propagated(kss, now.clone())
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Check RRSIG propagation failed: {e}");
+                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
+                    });
+
+                let mut report_state_locked = report_state.lock().expect("lock() should not fail");
+                report_state_locked.rrsig = Some(result.clone());
+                drop(report_state_locked);
+                *state_changed = true;
+
+                match result {
+                    AutoReportRrsigResult::Wait(next)
+                    | AutoReportRrsigResult::WaitRecord { next, .. }
+                    | AutoReportRrsigResult::WaitNextSerial { next, .. }
+                    | AutoReportRrsigResult::WaitSoa { next, .. } => {
+                        return AutoReportActionsResult::Wait(next)
+                    }
+                    AutoReportRrsigResult::Report(ttl) => {
+                        max_ttl = max(max_ttl, ttl);
+                    }
+                }
+            }
+            Action::UpdateDnskeyRrset
+            | Action::CreateCdsRrset
+            | Action::RemoveCdsRrset
+            | Action::UpdateDsRrset
+            | Action::UpdateRrsig => (),
+
+            // These actions should not occur here. Actions in this functions
+            // need to be no-ops or report a TTL. Wait actions are not
+            // compatible with this.
+            Action::WaitDnskeyPropagated
+            | Action::WaitDsPropagated
+            | Action::WaitRrsigPropagated => unreachable!(),
+        }
+    }
+    AutoReportActionsResult::Report(max_ttl)
 }
 
 /// Check whether a new DNSKEY RRset has propagated.
