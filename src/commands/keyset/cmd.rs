@@ -5702,11 +5702,11 @@ fn show_automatic_roll_state(
 /// Open filename, get an exclusive lock and return the open file.
 ///
 /// Assume changes are saved by creating a new file and renaming. After
-/// locking the file, the function has to check if the locked file is this
-/// the current fine under that name.
+/// locking the file, the function has to check if the locked file is the
+/// same as the current file under that name.
 fn write_locked_file(filename: &PathBuf) -> Result<File, Error> {
     // The config file is updated by writing to a new file and then renaming.
-    // Might have locked the old file. Check. Try a number of times and
+    // We might have locked the old file. Check. Try a number of times and
     // then give up. Lock contention is expected to be low.
     for _try in 0..MAX_FILE_LOCK_TRIES {
         let file = File::open(filename)
