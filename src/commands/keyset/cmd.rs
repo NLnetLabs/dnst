@@ -1754,8 +1754,8 @@ enum KskRollType {
     DoubleSignatureKskRoll,
 
     /// KSK roll that first publishes an additional DS record for the new
-    /// before switching to the new key in the DNSKEY RRset and signing the
-    /// DNSKEY RRset with the new key.
+    /// KSK before replacing the old KSK with the new KSK in the DNSKEY RRset
+    /// and signing the DNSKEY RRset with the new key.
     DoubleDsKskRoll,
 }
 
@@ -1785,11 +1785,11 @@ impl Display for KskRollType {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 enum ZskRollType {
     #[default]
-    /// Type of ZSK roll where the new ZSK is first added to the DNSKEY
+    /// ZSK roll where the new ZSK is first added to the DNSKEY
     /// RRset and then the zone is signed with the new key.
     PrePublishZskRoll,
 
-    /// Type of ZSK roll where the zone is signed with both the old and the
+    /// ZSK roll where the zone is signed with both the old and the
     /// new ZSK for some period of time.
     DoubleSignatureZskRoll,
 }
