@@ -736,7 +736,7 @@ impl Keyset {
             return Ok(());
         }
 
-        let config_file = write_locked_file(&self.keyset_conf)?;
+        let config_file = file_with_write_lock(&self.keyset_conf)?;
 
         let ksc: KeySetConfig = serde_json::from_reader(&config_file)
             .map_err(|e| format!("error loading {:?}: {e}\n", self.keyset_conf))?;
@@ -5682,7 +5682,7 @@ fn show_automatic_roll_state(
 /// Assume changes are saved by creating a new file and renaming. After
 /// locking the file, the function has to check if the locked file is the
 /// same as the current file under that name.
-fn write_locked_file(filename: &PathBuf) -> Result<File, Error> {
+fn file_with_write_lock(filename: &PathBuf) -> Result<File, Error> {
     // The config file is updated by writing to a new file and then renaming.
     // We might have locked the old file. Check. Try a number of times and
     // then give up. Lock contention is expected to be low.
