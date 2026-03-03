@@ -205,6 +205,9 @@ enum SetCommands {
     SerialPolicy {
         serial_policy: SerialPolicy,
     },
+    PassThroughMode {
+        pass_through_mode: PassThroughMode,
+    },
     NotifyCommand {
         args: Vec<String>,
     },
@@ -380,6 +383,7 @@ impl Signer {
                 notify_command: Vec::new(),
                 signature_refresh_interval: Duration::from_secs(FIFTEEN_MINUTES),
                 key_roll_time: Duration::from_secs(ONE_DAY),
+                pass_through_mode: Default::default(),
                 faketime: None,
             };
             let json = serde_json::to_string_pretty(&sc).expect("should not fail");
@@ -527,6 +531,11 @@ impl Signer {
 
         // The entire zone is signed, clear key_roll.
         ws.state.key_roll = None;
+
+        if !matches!(ws.config.pass_through_mode, PassThroughMode::Off) {
+            ws.sign_pass_through()?;
+            return Ok(());
+        }
 
         // Read the zone file.
         let origin = ws.keyset_state.keyset.name().to_bytes();
@@ -1104,8 +1113,15 @@ impl Signer {
                     // TODO: Create an issue for the original ldns-signzone or
                     // release a fixed version of ldns-signzone that strips
                     // NSEC(3)s.
-                    //
-                    // TODO: Support partial and re-signing.
+
+                    // Skip DNSKEY, CDS, CDNSKEY. We should check the apex
+                    // records from keyset to see what should be deleted.
+                    if (matches!(record.rtype(), Rtype::DNSKEY | Rtype::CDS | Rtype::CDNSKEY))
+                        && *record.owner() == origin
+                    {
+                        continue;
+                    }
+
                     if !matches!(
                         record.rtype(),
                         Rtype::RRSIG | Rtype::NSEC | Rtype::NSEC3 | Rtype::NSEC3PARAM
@@ -1417,6 +1433,21 @@ impl WorkSpace {
             SetCommands::SerialPolicy { serial_policy } => {
                 self.config.serial_policy = serial_policy;
             }
+            SetCommands::PassThroughMode { pass_through_mode } => {
+                // Make sure serial_policy is Keep to avoid suprises.
+                if !matches!(self.config.serial_policy, SerialPolicy::Keep) {
+                    return Err(
+                        "'serial-policy' has to be 'keep' when enabling pass-through mode".into(),
+                    );
+                }
+
+                // Make sure ZONEMD is off.
+                if !self.config.zonemd.is_empty() {
+                    return Err("'zone-md' has to be empty when enabling pass-through mode".into());
+                }
+
+                self.config.pass_through_mode = pass_through_mode;
+            }
             SetCommands::NotifyCommand { args } => {
                 self.config.notify_command = args;
             }
@@ -1438,6 +1469,11 @@ impl WorkSpace {
         // Resign using the unsigned zonefile when load_unsigned is true.
 
         let apex_changed = self.handle_keyset_changed();
+
+        if !matches!(self.config.pass_through_mode, PassThroughMode::Off) {
+            self.sign_pass_through()?;
+            return Ok(());
+        }
 
         let mut refresh_signatures = false;
         let now = self.faketime_or_now();
@@ -1709,7 +1745,17 @@ impl WorkSpace {
             }
 
             let key = ((*owner).clone(), **rtype);
-            if **rtype == Rtype::NSEC3 {
+            if **rtype == Rtype::NSEC {
+                let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
+                let records = [record.clone()];
+                sign_records(
+                    &records,
+                    &iss.keys,
+                    iss.inception,
+                    iss.expiration,
+                    &mut new_sigs,
+                )?;
+            } else if **rtype == Rtype::NSEC3 {
                 let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                 let records = [record.clone()];
                 sign_records(
@@ -1770,7 +1816,7 @@ impl WorkSpace {
 
         if apex_extra != self.state.apex_extra {
             println!(
-                "APEX types changed: from {:?} to {apex_extra:?}",
+                "APEX extra changed: from {:?} to {apex_extra:?}",
                 self.state.apex_extra
             );
             apex_changed = true;
@@ -2019,6 +2065,91 @@ impl WorkSpace {
         let new_soa = self.update_soa_serial(zone_soa_rr)?;
         let new_rrset = vec![new_soa];
         iss.new_data.insert(key, new_rrset);
+
+        Ok(())
+    }
+
+    fn load_pass_through_dnskey(&mut self, iss: &mut IncrementalSigningState) -> Result<(), Error> {
+        // Assume that the APEX records have been copied from KeySetState to
+        // SignerState. Now update the APEX in new_data.
+
+        let mut dnskey_records = vec![];
+        let mut rrsig_records = vec![];
+
+        for r in &self.state.apex_extra {
+            let zonefile =
+                domain::zonefile::inplace::Zonefile::from((r.to_string() + "\n").as_ref() as &str);
+            for entry in zonefile {
+                let entry = entry.map_err::<Error, _>(|e| format!("bad entry: {e}\n").into())?;
+
+                // We only care about records in a zonefile
+                let Entry::Record(record) = entry else {
+                    continue;
+                };
+
+                if record.rtype() != Rtype::DNSKEY && record.rtype() != Rtype::RRSIG {
+                    continue;
+                }
+
+                let owner = record.owner().to_name::<Bytes>();
+                let data = record.data().clone().try_flatten_into().unwrap();
+                let r = Record::new(owner.clone(), record.class(), record.ttl(), data);
+
+                if r.rtype() == Rtype::RRSIG {
+                    let ZoneRecordData::Rrsig(rrsig) = r.data() else {
+                        panic!("RRSIG expected");
+                    };
+                    if rrsig.type_covered() != Rtype::DNSKEY {
+                        continue;
+                    }
+                    rrsig_records.push(r);
+                } else {
+                    dnskey_records.push(r);
+                }
+            }
+        }
+
+        match self.config.pass_through_mode {
+            PassThroughMode::Off => unreachable!(),
+            PassThroughMode::CopyDnskeyRrset => {
+                let key = (
+                    dnskey_records
+                        .first()
+                        .ok_or("at least one DNSKEY expected")?
+                        .owner()
+                        .clone(),
+                    Rtype::DNSKEY,
+                );
+                iss.new_data.insert(key.clone(), dnskey_records);
+                iss.rrsigs.insert(key, rrsig_records);
+            }
+            PassThroughMode::MergeDnskeySignatures => {
+                // Make sure the old and new DNSKEY RRsets are the same.
+                let key = (iss.origin.clone(), Rtype::DNSKEY);
+                let Some(old_dnskey_records) = iss.old_data.get(&key) else {
+                    return Err("A DNSKEY RRset should exist in the input zone".into());
+                };
+                let mut old_dnskey_records = old_dnskey_records.clone();
+                old_dnskey_records.sort();
+                dnskey_records.sort();
+                if *old_dnskey_records != dnskey_records {
+                    return Err(
+                        "DNSKEY RRset in input has to be same as the DNSKEY RRset in keyset".into(),
+                    );
+                }
+                let Some(rrsigs) = iss.rrsigs.get(&key) else {
+                    return Err("RRSIGs expected for DNSKEY RRset".into());
+                };
+                let mut rrsigs = rrsigs.clone();
+                rrsigs.append(&mut rrsig_records);
+                iss.rrsigs.insert(key, rrsigs);
+            }
+        }
+
+        let key = (iss.origin.clone(), Rtype::ZONEMD);
+        if iss.new_data.contains_key(&key) {
+            return Err("Pass-through is not possible for zone input with ZONEMD".into());
+        }
 
         Ok(())
     }
@@ -2289,6 +2420,38 @@ impl WorkSpace {
         }
         Ok(())
     }
+
+    fn sign_pass_through(&mut self) -> Result<(), Error> {
+        // Clear key_tags and key_roll to trigger resigning when
+        // pass-through mode is turned off. Also clear keyset_state_modified
+        // to trigger a reload of the keyset state when pass-through is
+        // turned off.
+        if !self.state.key_tags.is_empty() {
+            self.state.key_tags = HashSet::new();
+            self.state.keyset_state_modified = Timestamp::from(0).into();
+            self.state_changed = true;
+        }
+        if self.state.key_roll.is_some() {
+            self.state.key_roll = None;
+            self.state_changed = true;
+        }
+
+        let mut iss = IncrementalSigningState::new(self)?;
+
+        let start = Instant::now();
+        load_signed_zone(&mut iss, &self.config.zonefile_in).unwrap();
+        if self.verbose {
+            println!("loading signed zone took {:?}", start.elapsed());
+        }
+
+        // Re-use the signed data.
+        load_signed_only(&mut iss);
+
+        self.load_pass_through_dnskey(&mut iss)?;
+
+        self.incremental_write_output(&iss)?;
+        Ok(())
+    }
 }
 
 fn remove_nsec_nsec3(iss: &mut IncrementalSigningState) {
@@ -2437,6 +2600,9 @@ struct SignerConfig {
     /// Maxmimum time to resign all records with new ZSKs or CSKs.
     key_roll_time: Duration,
 
+    #[serde(default)]
+    pass_through_mode: PassThroughMode,
+
     /// Fake time to use when signing.
     ///
     /// This is need for integration tests.
@@ -2469,6 +2635,22 @@ struct SignerState {
 
     /// Last time some signature were refreshed.
     last_signature_refresh: UnixTime,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, clap::ValueEnum)]
+enum PassThroughMode {
+    /// Pass-through is disabled.
+    #[default]
+    Off,
+
+    /// Copy the DNSKEY RRset plus signatures from keyset into an already
+    /// signed zone. The operator has to make sure that the DNSKEY RRset
+    /// contains the public key of the key that signed the zone.
+    CopyDnskeyRrset,
+
+    /// Add the DNSKEY signatures from keyset. This requires that the DNSKEY
+    /// RRset in the input zone is equal to the one from keyset.
+    MergeDnskeySignatures,
 }
 
 type RtypeSet = HashSet<Rtype>;
