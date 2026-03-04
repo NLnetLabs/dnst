@@ -1464,7 +1464,15 @@ impl SignZone {
                     // release a fixed version of ldns-signzone that strips
                     // NSEC(3)s.
                     //
+                    // Remove ZONEMD records at apex as well. We don't always
+                    // know the origin at this point. Just strip all ZONEMD
+                    // records as they are currently only defined for
+                    // use at the apex.
+                    //
                     // TODO: Support partial and re-signing.
+                    if matches!(record.rtype(), Rtype::ZONEMD) {
+                        continue;
+                    }
                     if !matches!(
                         record.rtype(),
                         Rtype::RRSIG | Rtype::NSEC | Rtype::NSEC3 | Rtype::NSEC3PARAM
