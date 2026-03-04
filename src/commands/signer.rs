@@ -1678,7 +1678,17 @@ impl WorkSpace {
                 }
 
                 let key = ((*owner).clone(), *rtype);
-                if *rtype == Rtype::NSEC3 {
+                if *rtype == Rtype::NSEC {
+                    let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
+                    let records = [record.clone()];
+                    sign_records(
+                        &records,
+                        &iss.keys,
+                        iss.inception,
+                        iss.expiration,
+                        &mut new_sigs,
+                    )?;
+                } else if *rtype == Rtype::NSEC3 {
                     let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                     let records = [record.clone()];
                     sign_records(
