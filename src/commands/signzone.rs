@@ -1466,12 +1466,21 @@ impl SignZone {
                     //
                     // Remove ZONEMD records at apex as well. We don't always
                     // know the origin at this point. Just strip all ZONEMD
-                    // records as they are currently only defined for
-                    // use at the apex.
+                    // records if we don't, strip ZONEMD records at apex
+                    // if we do know the origin.
                     //
                     // TODO: Support partial and re-signing.
                     if matches!(record.rtype(), Rtype::ZONEMD) {
-                        continue;
+                        if let Some(origin) = &self.origin {
+                            if *record.owner() == origin {
+                                // ZONEMD record at origin, skip.
+                                continue;
+                            }
+                            // Keep ZONEMD records that are not at origin.
+                        } else {
+                            // Origin is not known, skip all ZONEMD records.
+                            continue;
+                        }
                     }
                     if !matches!(
                         record.rtype(),
