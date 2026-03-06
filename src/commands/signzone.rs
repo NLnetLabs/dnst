@@ -1464,12 +1464,12 @@ impl SignZone {
                     // release a fixed version of ldns-signzone that strips
                     // NSEC(3)s.
                     //
+                    // TODO: Support partial and re-signing.
+                    //
                     // Remove ZONEMD records at apex as well. We don't always
                     // know the origin at this point. Just strip all ZONEMD
                     // records if we don't, strip ZONEMD records at apex
                     // if we do know the origin.
-                    //
-                    // TODO: Support partial and re-signing.
                     if matches!(record.rtype(), Rtype::ZONEMD) {
                         if let Some(origin) = &self.origin {
                             if *record.owner() == origin {
