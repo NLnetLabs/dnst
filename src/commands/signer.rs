@@ -1606,6 +1606,7 @@ impl WorkSpace {
                 let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
                 let records = [record.clone()];
                 sign_records(
+                    &iss.origin,
                     &records,
                     &iss.keys,
                     iss.inception,
@@ -1616,6 +1617,7 @@ impl WorkSpace {
                 let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                 let records = [record.clone()];
                 sign_records(
+                    &iss.origin,
                     &records,
                     &iss.keys,
                     iss.inception,
@@ -1625,6 +1627,7 @@ impl WorkSpace {
             } else {
                 let records = iss.new_data.get(&key).expect("records should exist");
                 sign_records(
+                    &iss.origin,
                     records,
                     &iss.keys,
                     iss.inception,
@@ -1682,6 +1685,7 @@ impl WorkSpace {
                     let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
                     let records = [record.clone()];
                     sign_records(
+                        &iss.origin,
                         &records,
                         &iss.keys,
                         iss.inception,
@@ -1692,6 +1696,7 @@ impl WorkSpace {
                     let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                     let records = [record.clone()];
                     sign_records(
+                        &iss.origin,
                         &records,
                         &iss.keys,
                         iss.inception,
@@ -1701,6 +1706,7 @@ impl WorkSpace {
                 } else {
                     let records = iss.new_data.get(&key).expect("records should exist");
                     sign_records(
+                        &iss.origin,
                         records,
                         &iss.keys,
                         iss.inception,
@@ -1759,6 +1765,7 @@ impl WorkSpace {
                 let record = iss.nsecs.get(&key.0).expect("NSEC record should exist");
                 let records = [record.clone()];
                 sign_records(
+                    &iss.origin,
                     &records,
                     &iss.keys,
                     iss.inception,
@@ -1769,6 +1776,7 @@ impl WorkSpace {
                 let record = iss.nsec3s.get(&key.0).expect("NSEC3 record should exist");
                 let records = [record.clone()];
                 sign_records(
+                    &iss.origin,
                     &records,
                     &iss.keys,
                     iss.inception,
@@ -1778,6 +1786,7 @@ impl WorkSpace {
             } else {
                 let records = iss.new_data.get(&key).expect("records should exist");
                 sign_records(
+                    &iss.origin,
                     records,
                     &iss.keys,
                     iss.inception,
@@ -1928,6 +1937,7 @@ impl WorkSpace {
 
                 let nsec3 = nsec3.clone();
                 sign_records(
+                    &iss.origin,
                     &[nsec3],
                     &iss.keys,
                     iss.inception,
@@ -1943,6 +1953,7 @@ impl WorkSpace {
 
                 let nsec = nsec.clone();
                 sign_records(
+                    &iss.origin,
                     &[nsec],
                     &iss.keys,
                     iss.inception,
@@ -2264,6 +2275,7 @@ impl WorkSpace {
         let key = (iss.origin.clone(), Rtype::ZONEMD);
         let mut new_sigs = vec![];
         sign_records(
+            &iss.origin,
             &zonemd_records,
             &iss.keys,
             iss.inception,
@@ -2497,6 +2509,7 @@ fn new_nsec_chain(iss: &mut IncrementalSigningState) -> Result<(), Error> {
         );
         iss.nsecs.insert(record.owner().clone(), record.clone());
         sign_records(
+            &iss.origin,
             &[record],
             &iss.keys,
             iss.inception,
@@ -2534,6 +2547,7 @@ fn new_nsec3_chain(iss: &mut IncrementalSigningState) -> Result<(), Error> {
 
     // Insert in both old and new data.
     sign_records(
+        &iss.origin,
         &[record],
         &iss.keys,
         iss.inception,
@@ -2552,6 +2566,7 @@ fn new_nsec3_chain(iss: &mut IncrementalSigningState) -> Result<(), Error> {
         );
         iss.nsec3s.insert(record.owner().clone(), record.clone());
         sign_records(
+            &iss.origin,
             &[record],
             &iss.keys,
             iss.inception,
@@ -2981,9 +2996,11 @@ fn initial_diffs(iss: &mut IncrementalSigningState) -> Result<(), Error> {
         let key = (new_rrset[0].owner().clone(), new_rrset[0].rtype());
         if let Some(mut old_rrset) = iss.old_data.remove(&key) {
             let rtype = new_rrset[0].rtype();
-            if rtype == Rtype::DNSKEY || rtype == Rtype::CDS || rtype == Rtype::CDNSKEY {
-                // These types are signed by the key manager. No need to
-                // check for changes.
+            if (rtype == Rtype::DNSKEY || rtype == Rtype::CDS || rtype == Rtype::CDNSKEY)
+                && *new_rrset[0].owner() == iss.origin
+            {
+                // At apex, these types are signed by the key manager. No
+                // need to check for changes.
                 continue;
             }
             old_rrset.sort_by(|a, b| a.as_ref().data().canonical_cmp(b.as_ref().data()));
@@ -2991,6 +3008,7 @@ fn initial_diffs(iss: &mut IncrementalSigningState) -> Result<(), Error> {
 
             if *old_rrset != *new_rrset && iss.rrsigs.remove(&key).is_some() {
                 sign_records(
+                    &iss.origin,
                     new_rrset,
                     &iss.keys,
                     iss.inception,
@@ -4159,6 +4177,7 @@ fn sign_rtype_set(
             panic!("Expected something for {name}/{rtype}");
         };
         sign_records(
+            &iss.origin,
             records,
             &iss.keys,
             iss.inception,
@@ -4174,6 +4193,7 @@ fn sign_rtype_set(
 }
 
 fn sign_records(
+    origin: &Name<Bytes>,
     records: &[Zrd],
     keys: &[SigningKey<Bytes, KeyPair>],
     inception: Timestamp,
@@ -4181,7 +4201,9 @@ fn sign_records(
     new_sigs: &mut Vec<(Vec<Zrd>, Rtype)>,
 ) -> Result<(), Error> {
     let rtype = records[0].rtype();
-    if rtype == Rtype::DNSKEY || rtype == Rtype::CDS || rtype == Rtype::CDNSKEY {
+    if (rtype == Rtype::DNSKEY || rtype == Rtype::CDS || rtype == Rtype::CDNSKEY)
+        && records[0].owner() == origin
+    {
         // These records get signed with the KSK(s). Don't touch
         // the signatures.
         return Ok(());
