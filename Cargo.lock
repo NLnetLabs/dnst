@@ -358,7 +358,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#f27a0255ddc0e2098b4c17aa310ea4253743507a"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#622d48f82a6272c96282964aa36c1af3d32d776e"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -404,7 +404,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.11.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#f27a0255ddc0e2098b4c17aa310ea4253743507a"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=main#622d48f82a6272c96282964aa36c1af3d32d776e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1685,7 +1685,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
 dependencies = [
  "fastrand",
- "getrandom 0.4.1",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
