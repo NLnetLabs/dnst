@@ -8,6 +8,24 @@ coming soon.
 
 It depends on OpenSSL for its cryptography related functions.
 
+**dnst** supports two modes of operation:
+
+* dnst mode: the default.
+* ldns emulation mode: activated by invoking dnst using the name of a supported ldns example, e.g. ldns-keygen.
+
+**dnst** currently offers drop-in replacement of the following ldns examples:
+
+* key2ds
+* keygen
+* nsec3hash
+* signzone
+* notify
+* update
+
+In ldns emulation mode, the supported ldns examples are very closely emulated
+by dnst, though there are some exceptions. Differences are noted in the
+relevant man pages of individual commands.
+
 .. toctree::
    :maxdepth: 2
    :hidden:
