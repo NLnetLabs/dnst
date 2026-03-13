@@ -34,7 +34,7 @@ See https://dnst.docs.nlnetlabs.nl/.
 
 ## Compatibility with supported LDNS examples
 
-ldns mode allows for one-to-one replacement of the ldns example utilities by dnst, without having to change existing scripts. In this mode, the supported ldns examples are very closely emulated by dnst, though there are some exceptions. Please see the documentation for details. 
+ldns mode allows for one-to-one replacement of the ldns example utilities by dnst, without having to change existing scripts. In this mode, the supported ldns examples are very closely emulated by dnst, though there are some exceptions. Please see the documentation for details (differences are noted in the relevant man page).
 
 Because of a radically different achitechture and programming language, please note that the domain library is not intended as a drop-in replacement for the ldns library.
 
