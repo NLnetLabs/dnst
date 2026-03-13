@@ -370,3 +370,15 @@ a specific version, if needed.
        .. code-block:: text
  
           sudo docker run <your usual arguments> nlnetlabs/dnst:v0.1.1-rc1
+
+Replacing LDNS with dnst
+------------------------
+
+To replace the installed ldns examples with dnst in ldns emulation mode, we
+provide the ``dnst-ldnsutils`` package. When installing this package, ``dnst``
+will automatically get installed alongside it, existing ``ldns-utils`` will be
+uninstalled, and supported ldns examples get replaced with dnst.
+
+To install ``dnst-ldnsutils``, simply follow the steps `above <Binary
+Packages_>`_ to install ``dnst``, but install ``dnst-ldnsutils`` (e.g. ``sudo
+apt install dnst-ldnsutils``) instead of ``dnst``.
