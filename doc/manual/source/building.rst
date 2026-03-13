@@ -94,7 +94,7 @@ specific branch, include the ``--branch`` option as well:
 
 .. code-block:: text
 
-    cargo install --git https://github.com/NLnetLabs/dnst.git --branch main
+    cargo install dnst --bin dnst --git https://github.com/NLnetLabs/dnst.git --branch main
     
 .. Seealso:: For more installation options refer to the `Cargo book
              <https://doc.rust-lang.org/cargo/commands/cargo-install.html#install-options>`_.
