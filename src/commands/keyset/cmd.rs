@@ -1873,6 +1873,15 @@ pub struct NameserverConnectionDetails {
     pub tsig_key_name: Option<String>,
 }
 
+impl From<&IpAddr> for NameserverConnectionDetails {
+    fn from(ip: &IpAddr) -> Self {
+        Self {
+            addr: SocketAddr::new(*ip, 53),
+            tsig_key_name: None,
+        }
+    }
+}
+
 /// Persistent state for the keyset command.
 #[derive(Deserialize, Serialize)]
 pub struct KeySetState {
@@ -5210,10 +5219,7 @@ async fn check_zone(
         mname_nameservers = addresses_for_name(&resolver, mname)
             .await?
             .iter()
-            .map(|ip| NameserverConnectionDetails {
-                addr: SocketAddr::new(*ip, 53),
-                tsig_key_name: None,
-            })
+            .map(Into::into)
             .collect();
         &mname_nameservers
     };
