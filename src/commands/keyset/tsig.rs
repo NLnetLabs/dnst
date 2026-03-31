@@ -57,7 +57,7 @@ impl TsigKeyStore {
     pub fn new() -> Self {
         Self {
             version: "v1".to_string(),
-            map: HashMap::new()
+            map: HashMap::new(),
         }
     }
 
