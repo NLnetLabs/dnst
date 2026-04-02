@@ -709,7 +709,7 @@ impl Keyset {
                 cds_rrset: Vec::new(),
                 ns_rrset: Vec::new(),
                 apex_remove: (*APEX_REMOVE).into(),
-                apex_records: Vec::new(),
+                apex_extra: Vec::new(),
                 cron_next: None,
                 internal: HashMap::new(),
 
@@ -1828,33 +1828,33 @@ pub struct KeySetState {
     pub keyset: KeySet,
 
     /// DNSKEY RRset plus signatures to include in the signed zone. This
-    /// field is obsolete. Use apex_remove and apex_records.
+    /// field is obsolete. Use apex_remove and apex_extra.
     pub dnskey_rrset: Vec<String>,
 
     /// DS records to add to the parent zone.
     pub ds_rrset: Vec<String>,
 
     /// CDS and CDNSKEY RRsets plus signatures to include in the signed zone.
-    /// This field is obsolete. Use apex_remove and apex_records.
+    /// This field is obsolete. Use apex_remove and apex_extra.
     pub cds_rrset: Vec<String>,
 
     /// Place holder for NS records. Maybe the four _rrset fields should be
     /// combined. Though for extensibility there needs to be a field that
     /// informs the signer which Rtypes need special treatment.
-    /// This field is obsolete. Use apex_remove and apex_records.
+    /// This field is obsolete. Use apex_remove and apex_extra.
     pub ns_rrset: Vec<String>,
 
     /// These are the apex RRtypes that are controlled by keyset. A signer
     /// should remove all records for these types from the apex of
-    /// the zone before adding the records in the apex_records field.
+    /// the zone before adding the records in the apex_extra field.
     #[serde(default)]
     pub apex_remove: HashSet<Rtype>,
 
-    /// Records plus signatures to include in the signed zone. This field
+    /// Records plus signatures to add to the signed zone. This field
     /// replaces dnskey_rrset, cds_rrset, ns_rrset. In the future the old
     /// fields will be removed.
     #[serde(default)]
-    pub apex_records: Vec<String>,
+    pub apex_extra: Vec<String>,
 
     /// Next time to call the cron subcommand.
     cron_next: Option<UnixTime>,
@@ -4097,8 +4097,8 @@ impl WorkSpace {
         // Always set apex_remove.
         self.state.apex_remove = (*APEX_REMOVE).into();
 
-        // Update apex_records from the old fields.
-        self.state.apex_records = [
+        // Update apex_extra from the old fields.
+        self.state.apex_extra = [
             self.state.dnskey_rrset.clone(),
             self.state.cds_rrset.clone(),
             self.state.ns_rrset.clone(),
