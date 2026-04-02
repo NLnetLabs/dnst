@@ -89,6 +89,9 @@ const DEFAULT_TTL: Ttl = Ttl::from_secs(3600);
 /// stale.
 const DEFAULT_AUTOREMOVE_DELAY: Duration = Duration::from_secs(7 * 24 * 3600);
 
+/// These are the apex RRtypes that keyset controls.
+const APEX_REMOVE: &[Rtype; 3] = &[Rtype::DNSKEY, Rtype::CDS, Rtype::CDNSKEY];
+
 // Types to simplify some HashSet types.
 /// Type for a Name that uses a Vec.
 type NameVecU8 = Name<Vec<u8>>;
@@ -705,6 +708,8 @@ impl Keyset {
                 ds_rrset: Vec::new(),
                 cds_rrset: Vec::new(),
                 ns_rrset: Vec::new(),
+                apex_remove: (*APEX_REMOVE).into(),
+                apex_records: Vec::new(),
                 cron_next: None,
                 internal: HashMap::new(),
 
@@ -755,7 +760,7 @@ impl Keyset {
                 )
             })?;
 
-            let ws = WorkSpace {
+            let mut ws = WorkSpace {
                 config: ksc,
                 state: kss,
                 config_changed: false,
@@ -1822,19 +1827,34 @@ pub struct KeySetState {
     /// Domain KeySet state.
     pub keyset: KeySet,
 
-    /// DNSKEY RRset plus signatures to include in the signed zone.
+    /// DNSKEY RRset plus signatures to include in the signed zone. This
+    /// field is obsolete. Use apex_remove and apex_records.
     pub dnskey_rrset: Vec<String>,
 
     /// DS records to add to the parent zone.
     pub ds_rrset: Vec<String>,
 
     /// CDS and CDNSKEY RRsets plus signatures to include in the signed zone.
+    /// This field is obsolete. Use apex_remove and apex_records.
     pub cds_rrset: Vec<String>,
 
     /// Place holder for NS records. Maybe the four _rrset fields should be
     /// combined. Though for extensibility there needs to be a field that
     /// informs the signer which Rtypes need special treatment.
+    /// This field is obsolete. Use apex_remove and apex_records.
     pub ns_rrset: Vec<String>,
+
+    /// These are the apex RRtypes that are controlled by keyset. A signer
+    /// should remove all records for these types from the apex of
+    /// the zone before adding the records in the apex_records field.
+    #[serde(default)]
+    pub apex_remove: HashSet<Rtype>,
+
+    /// Records plus signatures to include in the signed zone. This field
+    /// replaces dnskey_rrset, cds_rrset, ns_rrset. In the future the old
+    /// fields will be removed.
+    #[serde(default)]
+    pub apex_records: Vec<String>,
 
     /// Next time to call the cron subcommand.
     cron_next: Option<UnixTime>,
@@ -4073,7 +4093,20 @@ impl WorkSpace {
     }
 
     /// Write state to a file.
-    fn write_state(&self) -> Result<(), Error> {
+    fn write_state(&mut self) -> Result<(), Error> {
+        // Always set apex_remove.
+        self.state.apex_remove = (*APEX_REMOVE).into();
+
+        // Update apex_records from the old fields.
+        self.state.apex_records = [
+            self.state.dnskey_rrset.clone(),
+            self.state.cds_rrset.clone(),
+            self.state.ns_rrset.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
         let json = serde_json::to_string_pretty(&self.state).expect("should not fail");
         Self::write_to_new_and_rename(&json, &self.config.state_file)
     }
