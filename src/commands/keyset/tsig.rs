@@ -7,25 +7,25 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub enum AlgSpec {
     /// SHA-1.
-    Sha1,
+    HmacSha1,
 
     /// SHA-256.
-    Sha256,
+    HmacSha256,
 
     /// SHA-384,
-    Sha384,
+    HmacSha384,
 
     /// SHA-512.
-    Sha512,
+    HmacSha512,
 }
 
 impl From<AlgSpec> for domain::tsig::Algorithm {
     fn from(alg: AlgSpec) -> Self {
         match alg {
-            AlgSpec::Sha1 => domain::tsig::Algorithm::Sha1,
-            AlgSpec::Sha256 => domain::tsig::Algorithm::Sha256,
-            AlgSpec::Sha384 => domain::tsig::Algorithm::Sha384,
-            AlgSpec::Sha512 => domain::tsig::Algorithm::Sha512,
+            AlgSpec::HmacSha1 => domain::tsig::Algorithm::Sha1,
+            AlgSpec::HmacSha256 => domain::tsig::Algorithm::Sha256,
+            AlgSpec::HmacSha384 => domain::tsig::Algorithm::Sha384,
+            AlgSpec::HmacSha512 => domain::tsig::Algorithm::Sha512,
         }
     }
 }
@@ -38,7 +38,30 @@ pub struct KeySpec {
     pub alg: AlgSpec,
 
     /// The private key material.
+    #[serde(with = "tsig_base64")]
     pub data: Box<[u8]>,
+}
+
+mod tsig_base64 {
+    use domain::utils::base64;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        base64::encode_string(data).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Box<[u8]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let data = base64::decode::<Vec<u8>>(&s)
+            .map_err(serde::de::Error::custom)?;
+        Ok(data.into())
+    }
 }
 
 pub type TsigKeyName = Name<octseq::Array<255>>;
