@@ -1778,6 +1778,7 @@ struct KeySetConfig {
 
     /// Optional nameservers to request XFR from instead of the SOA MNAME
     /// defined nameserver.
+    #[serde(default)]
     nameservers: HashSet<NameserverConnectionDetails>,
 }
 
