@@ -2,7 +2,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::missing_docs_in_private_items)]
 
-use crate::commands::keyset::tsig::TsigKeyStore;
+use crate::commands::keyset::tsig::{TsigKeyName, TsigKeyStore};
 use crate::env::Env;
 use crate::error::Error;
 use crate::util;
@@ -310,6 +310,7 @@ enum GetCommands {
 
 /// The fields that can be changed with a set command.
 #[derive(Clone, Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum SetCommands {
     /// Set the use_csk config variable.
     UseCsk {
@@ -1875,7 +1876,7 @@ pub struct NameserverConnectionDetails {
     pub addr: SocketAddr,
 
     /// Optional TSIG key to use when communicating with this nameserver.
-    pub tsig_key_name: Option<String>,
+    pub tsig_key_name: Option<TsigKeyName>,
 }
 
 impl From<&IpAddr> for NameserverConnectionDetails {
@@ -1901,7 +1902,15 @@ impl TryFrom<&str> for NameserverConnectionDetails {
         let addr = addr_port
             .parse()
             .map_err(|e| format!("unable to parse address {addr_port}: {e}"))?;
-        let tsig_key_name = iter.next().map(|v| v.to_string());
+
+        let tsig_key_name = match iter.next() {
+            Some(name) => Some(
+                Name::from_str(name)
+                    .map_err(|err| format!("Invalid TSIG key name '{name}': {err}"))?,
+            ),
+            None => None,
+        };
+
         Ok(Self {
             addr,
             tsig_key_name,
@@ -2253,14 +2262,41 @@ impl WorkSpace {
                 self.config.tsig_store_path = opt_path;
             }
             SetCommands::PublicationNameservers { addrs } => {
-                self.config.nameservers = HashSet::new();
+                let mut nameservers = HashSet::new();
+
                 for a in addrs {
                     // When adding nameservers, check that referenced TSIG
                     // keys are in the TSIG store.
-                    self.config
-                        .nameservers
-                        .insert(NameserverConnectionDetails::try_from(a.as_str())?);
+                    nameservers.insert(NameserverConnectionDetails::try_from(a.as_str())?);
                 }
+
+                if nameservers.iter().any(|ns| ns.tsig_key_name.is_some()) {
+                    let Some(key_store_path) = &self.config.tsig_store_path else {
+                        return Err("keyset set tsig-store-path MUST be called first".into());
+                    };
+
+                    let key_store_file = file_with_write_lock(key_store_path)?;
+                    let key_store: TsigKeyStore = serde_json::from_reader(&key_store_file)
+                        .map_err(|e| {
+                            format!("error loading {}: {e}\n", key_store_path.display())
+                        })?;
+
+                    for tsig_key_name in nameservers
+                        .iter()
+                        .filter_map(|ns| ns.tsig_key_name.as_ref())
+                    {
+                        // Verify that the key exists in the key store.
+                        if key_store.get(tsig_key_name).is_none() {
+                            return Err(format!(
+                                "No TSIG key with name '{tsig_key_name}' found in store '{}'",
+                                key_store_path.display()
+                            )
+                            .into());
+                        }
+                    }
+                }
+
+                self.config.nameservers = nameservers;
             }
         }
         self.config_changed = true;
@@ -5274,18 +5310,17 @@ async fn check_zone(
         };
 
         // Prepare the named TSIG key for use, if any.
-        let tsig_key = ns.tsig_key_name.as_ref().and_then(|name| {
-            match Name::from_str(name) {
-                Ok(name) => {
-                    tsig_store.map.get(&name).and_then(|key| {
-                        domain::tsig::Key::new(key.alg.into(), &key.data, name, None, None)
-                            .inspect_err(|_err| { /* TODO: Log error */ })
-                            .ok()
-                    })
+        let tsig_key = if let Some(name) = ns.tsig_key_name.as_ref() {
+            match tsig_store.get(name) {
+                Some(key) => Some(key),
+                None => {
+                    warn!("Unknown TSIG key name '{name}'");
+                    continue;
                 }
-                Err(_err) => None, // TODO: Log error
             }
-        });
+        } else {
+            None
+        };
 
         // If we have a TSIG key, setup a TSIG capable transport, otherwise
         // use a normal transport. Use Multi types because only those support
