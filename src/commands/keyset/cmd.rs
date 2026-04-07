@@ -171,6 +171,10 @@ type OptDuration = Option<Duration>;
 /// treats Option<T> special.
 type OptUnixTime = Option<UnixTime>;
 
+/// Type for an optional path name. A separate type is needed because CLAP
+/// treats Option<T> special.
+type OptPathBuf = Option<PathBuf>;
+
 /// The subcommands of the keyset utility.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Subcommand)]
@@ -497,6 +501,26 @@ enum SetCommands {
         args: Vec<String>,
     },
 
+    /// Set the location of the TSIG store to use to retrieve TSIG secrets
+    /// when needed.
+    TsigStorePath {
+        /// The path to the TSIG store file.
+        #[arg(value_parser = parse_opt_pathbuf)]
+        opt_path: OptPathBuf,
+    },
+
+    /// Specify a nameserver to request XFR from. If not specified the
+    /// SOA MNAME nameserver will be used.
+    PublicationNameservers {
+        /// The address and port number of the nameserver.
+        /// Optionally followed by the TSIG key name to use. The TSIG key
+        /// name is preceded by a caret (^) character.
+        ///
+        /// TsigStorePath must also have been provided and the specified
+        /// store must contain a key by this name.
+        addrs: Vec<String>,
+    },
+
     /// Set the fake time to use when signing and other time related
     /// operations.
     FakeTime {
@@ -505,25 +529,6 @@ enum SetCommands {
         opt_unixtime: OptUnixTime,
     },
 
-    /// Set the location of the TSIG store to use to retrieve TSIG secrets
-    /// when needed.
-    TsigStorePath {
-        /// The path to the TSIG store file.
-        path: PathBuf,
-    },
-
-    /// Specify a nameserver to request XFR from. If not specified the
-    /// SOA MNAME nameserver will be used.
-    PublicationNameserver {
-        /// The address and port number of the nameserver.
-        addr: SocketAddr,
-
-        /// Optional TSIG key to use when communicating with the nameserver,
-        ///
-        /// TsigStorePath must also have been provided and the specified
-        /// store must contain a key by this name.
-        tsig_key_name: Option<String>,
-    },
 }
 
 /// The various subcommands of a key roll command.
@@ -1882,6 +1887,27 @@ impl From<&IpAddr> for NameserverConnectionDetails {
     }
 }
 
+impl TryFrom<&str> for NameserverConnectionDetails {
+    type Error = Error;
+
+    // Note: this only accepts IP addresses, not hostnames. In addition,
+    // a port is required, there is no default port. TODO: allow hostnames
+    // and allow the port to be optional.
+    fn try_from(s: &str) -> Result<Self, Error> {
+        let mut iter = s.split('!');
+        let Some(addr_port) = iter.next() else {
+            return Err("Address expected".into());
+        };
+        let addr = addr_port.parse()
+            .map_err(|e| format!("unable to parse address {addr_port}: {e}"))?;
+        let tsig_key_name = iter.next().map(|v| v.to_string());
+        Ok(Self {
+            addr,
+            tsig_key_name,
+        })
+    }
+}
+
 /// Persistent state for the keyset command.
 #[derive(Deserialize, Serialize)]
 pub struct KeySetState {
@@ -2220,17 +2246,20 @@ impl WorkSpace {
             SetCommands::FakeTime { opt_unixtime } => {
                 self.config.faketime = opt_unixtime;
             }
-            SetCommands::TsigStorePath { path } => {
-                self.config.tsig_store_path = Some(path);
+            SetCommands::TsigStorePath { opt_path } => {
+		// TODO: when removing the TSIG store, check that there are
+		// no publication nameservers that reference the store.
+                self.config.tsig_store_path = opt_path;
             }
-            SetCommands::PublicationNameserver {
-                addr,
-                tsig_key_name,
-            } => {
-                self.config.nameservers.insert(NameserverConnectionDetails {
-                    addr,
-                    tsig_key_name,
-                });
+            SetCommands::PublicationNameservers { addrs } => {
+                self.config.nameservers = HashSet::new();
+                for a in addrs {
+		    // When adding nameservers, check that referenced TSIG
+		    // keys are in the TSIG store.
+                    self.config
+                        .nameservers
+                        .insert(NameserverConnectionDetails::try_from(a.as_str())?);
+                }
             }
         }
         self.config_changed = true;
@@ -4325,6 +4354,16 @@ fn parse_opt_unixtime(value: &str) -> Result<Option<UnixTime>, Error> {
     }
     let unixtime = parse_unixtime(value)?;
     Ok(Some(unixtime))
+}
+
+/// Parse an optional PathBuf from a string but also allow 'off' to signal
+/// no PathBuf.
+fn parse_opt_pathbuf(value: &str) -> Result<Option<PathBuf>, Error> {
+    if value == "off" {
+        return Ok(None);
+    }
+    let path_buf = PathBuf::from(value);
+    Ok(Some(path_buf))
 }
 
 /// Check whether signatures need to be renewed.
