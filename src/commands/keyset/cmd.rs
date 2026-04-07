@@ -528,7 +528,6 @@ enum SetCommands {
         #[arg(value_parser = parse_opt_unixtime)]
         opt_unixtime: OptUnixTime,
     },
-
 }
 
 /// The various subcommands of a key roll command.
@@ -1898,7 +1897,8 @@ impl TryFrom<&str> for NameserverConnectionDetails {
         let Some(addr_port) = iter.next() else {
             return Err("Address expected".into());
         };
-        let addr = addr_port.parse()
+        let addr = addr_port
+            .parse()
             .map_err(|e| format!("unable to parse address {addr_port}: {e}"))?;
         let tsig_key_name = iter.next().map(|v| v.to_string());
         Ok(Self {
@@ -2247,15 +2247,15 @@ impl WorkSpace {
                 self.config.faketime = opt_unixtime;
             }
             SetCommands::TsigStorePath { opt_path } => {
-		// TODO: when removing the TSIG store, check that there are
-		// no publication nameservers that reference the store.
+                // TODO: when removing the TSIG store, check that there are
+                // no publication nameservers that reference the store.
                 self.config.tsig_store_path = opt_path;
             }
             SetCommands::PublicationNameservers { addrs } => {
                 self.config.nameservers = HashSet::new();
                 for a in addrs {
-		    // When adding nameservers, check that referenced TSIG
-		    // keys are in the TSIG store.
+                    // When adding nameservers, check that referenced TSIG
+                    // keys are in the TSIG store.
                     self.config
                         .nameservers
                         .insert(NameserverConnectionDetails::try_from(a.as_str())?);
