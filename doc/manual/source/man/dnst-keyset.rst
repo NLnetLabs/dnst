@@ -789,12 +789,12 @@ The keyset subcommand provides the following commands:
 
     Set the path to a TSIG key store file to use.
 
-    Keys defined in the store file must use one of the following algorithms:
+    Keys defined in the store file must use one of the following algorithms\:
       hmac-sha1, hmac-sha256, hmac-sha384 or hmac-sha512
 
-    Note: Currently there is no way to create this file using ``dnst
-    keyset``. The file is in JSON format and defines zero or more TSIG keys
-    as entries in a map. The example below defines a single TSIG key with name
+    Currently there is no way to create this file using ``dnst keyset``.
+    The file is in JSON format and defines zero or more TSIG keys as
+    entries in a map. The example below defines a single TSIG key with name
     ``tsig-zonedata-ch-public-21-03`` using algorithm ``hmac-sha512`` with a
     base64 encoded secret.
 
