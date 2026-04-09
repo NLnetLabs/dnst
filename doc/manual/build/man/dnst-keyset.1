@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Mar 05, 2026" "0.2.0-alpha1" "dnst"
+.TH "DNST-KEYSET" "1" "Apr 09, 2026" "0.2.0-alpha1" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -216,8 +216,9 @@ For the \fBReportDnskeyPropagated\fP and \fBReportDsPropagated\fP actions, each 
 the queried to see if the DNSKEY RRset or DS RRset match
 the KSKs.
 The \fBReportRrsigPropagated\fP action is more complex.
-First the entire zone is transferred from the primary nameserver listed in the
-SOA record.
+First the entire zone is transferred from the nameservers specified via
+\fBset publication\-nameservers\fP, or if not set form the primary nameserver
+listed in the SOA record.
 Then all relevant signatures are checked if they have the expected key tags.
 The maximum TTL in the zone is recorded to be reported.
 Finally, all addresses of listed nameservers are checked to see if they
@@ -805,6 +806,32 @@ Set a command to to run when the DS records in the parent zone need
 to be updated.
 This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
+.IP \(bu 2
+tsig\-store\-path
+.sp
+Set the path to a TSIG key store file to use.
+.INDENT 2.0
+.TP
+.B Keys defined in the store file must use one of the following algorithms:
+hmac\-sha1, hmac\-sha256, hmac\-sha384 or hmac\-sha512
+.UNINDENT
+.sp
+Note: Currently there is no way to create this file using \fBdnst
+keyset\fP\&. The file is in JSON format and defines zero or more TSIG keys
+as entries in a map. The example below defines a single TSIG key with name
+\fBtsig\-zonedata\-ch\-public\-21\-03\fP using algorithm \fBhmac\-sha512\fP with a
+base64 encoded secret.
+.IP \(bu 2
+publication\-nameservers
+.sp
+Set the nameservers to transfer from when checking a zone.
+.sp
+If no nameserver values are specified the default behaviour of querying
+the primary nameserver defined in the SOA record will be used.
+.sp
+Nameservers should be specified as space separated
+arguments, each nameserver being one argument in the form
+\fB<IP_ADDR>[:<PORT>][^<TSIG_KEY_NAME]\fP\&.
 .IP \(bu 2
 fake\-time
 .sp

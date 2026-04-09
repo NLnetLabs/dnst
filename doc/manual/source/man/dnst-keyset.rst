@@ -200,8 +200,9 @@ For the ``ReportDnskeyPropagated`` and ``ReportDsPropagated`` actions, each addr
 the queried to see if the DNSKEY RRset or DS RRset match
 the KSKs.
 The ``ReportRrsigPropagated`` action is more complex.
-First the entire zone is transferred from the primary nameserver listed in the
-SOA record.
+First the entire zone is transferred from the nameservers specified via
+``set publication-nameservers``, or if not set form the primary nameserver
+listed in the SOA record.
 Then all relevant signatures are checked if they have the expected key tags.
 The maximum TTL in the zone is recorded to be reported.
 Finally, all addresses of listed nameservers are checked to see if they
@@ -785,6 +786,41 @@ The keyset subcommand provides the following commands:
     to be updated.
     This command can, for example, alert the operator or use an API provided
     by the parent zone to update the DS records automatically.
+
+  * tsig-store-path
+
+    Set the path to a TSIG key store file to use.
+
+    Keys defined in the store file must use one of the following algorithms:
+      hmac-sha1, hmac-sha256, hmac-sha384 or hmac-sha512
+
+    Note: Currently there is no way to create this file using ``dnst
+    keyset``. The file is in JSON format and defines zero or more TSIG keys
+    as entries in a map. The example below defines a single TSIG key with name
+    ``tsig-zonedata-ch-public-21-03`` using algorithm ``hmac-sha512`` with a
+    base64 encoded secret.
+
+    .. code-block:: json
+       {
+         "version": "v1",
+         "map": {
+           "tsig-zonedata-ch-public-21-01": {
+             "alg": "hmac-sha512",
+             "data": "stZw...iJ3Q=="
+           }
+         }
+       }
+
+  * publication-nameservers
+
+    Set the nameservers to transfer from when checking a zone.
+
+    If no nameserver values are specified the default behaviour of querying
+    the primary nameserver defined in the SOA record will be used.
+
+    Nameservers should be specified as space separated
+    arguments, each nameserver being one argument in the form
+    ``<IP_ADDR>[:<PORT>][^<TSIG_KEY_NAME]``.
 
   * fake-time
 
