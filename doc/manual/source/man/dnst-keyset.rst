@@ -9,9 +9,9 @@ Synopsis
 Description
 -----------
 
-The **keyset** subcommand manages a set of DNSSEC (`RFC 9364`_) signing keys.
+The **keyset** subcommand manages a set of DNSSEC (`RFC 9364`_) signing keys
+and generates a signed DNSKEY RRset.
 This subcommand is meant to be part of a DNSSEC signing solution.
-The **keyset** subcommand manages signing keys and generates a signed DNSKEY RRset.
 A separate zone signer (not part of dnst) is expected to use the zone
 signing keys in the key set,
 sign the zone and include the DNSKEY RRset (as well as the CDS and CDNSKEY
@@ -35,11 +35,9 @@ key generation (which algorithm to use, whether to use a CSK and a
 KSK and a ZSK), parameters for key rolls (whether key rolls are automatic
 or not), the lifetimes of keys and signatures, etc.
 The keyset subcommand also maintains state file for each zone.
-The state file lists the keys in the key set, the current key roll state,
-and has the DNSKEY, CDS, and CDNSKEY RRsets.
 
 In addition to the configuration and state files, keyset maintains files for
-keys that are stored on in the filesystem.
+keys that are stored in the filesystem.
 Additionally, keyset can optionally maintain a credentials file that
 contains user names and passwords for the KMIP connections.
 
