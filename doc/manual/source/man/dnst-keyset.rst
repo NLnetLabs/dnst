@@ -789,8 +789,12 @@ The keyset subcommand provides the following commands:
 
     Set the path to a TSIG key store file to use.
 
-    Keys defined in the store file must use one of the following algorithms\:
-      hmac-sha1, hmac-sha256, hmac-sha384 or hmac-sha512
+    Keys defined in the store file must use one of the following algorithms:
+
+      - hmac-sha1
+      - hmac-sha256
+      - hmac-sha384
+      - hmac-sha512
 
     Currently there is no way to create this file using ``dnst keyset``.
     The file is in JSON format and defines zero or more TSIG keys as
@@ -818,8 +822,9 @@ The keyset subcommand provides the following commands:
     the primary nameserver defined in the SOA record will be used.
 
     Nameservers should be specified as space separated
-    arguments, each nameserver being one argument in the form
-    ``<IP_ADDR>:<PORT>[^<TSIG_KEY_NAME]``.
+    arguments, each nameserver being one argument in the form:
+    
+      <IP_ADDR>:<PORT>[^<TSIG_KEY_NAME>]
 
   * fake-time
 

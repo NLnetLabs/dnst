@@ -808,10 +808,21 @@ by the parent zone to update the DS records automatically.
 tsig\-store\-path
 .sp
 Set the path to a TSIG key store file to use.
+.sp
+Keys defined in the store file must use one of the following algorithms:
 .INDENT 2.0
-.TP
-.B Keys defined in the store file must use one of the following algorithms:
-hmac\-sha1, hmac\-sha256, hmac\-sha384 or hmac\-sha512
+.INDENT 3.5
+.INDENT 0.0
+.IP \(bu 2
+hmac\-sha1
+.IP \(bu 2
+hmac\-sha256
+.IP \(bu 2
+hmac\-sha384
+.IP \(bu 2
+hmac\-sha512
+.UNINDENT
+.UNINDENT
 .UNINDENT
 .sp
 Currently there is no way to create this file using \fBdnst keyset\fP\&.
@@ -844,8 +855,12 @@ If no nameserver values are specified the default behaviour of querying
 the primary nameserver defined in the SOA record will be used.
 .sp
 Nameservers should be specified as space separated
-arguments, each nameserver being one argument in the form
-\fB<IP_ADDR>:<PORT>[^<TSIG_KEY_NAME]\fP\&.
+arguments, each nameserver being one argument in the form:
+.INDENT 2.0
+.INDENT 3.5
+<IP_ADDR>:<PORT>[^<TSIG_KEY_NAME>]
+.UNINDENT
+.UNINDENT
 .IP \(bu 2
 fake\-time
 .sp
