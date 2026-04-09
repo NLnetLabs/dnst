@@ -1895,7 +1895,7 @@ impl TryFrom<&str> for NameserverConnectionDetails {
     // a port is required, there is no default port. TODO: allow hostnames
     // and allow the port to be optional.
     fn try_from(s: &str) -> Result<Self, Error> {
-        let mut iter = s.split('!');
+        let mut iter = s.split('^');
         let Some(addr_port) = iter.next() else {
             return Err("Address expected".into());
         };
