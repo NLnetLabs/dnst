@@ -819,7 +819,7 @@ The keyset subcommand provides the following commands:
 
     Nameservers should be specified as space separated
     arguments, each nameserver being one argument in the form
-    ``<IP_ADDR>[:<PORT>][^<TSIG_KEY_NAME]``.
+    ``<IP_ADDR>:<PORT>[^<TSIG_KEY_NAME]``.
 
   * fake-time
 
