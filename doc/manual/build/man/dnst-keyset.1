@@ -819,6 +819,22 @@ keyset\fP\&. The file is in JSON format and defines zero or more TSIG keys
 as entries in a map. The example below defines a single TSIG key with name
 \fBtsig\-zonedata\-ch\-public\-21\-03\fP using algorithm \fBhmac\-sha512\fP with a
 base64 encoded secret.
+.INDENT 2.0
+.INDENT 3.5
+.sp
+.EX
+{
+  \(dqversion\(dq: \(dqv1\(dq,
+  \(dqmap\(dq: {
+    \(dqtsig\-zonedata\-ch\-public\-21\-01\(dq: {
+      \(dqalg\(dq: \(dqhmac\-sha512\(dq,
+      \(dqdata\(dq: \(dqstZw...iJ3Q==\(dq
+    }
+  }
+}
+.EE
+.UNINDENT
+.UNINDENT
 .IP \(bu 2
 publication\-nameservers
 .sp

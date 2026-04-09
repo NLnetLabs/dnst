@@ -799,6 +799,7 @@ The keyset subcommand provides the following commands:
     base64 encoded secret.
 
     .. code-block:: json
+
        {
          "version": "v1",
          "map": {
