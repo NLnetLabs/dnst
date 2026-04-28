@@ -416,6 +416,19 @@ dockers_v2:
 # https://goreleaser.com/customization/announce/
 # announce:
 
+# TODO: Make use of the Changelog.md when generating the GitHub/Codeberg
+# release?
+changelog:
+  # Set this to true if you don't want any changelog at all.
+  #
+  # Warning: this will also ignore any changelog files passed via `--release-notes`,
+  # and will render an empty changelog.
+  #
+  # This may result in an empty release notes on GitHub/GitLab/Gitea.
+  #
+  # Templates: allowed.
+  disable: true
+
 release:
   footer: >-
 
