@@ -53,6 +53,13 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - Changelog.md
+      - src: doc/manual/build/man/*
+        dst: docs
+        strip_parent: true
 
 nfpms:
   # note that this is an array of nfpm configs
