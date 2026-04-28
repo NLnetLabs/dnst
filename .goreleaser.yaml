@@ -398,6 +398,23 @@ dockers_v2:
       # - linux/arm/v6 # debian doesn't have a v6 image
       - linux/arm/v7
 
+# https://goreleaser.com/customization/sign/docker_sign/
+# docker_signs:
+
+# Automatically create releases on GitHub/GitLab/Gitea (and potentially
+# Forgejo as it was forked from Gitea).
+# https://goreleaser.com/customization/publish/scm/
+# release:
+
+# Automatically upload generated packages to packages.nlnetlabs.nl
+# https://goreleaser.com/customization/publish/blob/
+# blobs:
+#   - provider: s3
+
+# Automatically announce new release on Discourse, ...
+# https://goreleaser.com/customization/announce/
+# announce:
+
 release:
   footer: >-
 
