@@ -16,6 +16,7 @@ before:
     - cargo install --locked cargo-zigbuild
     - cargo fetch --locked
 
+# https://goreleaser.com/customization/builds/builders/rust/
 builds:
   - builder: rust
     id: dnst-cross
@@ -42,6 +43,7 @@ builds:
       - OPENSSL_LIB_DIR=/usr/lib
       - OPENSSL_INCLUDE_DIR=/usr/include
 
+# https://goreleaser.com/customization/package/archives/
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_\
@@ -61,6 +63,7 @@ archives:
         dst: docs
         strip_parent: true
 
+# https://goreleaser.com/customization/package/nfpm/
 nfpms:
   # note that this is an array of nfpm configs
   - id: default
@@ -139,9 +142,6 @@ nfpms:
 
     # Date to be used as mtime for the package itself, and its internal files.
     # You may also want to set the mtime on its contents.
-    #
-    # 
-    # Templates: allowed.
     mtime: "{{ .CommitDate }}"
 
     # All fields above marked as `overridable` can be overridden for a given
@@ -168,39 +168,6 @@ nfpms:
           - glibc
           - openssl
 
-    # Custom configuration applied only to the RPM packager.
-    # rpm:
-      # # RPM specific scripts.
-      # scripts:
-      #   # The pretrans script runs before all RPM package transactions / stages.
-      #   pretrans: ./scripts/pretrans.sh
-      #   # The posttrans script runs after all RPM package transactions / stages.
-      #   posttrans: ./scripts/posttrans.sh
-
-      # The package summary.
-      #
-      # Default: first line of the description.
-      # summary: Explicit Summary for Sample Package
-
-      # The packager is used to identify the organization that actually packaged
-      # the software, as opposed to the author of the software.
-      # `maintainer` will be used as fallback if not specified.
-      # This will expand any env var you set in the field, eg packager: ${PACKAGER}
-      # packager: NLnet Labs <dns-team@nlnetlabs.nl>
-
-      # The hostname of the machine the rpm was built with.
-      #
-      # Default: os.Hostname()
-      # 
-      # buildhost: foo.bar
-
-      # Compression algorithm (gzip (default), lzma or xz).
-      # compression: lzma
-
-      # Prefixes for relocatable packages.
-      # prefixes:
-      #   - /usr/bin
-
     # Custom configuration applied only to the Deb packager.
     deb:
       # Lintian overrides
@@ -208,48 +175,11 @@ nfpms:
         # - statically-linked-binary
         # - changelog-file-missing-in-native-package
 
-      # # Custom deb special files.
-      # scripts:
-      #   # Deb rules script.
-      #   rules: foo.sh
-
-      #   # Deb templates file, when using debconf.
-      #   templates: templates
-
-      # # Custom deb triggers
-      # triggers:
-      #   # register interest on a trigger activated by another package
-      #   # (also available: interest_await, interest_noawait)
-      #   interest:
-      #     - some-trigger-name
-
-      #   # activate a trigger for another package
-      #   # (also available: activate_await, activate_noawait)
-      #   activate:
-      #     - another-trigger-name
-
-      # # Packages which would break if this package would be installed.
-      # # The installation of this package is blocked if `some-package`
-      # # is already installed.
-      # breaks:
-      #   - some-package
-
-      # # Data compression algorithm (gzip (default), xz, zstd or none).
-      # #
-      # # 
-      # compression: zstd
-
       # Additional fields for the control file. Empty fields are ignored.
       # This will expand any env vars you set in the field values, e.g. Vcs-Browser: ${CI_PROJECT_URL}
       fields:
         # Bugs: https://github.com/goreleaser/nfpm/issues
         Bugs: https://github.com/NLnetLabs/dnst/issues
-
-      # # The Debian-specific "predepends" field can be used to ensure the complete installation of a list of
-      # # packages (including unpacking, pre- and post installation scripts) prior to the installation of the
-      # # built package.
-      # predepends:
-      #   - baz (>= 1.2.3-0)
 
     archlinux:
       packager: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
@@ -406,6 +336,7 @@ nfpms:
 #     (in Debian at least).
 # - RPM: adds a PGP signature to each rpm file itself (and uses a repo
 #        metadata file that is also signed itself)
+# https://goreleaser.com/customization/sign/sign/
 signs:
   - # Sign RPM files using rpmsign --addsign
     id: rpmsign
