@@ -15,6 +15,7 @@ before:
     - rustup default stable
     - cargo install --locked cargo-zigbuild
     - cargo fetch --locked
+    - ./pkg/generate-man-pages.sh
 
 # https://goreleaser.com/customization/builds/builders/rust/
 builds:

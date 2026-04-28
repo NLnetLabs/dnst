@@ -2,7 +2,7 @@ debug/
 target/
 
 # Currently generated man pages are checked in.
-#/doc/manual/build/
+/doc/manual/build/
 /doc/manual/build/doctrees
 /doc/manual/build/man/_static
 
