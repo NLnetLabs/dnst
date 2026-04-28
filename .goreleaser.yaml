@@ -152,7 +152,7 @@ nfpms:
       # different versions or for dependencies that are named differently.
       deb:
         dependencies:
-          - libc (>= 2.38)
+          - libc6 (>= 2.38)
           - libssl3t64 (>= 3.0.0)
         # ...
       rpm:
