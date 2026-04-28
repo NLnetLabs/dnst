@@ -432,6 +432,41 @@ signs:
     # args: ["-u", "0x7677576016265A20", "--output", "${signature}", "--detach-sign", "${artifact}"]
     artifacts: checksum
 
+# https://goreleaser.com/customization/package/dockers_v2/
+dockers_v2:
+  - # IDs to filter the binaries/packages.
+    #
+    # Make sure to only include the IDs of binaries you want to `COPY` in your
+    # Dockerfile.
+    #
+    # If you include IDs that don't exist or are not available for the current
+    # architecture being built, the build of the image will be skipped.
+    ids:
+      - dnst
+      - dnst-cross
+
+    images:
+      - "nlnetlabs/dnst"
+
+    tags:
+      - "v{{ .Version }}"
+      - "{{ if .IsNightly }}nightly{{ end }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
+
+    labels:
+      "org.opencontainers.image.description": "Rust reimplementation of important ldns programs."
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      # - linux/arm/v6 # debian doesn't have a v6 image
+      - linux/arm/v7
+
 release:
   footer: >-
 
