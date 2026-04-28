@@ -18,35 +18,412 @@ before:
 
 builds:
   - builder: rust
+    id: dnst-cross
+    flags:
+      - --release
+      - --features=static-openssl
+    targets:
+      - aarch64-unknown-linux-musl
+      # - arm-unknown-linux-gnueabihf
+      # - armv7-unknown-linux-gnueabihf
+      - arm-unknown-linux-musleabihf
+      - armv7-unknown-linux-musleabihf
+    command: zigbuild
+  - builder: rust
+    # Build dnst for x86_64 with dynamic openssl
+    id: dnst
     flags:
       - --release
     targets:
-      - x86_64-unknown-linux-gnu
-      - x86_64-apple-darwin
-      - x86_64-pc-windows-gnu
-      - aarch64-unknown-linux-gnu
-      - aarch64-apple-darwin
+      # OpenSSL requires minimum glibc 2.38
+      - x86_64-unknown-linux-gnu.2.38
+    command: zigbuild
+    env:
+      - OPENSSL_LIB_DIR=/usr/lib
+      - OPENSSL_INCLUDE_DIR=/usr/include
 
 archives:
   - formats: [tar.gz]
-    # this name template makes the OS and Arch compatible with the results of `uname`.
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_\
+      {{ .Arch }}{{ if not (eq .Arm \"6\") }}\
+      {{ with .Arm }}v{{ . }}{{ end }}\
+      {{ end }}{{ with .Mips }}_\
+      {{ . }}{{ end }}{{ if not (eq .Amd64 \"v1\") }}{{ .Amd64 }}{{ end }}"
     # use zip for windows archives
     format_overrides:
       - goos: windows
         formats: [zip]
 
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+nfpms:
+  # note that this is an array of nfpm configs
+  - id: default
+    # file_name_template: "{{ .ConventionalFileName }}"
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+      {{- .ConventionalExtension -}}
+
+    vendor: NLnet Labs
+    homepage: https://nlnetlabs.nl/projects/domain/dnst/
+    maintainer: NLnet Labs <dns-team@nlnetlabs.nl>
+    description: Rust reimplementation of important ldns programs.
+    license: BSD-3-Clause
+
+    # Formats to be generated.
+    formats:
+      - apk
+      - deb
+      - rpm
+      - archlinux
+
+    # dependencies:
+    # provides:
+    # recommends:
+    # suggests:
+    # conflicts:
+    # replaces:
+
+    # Section.
+    section: net
+
+    # Priority.
+    priority: optional
+
+    # Contents to add to the package.
+    # GoReleaser will automatically add the binaries.
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/dnst/
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst.1
+        dst: /usr/share/man/man1/dnst.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-key2ds.1
+        dst: /usr/share/man/man1/dnst-key2ds.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-keygen.1
+        dst: /usr/share/man/man1/dnst-keygen.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-keyset.1
+        dst: /usr/share/man/man1/dnst-keyset.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-notify.1
+        dst: /usr/share/man/man1/dnst-notify.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-nsec3-hash.1
+        dst: /usr/share/man/man1/dnst-nsec3-hash.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-signzone.1
+        dst: /usr/share/man/man1/dnst-signzone.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-update.1
+        dst: /usr/share/man/man1/dnst-update.1
+        file_info:
+          mode: 644
+
+    # Date to be used as mtime for the package itself, and its internal files.
+    # You may also want to set the mtime on its contents.
+    #
+    # 
+    # Templates: allowed.
+    mtime: "{{ .CommitDate }}"
+
+    # All fields above marked as `overridable` can be overridden for a given
+    # package format in this section.
+    overrides:
+      # The dependencies override can for example be used to provide version
+      # constraints for dependencies where  different package formats use
+      # different versions or for dependencies that are named differently.
+      deb:
+        dependencies:
+          - libc (>= 2.38)
+          - libssl3t64 (>= 3.0.0)
+        # ...
+      rpm:
+        dependencies:
+          - glibc >= 2.38
+          - openssl-libs >= 3.0.0
+      apk:
+        dependencies:
+          - gcompat
+          - openssl
+      archlinux:
+        dependencies:
+          - glibc
+          - openssl
+
+    # Custom configuration applied only to the RPM packager.
+    # rpm:
+      # # RPM specific scripts.
+      # scripts:
+      #   # The pretrans script runs before all RPM package transactions / stages.
+      #   pretrans: ./scripts/pretrans.sh
+      #   # The posttrans script runs after all RPM package transactions / stages.
+      #   posttrans: ./scripts/posttrans.sh
+
+      # The package summary.
+      #
+      # Default: first line of the description.
+      # summary: Explicit Summary for Sample Package
+
+      # The packager is used to identify the organization that actually packaged
+      # the software, as opposed to the author of the software.
+      # `maintainer` will be used as fallback if not specified.
+      # This will expand any env var you set in the field, eg packager: ${PACKAGER}
+      # packager: NLnet Labs <dns-team@nlnetlabs.nl>
+
+      # The hostname of the machine the rpm was built with.
+      #
+      # Default: os.Hostname()
+      # 
+      # buildhost: foo.bar
+
+      # Compression algorithm (gzip (default), lzma or xz).
+      # compression: lzma
+
+      # Prefixes for relocatable packages.
+      # prefixes:
+      #   - /usr/bin
+
+    # Custom configuration applied only to the Deb packager.
+    deb:
+      # Lintian overrides
+      # lintian_overrides:
+        # - statically-linked-binary
+        # - changelog-file-missing-in-native-package
+
+      # # Custom deb special files.
+      # scripts:
+      #   # Deb rules script.
+      #   rules: foo.sh
+
+      #   # Deb templates file, when using debconf.
+      #   templates: templates
+
+      # # Custom deb triggers
+      # triggers:
+      #   # register interest on a trigger activated by another package
+      #   # (also available: interest_await, interest_noawait)
+      #   interest:
+      #     - some-trigger-name
+
+      #   # activate a trigger for another package
+      #   # (also available: activate_await, activate_noawait)
+      #   activate:
+      #     - another-trigger-name
+
+      # # Packages which would break if this package would be installed.
+      # # The installation of this package is blocked if `some-package`
+      # # is already installed.
+      # breaks:
+      #   - some-package
+
+      # # Data compression algorithm (gzip (default), xz, zstd or none).
+      # #
+      # # 
+      # compression: zstd
+
+      # Additional fields for the control file. Empty fields are ignored.
+      # This will expand any env vars you set in the field values, e.g. Vcs-Browser: ${CI_PROJECT_URL}
+      fields:
+        # Bugs: https://github.com/goreleaser/nfpm/issues
+        Bugs: https://github.com/NLnetLabs/dnst/issues
+
+      # # The Debian-specific "predepends" field can be used to ensure the complete installation of a list of
+      # # packages (including unpacking, pre- and post installation scripts) prior to the installation of the
+      # # built package.
+      # predepends:
+      #   - baz (>= 1.2.3-0)
+
+    archlinux:
+      packager: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+
+  # Create ldns replacement package
+  - id: dnst-ldnsutils
+
+    # Makes a meta package - an empty package that contains only supporting
+    # files and dependencies.
+    # When set to `true`, the `builds` option is ignored.
+    meta: true
+
+    package_name: dnst-ldnsutils
+    # file_name_template: "{{ .ConventionalFileName }}"
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+      {{- .ConventionalExtension -}}
+    vendor: NLnet Labs
+    homepage: https://nlnetlabs.nl/projects/domain/dnst/
+    maintainer: NLnet Labs <dns-team@nlnetlabs.nl>
+    description: Rust reimplementation of important ldns programs (replacement package for ldns-utils).
+    license: BSD-3-Clause
+
+    # Formats to be generated.
+    formats:
+      - apk
+      - deb
+      - rpm
+      - archlinux
+
+    # Packages your package depends on. (overridable)
+    dependencies:
+      - dnst
+
+    # Section.
+    section: net
+
+    # Priority.
+    priority: optional
+
+    # Contents to add to the package.
+    # GoReleaser will automatically add the binaries.
+    contents:
+      - src: doc/manual/build/man/ldns-key2ds.1
+        dst: /usr/share/man/man1/ldns-key2ds.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-keygen.1
+        dst: /usr/share/man/man1/ldns-keygen.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-notify.1
+        dst: /usr/share/man/man1/ldns-notify.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-nsec3-hash.1
+        dst: /usr/share/man/man1/ldns-nsec3-hash.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-signzone.1
+        dst: /usr/share/man/man1/ldns-signzone.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-update.1
+        dst: /usr/share/man/man1/ldns-update.1
+        file_info:
+          mode: 644
+
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-keygen
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-key2ds
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-nsec3-hash
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-notify
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-signzone
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-update
+        type: "symlink"
+
+    # Date to be used as mtime for the package itself, and its internal files.
+    # You may also want to set the mtime on its contents.
+    #
+    # 
+    # Templates: allowed.
+    mtime: "{{ .CommitDate }}"
+
+    # All fields above marked as `overridable` can be overridden for a given
+    # package format in this section.
+    overrides:
+      # The dependencies override can for example be used to provide version
+      # constraints for dependencies where  different package formats use
+      # different versions or for dependencies that are named differently.
+      deb:
+        conflicts:
+          - ldnsutils
+        replaces:
+          - ldnsutils
+      rpm:
+        replaces:
+          - ldns-utils
+      apk:
+        replaces:
+          - ldns-tools
+      archlinux:
+        # unfortunately, the Arch maintainer published the example binaries
+        # and the library in a single package...
+        replaces:
+          - ldns
+
+# Example packages config for splitting out rpm packages from other packages
+# nfpms:
+#   - id: default
+#     package_name: dnst
+#     file_name_template: >-
+#       {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+#       {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+#       {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+#       {{- .ConventionalExtension -}}
+#     maintainer: "NLnet Labs <dns-team@nlnetlabs.nl>"
+#     # maintainer: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+#     formats:
+#       - apk
+#       - deb
+#       - archlinux
+#   - id: rpmpkg
+#     # Separating generating the RPM files out into its own nfpms build step,
+#     # as the signing step's "if" option is only available in the PRO version.
+#     # Signing packages by ID is free, therefore we split it here.
+#     package_name: dnst
+#     file_name_template: >-
+#       {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+#       {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+#       {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+#       {{- .ConventionalExtension -}}
+#     maintainer: "NLnet Labs <dns-team@nlnetlabs.nl>"
+#     # maintainer: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+#     formats:
+#       - rpm
+
+# Signature schemes:
+# - Debian/Ubuntu: signs a `Release` file containing checksums of all packages.
+#     While there is the option to provide signed packages where the pacakge
+#     file itself is signed, this option is disabled by default
+#     (in Debian at least).
+# - RPM: adds a PGP signature to each rpm file itself (and uses a repo
+#        metadata file that is also signed itself)
+signs:
+  - # Sign RPM files using rpmsign --addsign
+    id: rpmsign
+    # GoReleaser calls the `cmd` for each artifact to sign. So with
+    # `artifacts: package` for all generated packages. However, we only want
+    # to sign rpm packages. The convenient `if` selector that allows to match
+    # on package file names, is only available in GoReleaser Pro. One approach
+    # is to create two separate `nfpms` configs, one for generating rpms (and
+    # give it an id, e.g. rpmpkg) and one for the rest with default treatment
+    # (see the commented out nfpms section above).
+    # Another approach is to use a wrapper script that skips signing packages
+    # that aren't rpms.
+    cmd: ./pkg/rpmsign-only.sh
+    # args: ["--addsign", "--key-id", "0xA144323DEAACDF45", "${artifact}"] # releases key
+    args: ["--addsign", "--key-id", "0x7677576016265A20", "${artifact}"] # jannik's key
+    artifacts: package
+
+    # IDs of the artifacts to sign.
+    # ids:
+    #   - rpmpkg
+
+  - # Sign the generated checksums file with gpg (the default)
+    # args: ["-u", "0xA144323DEAACDF45", "--output", "${signature}", "--detach-sign", "${artifact}"]
+    # args: ["-u", "0x7677576016265A20", "--output", "${signature}", "--detach-sign", "${artifact}"]
+    artifacts: checksum
 
 release:
   footer: >-
