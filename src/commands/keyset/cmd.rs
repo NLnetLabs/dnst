@@ -5530,7 +5530,7 @@ async fn addresses_for_name(
     resolver: &StubResolver,
     name: impl ToName,
 ) -> Result<Vec<IpAddr>, Error> {
-    let res = lookup_host(&resolver, &name).await.map_err(|e| {
+    let res = lookup_host(resolver, &name).await.map_err(|e| {
         format!(
             "lookup of addresses for {} failed: {e}",
             name.to_name::<Vec<u8>>()
