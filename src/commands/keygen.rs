@@ -350,11 +350,11 @@ impl Keygen {
         let public_key_path = format!("{base}.key");
         let digest_file_path = self.make_ksk.then(|| format!("{base}.ds"));
 
-        let mut secret_key_file = util::create_new_file(&env, &secret_key_path)?;
-        let mut public_key_file = util::create_new_file(&env, &public_key_path)?;
+        let mut secret_key_file = util::create_new_file(&env, &secret_key_path, 0o600)?;
+        let mut public_key_file = util::create_new_file(&env, &public_key_path, 0o644)?;
         let mut digest_file = digest_file_path
             .as_ref()
-            .map(|digest_file_path| util::create_new_file(&env, digest_file_path))
+            .map(|digest_file_path| util::create_new_file(&env, digest_file_path, 0o644))
             .transpose()?;
 
         Self::symlink(&secret_key_path, ".private", self.symlink, &env)?;
@@ -431,6 +431,7 @@ impl Keygen {
 mod test {
     use domain::base::iana::SecurityAlgorithm;
     use regex::Regex;
+    use std::os::unix::fs::PermissionsExt;
 
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
@@ -667,6 +668,17 @@ mod test {
         let secret_key =
             std::fs::read_to_string(dir.path().join(format!("{name}.private"))).unwrap();
         assert!(secret_key_regex.is_match(&secret_key));
+
+        let permissions = std::fs::File::open(dir.path().join(format!("{name}.private")))
+            .unwrap()
+            .metadata()
+            .unwrap()
+            .permissions();
+        assert_eq!(
+            permissions.mode() & 0o777,
+            0o600,
+            "Unsafe permissions on private key"
+        );
     }
 
     #[test]

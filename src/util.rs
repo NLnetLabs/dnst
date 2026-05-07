@@ -1,16 +1,22 @@
 //! A utility module for common operations.
 
 use std::fs::File;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use crate::env::Env;
 use crate::error::Result;
 
 /// Create and open a file.
-pub fn create_new_file(env: &impl Env, path: impl AsRef<Path>) -> Result<File> {
+pub fn create_new_file(env: &impl Env, path: impl AsRef<Path>, mode: u32) -> Result<File> {
     let path = path.as_ref();
     let abs_path = env.in_cwd(&path);
-    File::create_new(abs_path)
+    File::options()
+        .mode(mode)
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(abs_path)
         .map_err(|err| format!("cannot create '{}': {err}", path.display()).into())
 }
 
