@@ -553,7 +553,7 @@ pub fn kmip_command(
         }
 
         KmipCommands::ListServers => {
-            write!(env.stdout(), "{}", &kss.kmip);
+            write!(env.stdout(), "{}", kss.kmip);
             return Ok(false);
         }
     }

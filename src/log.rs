@@ -32,7 +32,7 @@ where
         // Format values from the event's's metadata:
         let metadata = event.metadata();
 
-        write!(&mut writer, "[{}] ", &self.program)?;
+        write!(&mut writer, "[{}] ", self.program)?;
 
         let level = *metadata.level();
         if writer.has_ansi_escapes() {
