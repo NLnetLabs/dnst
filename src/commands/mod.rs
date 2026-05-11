@@ -5,6 +5,7 @@ pub mod keygen;
 pub mod keyset;
 pub mod notify;
 pub mod nsec3hash;
+pub mod readzone;
 pub mod signzone;
 pub mod update;
 
@@ -79,6 +80,10 @@ pub enum Command {
     #[command(name = "update")]
     Update(self::update::Update),
 
+    /// Read Zonefile and print it
+    #[command(name = "read-zone")]
+    ReadZone(self::readzone::ReadZone),
+
     /// Send an UPDATE packet ldns compatibility variant
     ///
     /// This variant is not a dnst command and only used to provide
@@ -103,6 +108,7 @@ impl Command {
             Self::Nsec3Hash(nsec3hash) => nsec3hash.execute(env),
             Self::Notify(notify) => notify.execute(env),
             Self::SignZone(signzone) => signzone.execute(env),
+            Self::ReadZone(readzone) => readzone.execute(env),
             Self::Update(update) => update.execute(env),
             // Self::Help(help) => help.execute(env),
             Self::LdnsUpdate(ldnsupdate) => ldnsupdate.execute(env),
