@@ -1,7 +1,6 @@
 use core::clone::Clone;
 use core::cmp::Ordering;
 use core::fmt::Write;
-use core::str::FromStr;
 
 use std::ffi::OsString;
 use std::fmt::{self};
@@ -37,7 +36,7 @@ use super::{parse_os, Command, LdnsCommand};
 #[clap(after_help = "Read-Zone dnst HELP")]
 pub struct ReadZone {
     /// Origin for the zone (REQUIRED).
-    #[arg(short = 'o', value_name = "domain")]
+    #[arg(short = 'o', value_name = "domain", required = true)]
     origin: Option<StoredName>,
 
     // -----------------------------------------------------------------------
@@ -279,7 +278,7 @@ mod test {
 
     #[test]
     fn dnst_parse_successes() {
-        let cmd = FakeCmd::new(["dnst", "readzone"]);
+        let cmd = FakeCmd::new(["dnst", "read-zone"]);
 
         let base = ReadZone {
             origin: Some(StoredName::from_str("example.org").unwrap()),
@@ -289,7 +288,7 @@ mod test {
 
         // Check the defaults
         assert_eq!(
-            parse(cmd.args(["-oexample.org", "example.org.zone", "anykey"])),
+            parse(cmd.args(["-oexample.org", "example.org.zone"])),
             base
         );
     }
@@ -298,10 +297,9 @@ mod test {
     fn simple_readzone() {
         let res1 = FakeCmd::new([
             "dnst",
-            "readzone",
-            // "-o example.com.",
+            "read-zone",
+            "-o example.com.",
             "test-data/example.org",
-            "-f-",
         ])
         .run();
 
@@ -317,7 +315,6 @@ mod test {
         println!("{:?}", "0.example.com.".as_bytes());
         let name2: Name<bytes::Bytes> = Name::<bytes::Bytes>::from_str("1.example.com.").unwrap();
         println!("{:?}", "1.example.com.".as_bytes());
-        println!("{:?}", name1.as_octets());
 
         println!("{:?}", name1.canonical_cmp(&name2));
     }
