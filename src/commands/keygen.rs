@@ -683,7 +683,6 @@ mod test {
                 "Unsafe permissions on private key"
             );
         }
-
     }
 
     #[test]
