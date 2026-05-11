@@ -431,6 +431,7 @@ impl Keygen {
 mod test {
     use domain::base::iana::SecurityAlgorithm;
     use regex::Regex;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     use crate::commands::Command;
@@ -669,16 +670,20 @@ mod test {
             std::fs::read_to_string(dir.path().join(format!("{name}.private"))).unwrap();
         assert!(secret_key_regex.is_match(&secret_key));
 
-        let permissions = std::fs::File::open(dir.path().join(format!("{name}.private")))
-            .unwrap()
-            .metadata()
-            .unwrap()
-            .permissions();
-        assert_eq!(
-            permissions.mode() & 0o777,
-            0o600,
-            "Unsafe permissions on private key"
-        );
+        #[cfg(unix)]
+        {
+            let permissions = std::fs::File::open(dir.path().join(format!("{name}.private")))
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .permissions();
+            assert_eq!(
+                permissions.mode() & 0o777,
+                0o600,
+                "Unsafe permissions on private key"
+            );
+        }
+
     }
 
     #[test]

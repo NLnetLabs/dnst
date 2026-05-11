@@ -60,6 +60,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fs::{create_dir_all, remove_file, rename, File};
 use std::io::{self, Write};
 use std::net::{IpAddr, SocketAddr};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{absolute, Path, PathBuf};
 use std::process::Command;
@@ -4273,11 +4274,11 @@ impl WorkSpace {
         //		ws.config.state_file.display()).into());
         // }
         filename_new.as_mut_os_string().push(".new");
-        let mut file = File::options()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o644)
+        let mut file_opts = File::options();
+        file_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        file_opts.mode(0o644);
+        let mut file = file_opts
             .open(&filename_new)
             .map_err(|e| format!("unable to create file {}: {e}", filename_new.display()))?;
         write!(file, "{json}")
