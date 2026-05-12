@@ -344,25 +344,25 @@ nfpms:
 #        metadata file that is also signed itself)
 # https://goreleaser.com/customization/sign/sign/
 signs:
-  - # Sign RPM files using rpmsign --addsign
-    id: rpmsign
-    # GoReleaser calls the `cmd` for each artifact to sign. So with
-    # `artifacts: package` for all generated packages. However, we only want
-    # to sign rpm packages. The convenient `if` selector that allows to match
-    # on package file names, is only available in GoReleaser Pro. One approach
-    # is to create two separate `nfpms` configs, one for generating rpms (and
-    # give it an id, e.g. rpmpkg) and one for the rest with default treatment
-    # (see the commented out nfpms section above).
-    # Another approach is to use a wrapper script that skips signing packages
-    # that aren't rpms.
-    cmd: ./pkg/rpmsign-only.sh
-    # args: ["--addsign", "--key-id", "0xA144323DEAACDF45", "${artifact}"] # releases key
-    args: ["--addsign", "--key-id", "0x7677576016265A20", "${artifact}"] # jannik's key
-    artifacts: package
+#   - # Sign RPM files using rpmsign --addsign
+#     id: rpmsign
+#     # GoReleaser calls the `cmd` for each artifact to sign. So with
+#     # `artifacts: package` for all generated packages. However, we only want
+#     # to sign rpm packages. The convenient `if` selector that allows to match
+#     # on package file names, is only available in GoReleaser Pro. One approach
+#     # is to create two separate `nfpms` configs, one for generating rpms (and
+#     # give it an id, e.g. rpmpkg) and one for the rest with default treatment
+#     # (see the commented out nfpms section above).
+#     # Another approach is to use a wrapper script that skips signing packages
+#     # that aren't rpms.
+#     cmd: ./pkg/rpmsign-only.sh
+#     # args: ["--addsign", "--key-id", "0xA144323DEAACDF45", "${artifact}"] # releases key
+#     args: ["--addsign", "--key-id", "0x7677576016265A20", "${artifact}"] # jannik's key
+#     artifacts: package
 
-    # IDs of the artifacts to sign.
-    # ids:
-    #   - rpmpkg
+#     # IDs of the artifacts to sign.
+#     # ids:
+#     #   - rpmpkg
 
   - # Sign the generated checksums file with gpg (the default)
     # args: ["-u", "0xA144323DEAACDF45", "--output", "${signature}", "--detach-sign", "${artifact}"]
