@@ -88,6 +88,11 @@ nfpms:
       - rpm
       - archlinux
 
+    # Needed for the -1 suffix of package versions
+    # We rarely ever publish new packages for the same product version, but in
+    # case we do, we need this version here.
+    release: "1"
+
     # dependencies:
     # provides:
     # recommends:
