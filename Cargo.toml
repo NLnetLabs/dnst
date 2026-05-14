@@ -39,6 +39,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "tokio-stream",
     "tsig",
     "unstable-client-transport",
+    "unstable-new",
     "unstable-sign",
     "unstable-validator",
     "unstable-zonetree"
