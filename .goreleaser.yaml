@@ -1,0 +1,441 @@
+# Make sure to check the documentation at https://goreleaser.com/customization/
+
+# The lines below are called `modelines`. See `:help modeline`
+# Feel free to remove those if you don't want/need to use them.
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    # if you don't do these things before calling goreleaser, it might be a
+    # good idea to do them here:
+    - rustup default stable
+    - cargo install --locked cargo-zigbuild
+    - cargo fetch --locked
+    - ./pkg/generate-man-pages.sh
+
+# https://goreleaser.com/customization/builds/builders/rust/
+builds:
+  - builder: rust
+    id: dnst-cross
+    flags:
+      - --release
+      - --features=static-openssl
+    targets:
+      - aarch64-unknown-linux-musl
+      # - arm-unknown-linux-gnueabihf
+      # - armv7-unknown-linux-gnueabihf
+      - arm-unknown-linux-musleabihf
+      - armv7-unknown-linux-musleabihf
+    command: zigbuild
+  - builder: rust
+    # Build dnst for x86_64 with dynamic openssl
+    id: dnst
+    flags:
+      - --release
+    targets:
+      # OpenSSL requires minimum glibc 2.38
+      - x86_64-unknown-linux-gnu.2.38
+    command: zigbuild
+    env:
+      - OPENSSL_LIB_DIR=/usr/lib
+      - OPENSSL_INCLUDE_DIR=/usr/include
+
+# https://goreleaser.com/customization/package/archives/
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_\
+      {{ .Arch }}{{ if not (eq .Arm \"6\") }}\
+      {{ with .Arm }}v{{ . }}{{ end }}\
+      {{ end }}{{ with .Mips }}_\
+      {{ . }}{{ end }}{{ if not (eq .Amd64 \"v1\") }}{{ .Amd64 }}{{ end }}"
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - Changelog.md
+      - src: doc/manual/build/man/*
+        dst: docs
+        strip_parent: true
+
+# https://goreleaser.com/customization/package/nfpm/
+nfpms:
+  # note that this is an array of nfpm configs
+  - id: default
+    # file_name_template: "{{ .ConventionalFileName }}"
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+      {{- .ConventionalExtension -}}
+
+    vendor: NLnet Labs
+    homepage: https://nlnetlabs.nl/projects/domain/dnst/
+    maintainer: NLnet Labs <dns-team@nlnetlabs.nl>
+    description: Rust reimplementation of important ldns programs.
+    license: BSD-3-Clause
+
+    # Formats to be generated.
+    formats:
+      - apk
+      - deb
+      - rpm
+      - archlinux
+
+    # Needed for the -1 suffix of package versions
+    # We rarely ever publish new packages for the same product version, but in
+    # case we do, we need this version here.
+    release: "1"
+
+    # dependencies:
+    # provides:
+    # recommends:
+    # suggests:
+    # conflicts:
+    # replaces:
+
+    # Section.
+    section: net
+
+    # Priority.
+    priority: optional
+
+    # Contents to add to the package.
+    # GoReleaser will automatically add the binaries.
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/dnst/
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst.1
+        dst: /usr/share/man/man1/dnst.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-key2ds.1
+        dst: /usr/share/man/man1/dnst-key2ds.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-keygen.1
+        dst: /usr/share/man/man1/dnst-keygen.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-keyset.1
+        dst: /usr/share/man/man1/dnst-keyset.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-notify.1
+        dst: /usr/share/man/man1/dnst-notify.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-nsec3-hash.1
+        dst: /usr/share/man/man1/dnst-nsec3-hash.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-signzone.1
+        dst: /usr/share/man/man1/dnst-signzone.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/dnst-update.1
+        dst: /usr/share/man/man1/dnst-update.1
+        file_info:
+          mode: 644
+
+    # Date to be used as mtime for the package itself, and its internal files.
+    # You may also want to set the mtime on its contents.
+    mtime: "{{ .CommitDate }}"
+
+    # All fields above marked as `overridable` can be overridden for a given
+    # package format in this section.
+    overrides:
+      # The dependencies override can for example be used to provide version
+      # constraints for dependencies where  different package formats use
+      # different versions or for dependencies that are named differently.
+      deb:
+        dependencies:
+          - libc6 (>= 2.38)
+          - libssl3t64 (>= 3.0.0)
+        # ...
+      rpm:
+        dependencies:
+          - glibc >= 2.38
+          - openssl-libs >= 3.0.0
+      apk:
+        dependencies:
+          - gcompat
+          - openssl
+      archlinux:
+        dependencies:
+          - glibc
+          - openssl
+
+    # Custom configuration applied only to the Deb packager.
+    deb:
+      # Lintian overrides
+      # lintian_overrides:
+        # - statically-linked-binary
+        # - changelog-file-missing-in-native-package
+
+      # Additional fields for the control file. Empty fields are ignored.
+      # This will expand any env vars you set in the field values, e.g. Vcs-Browser: ${CI_PROJECT_URL}
+      fields:
+        # Bugs: https://github.com/goreleaser/nfpm/issues
+        Bugs: https://github.com/NLnetLabs/dnst/issues
+
+    archlinux:
+      packager: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+
+  # Create ldns replacement package
+  - id: dnst-ldnsutils
+
+    # Makes a meta package - an empty package that contains only supporting
+    # files and dependencies.
+    # When set to `true`, the `builds` option is ignored.
+    meta: true
+
+    package_name: dnst-ldnsutils
+    # file_name_template: "{{ .ConventionalFileName }}"
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+      {{- .ConventionalExtension -}}
+    vendor: NLnet Labs
+    homepage: https://nlnetlabs.nl/projects/domain/dnst/
+    maintainer: NLnet Labs <dns-team@nlnetlabs.nl>
+    description: Rust reimplementation of important ldns programs (replacement package for ldns-utils).
+    license: BSD-3-Clause
+
+    # Formats to be generated.
+    formats:
+      - apk
+      - deb
+      - rpm
+      - archlinux
+
+    # Packages your package depends on. (overridable)
+    dependencies:
+      - dnst
+
+    # Section.
+    section: net
+
+    # Priority.
+    priority: optional
+
+    # Contents to add to the package.
+    # GoReleaser will automatically add the binaries.
+    contents:
+      - src: doc/manual/build/man/ldns-key2ds.1
+        dst: /usr/share/man/man1/ldns-key2ds.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-keygen.1
+        dst: /usr/share/man/man1/ldns-keygen.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-notify.1
+        dst: /usr/share/man/man1/ldns-notify.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-nsec3-hash.1
+        dst: /usr/share/man/man1/ldns-nsec3-hash.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-signzone.1
+        dst: /usr/share/man/man1/ldns-signzone.1
+        file_info:
+          mode: 644
+      - src: doc/manual/build/man/ldns-update.1
+        dst: /usr/share/man/man1/ldns-update.1
+        file_info:
+          mode: 644
+
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-keygen
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-key2ds
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-nsec3-hash
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-notify
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-signzone
+        type: "symlink"
+      - src: /usr/bin/dnst
+        dst: /usr/bin/ldns-update
+        type: "symlink"
+
+    # Date to be used as mtime for the package itself, and its internal files.
+    # You may also want to set the mtime on its contents.
+    #
+    # 
+    # Templates: allowed.
+    mtime: "{{ .CommitDate }}"
+
+    # All fields above marked as `overridable` can be overridden for a given
+    # package format in this section.
+    overrides:
+      # The dependencies override can for example be used to provide version
+      # constraints for dependencies where  different package formats use
+      # different versions or for dependencies that are named differently.
+      deb:
+        conflicts:
+          - ldnsutils
+        replaces:
+          - ldnsutils
+      rpm:
+        replaces:
+          - ldns-utils
+      apk:
+        replaces:
+          - ldns-tools
+      archlinux:
+        # unfortunately, the Arch maintainer published the example binaries
+        # and the library in a single package...
+        replaces:
+          - ldns
+
+# Example packages config for splitting out rpm packages from other packages
+# nfpms:
+#   - id: default
+#     package_name: dnst
+#     file_name_template: >-
+#       {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+#       {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+#       {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+#       {{- .ConventionalExtension -}}
+#     maintainer: "NLnet Labs <dns-team@nlnetlabs.nl>"
+#     # maintainer: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+#     formats:
+#       - apk
+#       - deb
+#       - archlinux
+#   - id: rpmpkg
+#     # Separating generating the RPM files out into its own nfpms build step,
+#     # as the signing step's "if" option is only available in the PRO version.
+#     # Signing packages by ID is free, therefore we split it here.
+#     package_name: dnst
+#     file_name_template: >-
+#       {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+#       {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+#       {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+#       {{- .ConventionalExtension -}}
+#     maintainer: "NLnet Labs <dns-team@nlnetlabs.nl>"
+#     # maintainer: "NLnet Labs <dns-rust-team@nlnetlabs.nl>"
+#     formats:
+#       - rpm
+
+# Signature schemes:
+# - Debian/Ubuntu: signs a `Release` file containing checksums of all packages.
+#     While there is the option to provide signed packages where the pacakge
+#     file itself is signed, this option is disabled by default
+#     (in Debian at least).
+# - RPM: adds a PGP signature to each rpm file itself (and uses a repo
+#        metadata file that is also signed itself)
+# https://goreleaser.com/customization/sign/sign/
+# signs:
+#   - # Sign RPM files using rpmsign --addsign
+#     id: rpmsign
+#     # GoReleaser calls the `cmd` for each artifact to sign. So with
+#     # `artifacts: package` for all generated packages. However, we only want
+#     # to sign rpm packages. The convenient `if` selector that allows to match
+#     # on package file names, is only available in GoReleaser Pro. One approach
+#     # is to create two separate `nfpms` configs, one for generating rpms (and
+#     # give it an id, e.g. rpmpkg) and one for the rest with default treatment
+#     # (see the commented out nfpms section above).
+#     # Another approach is to use a wrapper script that skips signing packages
+#     # that aren't rpms.
+#     cmd: ./pkg/rpmsign-only.sh
+#     # args: ["--addsign", "--key-id", "0xA144323DEAACDF45", "${artifact}"] # releases key
+#     args: ["--addsign", "--key-id", "0x7677576016265A20", "${artifact}"] # jannik's key
+#     artifacts: package
+
+#     # IDs of the artifacts to sign.
+#     # ids:
+#     #   - rpmpkg
+
+#  - # Sign the generated checksums file with gpg (the default)
+#    # args: ["-u", "0xA144323DEAACDF45", "--output", "${signature}", "--detach-sign", "${artifact}"]
+#    # args: ["-u", "0x7677576016265A20", "--output", "${signature}", "--detach-sign", "${artifact}"]
+#    artifacts: checksum
+
+# https://goreleaser.com/customization/package/dockers_v2/
+dockers_v2:
+  - # IDs to filter the binaries/packages.
+    #
+    # Make sure to only include the IDs of binaries you want to `COPY` in your
+    # Dockerfile.
+    #
+    # If you include IDs that don't exist or are not available for the current
+    # architecture being built, the build of the image will be skipped.
+    ids:
+      - dnst
+      - dnst-cross
+
+    images:
+      - "nlnetlabs/dnst"
+
+    tags:
+      - "v{{ .Version }}"
+      - "{{ if .IsNightly }}nightly{{ end }}"
+      - "{{ if not .IsNightly }}latest{{ end }}"
+
+    labels:
+      "org.opencontainers.image.description": "Rust reimplementation of important ldns programs."
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.name": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.source": "{{.GitURL}}"
+
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      # - linux/arm/v6 # debian doesn't have a v6 image
+      - linux/arm/v7
+
+# https://goreleaser.com/customization/sign/docker_sign/
+# docker_signs:
+
+# Automatically create releases on GitHub/GitLab/Gitea (and potentially
+# Forgejo as it was forked from Gitea).
+# https://goreleaser.com/customization/publish/scm/
+# release:
+
+# Automatically upload generated packages to packages.nlnetlabs.nl
+# https://goreleaser.com/customization/publish/blob/
+# blobs:
+#   - provider: s3
+
+# Automatically announce new release on Discourse, ...
+# https://goreleaser.com/customization/announce/
+# announce:
+
+# TODO: Make use of the Changelog.md when generating the GitHub/Codeberg
+# release?
+changelog:
+  # Set this to true if you don't want any changelog at all.
+  #
+  # Warning: this will also ignore any changelog files passed via `--release-notes`,
+  # and will render an empty changelog.
+  #
+  # This may result in an empty release notes on GitHub/GitLab/Gitea.
+  #
+  # Templates: allowed.
+  disable: true
+
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).

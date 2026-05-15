@@ -2,7 +2,7 @@ debug/
 target/
 
 # Currently generated man pages are checked in.
-#/doc/manual/build/
+/doc/manual/build/
 /doc/manual/build/doctrees
 /doc/manual/build/man/_static
 
@@ -11,3 +11,6 @@ target/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+# Added by goreleaser init:
+dist/
+.intentionally-empty-file.o
