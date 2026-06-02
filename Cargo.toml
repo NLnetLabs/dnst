@@ -43,7 +43,7 @@ domain = { version = "0.12.1", features = [
     "unstable-validator",
     "unstable-zonetree"
 ] }
-domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "update-to-domain-0-12-1", optional = true, features = [
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", optional = true, features = [
 ] }
 indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
