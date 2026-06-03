@@ -121,6 +121,12 @@ impl From<fmt::Error> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(error: std::io::Error) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
 impl From<ParseError> for Error {
     fn from(error: ParseError) -> Self {
         Self::new(&error.to_string())
