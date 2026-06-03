@@ -1,34 +1,27 @@
 use core::clone::Clone;
-use core::cmp::Ordering;
-use core::fmt::Write;
 
 use std::ffi::OsString;
-use std::fmt::{self};
 use std::fs::File;
-use std::io::{self, BufWriter};
-use std::path::{Path, PathBuf};
-
-use bytes::BufMut;
+use std::io;
+use std::io::BufReader;
+use std::path::PathBuf;
 
 use clap::Parser;
-use domain::base::name::FlattenInto;
-use domain::base::zonefile_fmt::ZonefileFmt;
-use domain::base::{CanonicalOrd, Record, ToName};
-use domain::dnssec::sign::records::SortedRecords;
-use domain::rdata::ZoneRecordData;
-use domain::zonefile::inplace::{self, Entry};
-use domain::zonetree::types::StoredRecordData;
-use domain::zonetree::{StoredName, StoredRecord};
-use rayon::slice::ParallelSliceMut;
 
-use crate::env::{Env, Stream};
-use crate::error::{Context, Error};
-use crate::{Args, DISPLAY_KIND};
+use domain::new::base::name::RevNameBuf;
+use domain::new::base::RType;
+use domain::new::zonefile::simple::Entry;
+use domain::new::zonefile::simple::ZonefileScanner;
+
+use crate::env::Env;
+use crate::error::Error;
+use crate::Args;
 
 use super::{Command, LdnsCommand};
 
 //------------ Constants -----------------------------------------------------
-
+// TODO: Update
+const DNSSEC_TYPES: [RType; 4] = [RType::DNSKEY, RType::NSEC, RType::NSEC3, RType::RRSIG];
 //------------ ReadZone ------------------------------------------------------
 
 #[derive(Clone, Debug, clap::Parser, PartialEq)]
@@ -90,7 +83,7 @@ pub struct ReadZone {
     // -----------------------------------------------------------------------
     /// Origin for the zone.
     #[arg(short = 'o', value_name = "domain", required = false)]
-    origin: Option<StoredName>,
+    origin: Option<RevNameBuf>,
 
     // -----------------------------------------------------------------------
     // Original ldns-signzone positional arguments in position order:
@@ -107,7 +100,7 @@ pub struct ReadZone {
     invoked_as_ldns: bool,
 }
 
-// TODO
+// TODO: FIX Help use from repository
 const LDNS_HELP: &str = r###"ldns-read-zone [OPTIONS] <zonefile>
     Reads the zonefile and prints it.
     The RR count of the zone is printed to stderr.
@@ -157,7 +150,7 @@ impl LdnsCommand for ReadZone {
     const HELP: &'static str = LDNS_HELP;
     const COMPATIBLE_VERSION: &'static str = "1.8.4"; // TODO
 
-    fn parse_ldns<I: IntoIterator<Item = OsString>>(unargs: I) -> Result<Args, Error> {
+    fn parse_ldns<I: IntoIterator<Item = OsString>>(_unargs: I) -> Result<Args, Error> {
         let args = ReadZone::parse();
         println!("{:?}", args);
 
@@ -174,210 +167,83 @@ impl LdnsCommand for ReadZone {
             zonefile_path: args.zonefile_path,
             invoked_as_ldns: args.invoked_as_ldns,
         })))
-        // let mut parser = lexopt::Parser::from_args(args);
-
-        // while let Some(arg) = parser.next()? {
-        //     match arg {
-        //         Arg::Short('o') => {
-        //             let val = parser.value()?;
-        //             origin = Some(parse_os("-o", &val)?);
-        //         }
-        //         Arg::Value(val) => {
-        //             if zonefile.is_none() {
-        //                 zonefile = Some(parse_os("zonefile", &val)?);
-        //             }
-        //         }
-        //         Arg::Short(x) => return Err(format!("Invalid short option: -{x}").into()),
-        //         Arg::Long(x) => {
-        //             return Err(format!("Long options are not supported, but `--{x}` given").into())
-        //         }
-        //     }
-        // }
-
-        // let Some(zonefile_path) = zonefile else {
-        //     return Err("Missing zonefile argument".into());
-        // };
-
-        // Ok(Args::from(Command::ReadZone(Self {
-        //     origin,
-        //     zonefile_path,
-        //     invoked_as_ldns: true,
-        // })))
     }
 }
 
 impl ReadZone {
-    pub fn execute(self, env: impl Env) -> Result<(), Error> {
+    pub fn execute(&self, env: impl Env) -> Result<(), Error> {
         // Read the zone file.
-        let records: SortedRecords<
-            domain::base::Name<bytes::Bytes>,
-            ZoneRecordData<bytes::Bytes, domain::base::Name<bytes::Bytes>>,
-            MultiThreadedSorter,
-        > = self.load_zone(&env.in_cwd(&self.zonefile_path))?;
 
-        let mut writer: FileOrStdout<BufWriter<File>, _> = FileOrStdout::Stdout(env.stdout());
+        // Had to impl From<std::io::Error> here
+        // I do the reading of the Zonefile here because then I can test the
+        // output of the zonefile without creating a file for it.
+        let zonefile_buf = BufReader::new(File::open(&self.zonefile_path)?);
 
-        for rr in records.iter() {
-            if self.canonicalize {
-                // TODO: there is no way to modify the owner inplace?
-                let name: domain::base::Name<bytes::Bytes> = rr.owner().to_canonical_name();
-                println!("{:?}", name);
-            }
-            self.writeln_rr(&mut writer, rr)?;
-        }
+        self.go_through_zone(zonefile_buf, &env.stdout())?;
 
         Ok(())
     }
 
-    fn write_rr<W, N, O: AsRef<[u8]>>(
-        &self,
-        writer: &mut W,
-        rr: &Record<N, ZoneRecordData<O, N>>,
-    ) -> std::fmt::Result
+    // TODO: Better name
+    // pub (super) for testing
+    pub(super) fn go_through_zone<R, W>(&self, zf_buf: R, mut out: W) -> Result<(), Error>
     where
-        N: ToName,
-        W: Write,
-        ZoneRecordData<O, N>: ZonefileFmt,
+        R: io::BufRead,
+        W: io::Write,
     {
-        writer.write_fmt(format_args!("{}", rr.display_zonefile(DISPLAY_KIND)))
-    }
+        let mut zf = ZonefileScanner::new(zf_buf, self.origin.as_deref());
+        loop {
+            let entry = match zf.scan() {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break, // no more left
+                Err(e) => return Err(Error::new(&e.to_string())),
+            };
+            let Entry::Record(record) = entry else {
+                eprintln!("Skipping non-Record entries");
+                continue;
+            };
 
-    fn writeln_rr<W, N, O: AsRef<[u8]>>(
-        &self,
-        writer: &mut W,
-        rr: &Record<N, ZoneRecordData<O, N>>,
-    ) -> std::fmt::Result
-    where
-        N: ToName,
-        W: Write,
-        ZoneRecordData<O, N>: ZonefileFmt,
-    {
-        self.write_rr(writer, rr)?;
-        writer.write_char('\n')
-    }
+            //--- Only print DNSSEC data
+            if self.print_only_dnssec && is_dnssec_data(record.rtype) {
+                continue;
+            }
+            //--- Do not print DNSSEC data
+            if self.print_not_dnssec && !is_dnssec_data(record.rtype) {
+                continue;
+                // Check if ldns checks for apex
+            }
+            //--- Do not print SOA
+            // Check if ldns checks for apex
+            if self.print_not_soa && record.rtype == RType::SOA {
+                continue;
+            }
 
-    fn load_zone(
-        &self,
-        zonefile_path: &Path,
-    ) -> Result<SortedRecords<StoredName, StoredRecordData, MultiThreadedSorter>, Error> {
-        // Don't use Zonefile::load() as it knows nothing about the size of
-        // the original file so uses default allocation which allocates more
-        // bytes than are needed. Instead control the allocation size based on
-        // our knowledge of the file size.
-        let mut zone_file = File::open(zonefile_path)
-            .map_err(|e| format!("error opening file: {e}").into())
-            .context(&format!(
-                "loading zone file from path '{}'",
-                zonefile_path.display(),
-            ))?;
-        let zone_file_len = zone_file
-            .metadata()
-            .map_err(|e| {
-                format!(
-                    "error getting metadata from zonefile {}: {e}",
-                    zonefile_path.display()
-                )
-            })?
-            .len();
-        let mut buf = inplace::Zonefile::with_capacity(zone_file_len as usize).writer();
-        std::io::copy(&mut zone_file, &mut buf).map_err(|e| {
-            format!(
-                "error copying from zonefile {}: {e}",
-                zonefile_path.display()
-            )
-        })?;
-        let mut reader = buf.into_inner();
-
-        if let Some(origin) = &self.origin {
-            reader.set_origin(origin.clone());
-        }
-
-        // Push records to an unsorted vec, then sort at the end, as this is faster than
-        // sorting one record at a time.
-        let mut records = vec![];
-
-        for entry in reader {
-            let entry = entry.map_err(|err| format!("Invalid zone file: {err}"))?;
-            match entry {
-                Entry::Record(record) => {
-                    let record: StoredRecord = record.flatten_into();
-                    records.push(record);
-                }
-                Entry::Include { .. } => {
-                    return Err(Error::from(
-                        "Invalid zone file: $INCLUDE directive is not supported",
-                    ));
-                }
+            match out.write_all(format!("{:?}", record).as_bytes()) {
+                Ok(_) => (),
+                Err(e) => eprintln!("Error while writing to Writer {:?}", e),
             }
         }
-
-        // Use a multi-threaded parallel sorter to sort our unsorted vec into
-        // a `SortedRecords` type.
-        let records = SortedRecords::<_, _, MultiThreadedSorter>::from(records);
-
-        Ok(records)
+        out.flush()?;
+        Ok(())
     }
 }
 
-//------------ FileOrStdout --------------------------------------------------
-
-enum FileOrStdout<T: io::Write, U: io::Write> {
-    File(T), // TODO: Fix this. Just use Stdout but impl fmt::Write for it.
-    Stdout(Stream<U>),
+fn is_dnssec_data(rtype: RType) -> bool {
+    DNSSEC_TYPES.contains(&rtype)
 }
-
-impl<T: io::Write, U: io::Write> fmt::Write for FileOrStdout<T, U> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        match self {
-            FileOrStdout::File(f) => f.write_all(s.as_bytes()).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(f) => {
-                write!(f, "{s}");
-                Ok(())
-            }
-        }
-    }
-
-    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
-        match self {
-            FileOrStdout::File(f) => f.write_fmt(args).map_err(|_| fmt::Error),
-            FileOrStdout::Stdout(o) => {
-                o.write_fmt(args);
-                Ok(())
-            }
-        }
-    }
-}
-
-//------------ MultiThreadedSorter -------------------------------------------
-
-/// A parallelized sort implementation for use with [`SortedRecords`].
-///
-/// TODO: Should we add a `-j` (jobs) command line argument to override the
-/// default Rayon behaviour of using as many threads as their are CPU cores?
-struct MultiThreadedSorter;
-
-impl domain::dnssec::sign::records::Sorter for MultiThreadedSorter {
-    fn sort_by<N, D, F>(records: &mut Vec<Record<N, D>>, compare: F)
-    where
-        F: Fn(&Record<N, D>, &Record<N, D>) -> Ordering + Sync,
-        Record<N, D>: CanonicalOrd + Send,
-    {
-        records.par_sort_by(compare);
-    }
-}
-
 //------------ Tests ---------------------------------------------------------
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
     use std::str::FromStr;
 
+    use domain::new::base::name::{NameParseError, RevNameBuf};
+
     use crate::commands::readzone::PathBuf;
-    use crate::commands::readzone::StoredName;
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
-
-    use super::ReadZone;
 
     #[track_caller]
     fn parse(args: FakeCmd) -> ReadZone {
@@ -388,26 +254,61 @@ mod test {
         x
     }
 
-    #[test]
-    fn dnst_parse_successes() {
-        let cmd = FakeCmd::new(["dnst", "read-zone"]);
-
-        let base = ReadZone {
+    #[track_caller]
+    fn get_default_readzone(path_str: &str) -> ReadZone {
+        ReadZone {
             canonicalize: false,
             print_only_dnssec: false,
             print_rrsig_null: false,
             manipulate_serial: None,
-            origin: Some(StoredName::from_str("example.org").unwrap()),
+            origin: None,
             pad_soa_serial: false,
             print_not_dnssec: false,
             print_not_soa: false,
             canonical_sort: false,
-            zonefile_path: PathBuf::from("example.org.zone"),
+            zonefile_path: PathBuf::from(path_str),
             invoked_as_ldns: false,
-        };
+        }
+    }
+
+    #[test]
+    fn dnst_parse_successes() {
+        let cmd = FakeCmd::new(["dnst", "read-zone"]);
 
         // Check the defaults
-        assert_eq!(parse(cmd.args(["-oexample.org", "example.org.zone"])), base);
+        let path = "example.org.zone";
+        let base = ReadZone {
+            ..get_default_readzone(path)
+        };
+        assert_eq!(parse(cmd.args(["-o", "example.org", path])), base);
+    }
+
+    #[test]
+    fn check_revnamebuf() {
+        let name = "example.org.";
+        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
+        assert!(rnb.is_ok());
+    }
+
+    fn verify_readzone_output(readzone: ReadZone, zonefile: &str, output: &str) {
+        let mut vec_buf: Vec<u8> = Vec::new();
+        let result = readzone.go_through_zone(zonefile.as_bytes(), &mut vec_buf);
+        assert!(result.is_ok());
+
+        let is_equal = vec_buf == output.as_bytes();
+        println!("{:?}", String::from_utf8(vec_buf));
+        assert!(is_equal)
+    }
+
+    #[test]
+    fn not_print_soa() {
+        let zonefile = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1";
+
+        let readzone = ReadZone {
+            print_not_soa: true,
+            ..get_default_readzone("path-does-not-matter-here.txt")
+        };
+        verify_readzone_output(readzone, zonefile, "");
     }
 
     #[test]
@@ -416,12 +317,13 @@ mod test {
             "dnst",
             "read-zone",
             "-c",
-            "-o example.com.",
+            "-o",
+            "example.com",
             "test-data/example.org",
         ])
         .run();
 
-        println!("{}", res1.stdout);
+        println!("{:?}", res1.stdout);
         assert_eq!(res1.stderr, "");
         assert_eq!(res1.exit_code, 0);
     }
