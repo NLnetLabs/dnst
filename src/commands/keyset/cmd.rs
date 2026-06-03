@@ -3280,7 +3280,7 @@ impl WorkSpace {
             }
         }
 
-        self.state.dnskey_rrset.truncate(0);
+        self.state.dnskey_rrset.clear();
         for r in dnskeys {
             self.state
                 .dnskey_rrset
@@ -3444,7 +3444,7 @@ impl WorkSpace {
             }
         }
 
-        self.state.cds_rrset.truncate(0);
+        self.state.cds_rrset.clear();
         for r in cdnskey_list {
             self.state
                 .cds_rrset
@@ -3523,7 +3523,7 @@ impl WorkSpace {
             }
         }
 
-        self.state.ds_rrset.truncate(0);
+        self.state.ds_rrset.clear();
         for r in ds_list {
             self.state
                 .ds_rrset
@@ -4326,7 +4326,7 @@ fn create_cds_rrset_helper(
 
 /// Remove the CDS and CDNSKEY RRsets and signatures.
 fn remove_cds_rrset(kss: &mut KeySetState) {
-    kss.cds_rrset.truncate(0);
+    kss.cds_rrset.clear();
 }
 
 /// Print a list of actions.

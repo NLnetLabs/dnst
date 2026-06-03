@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "dnst"
-version = "0.2.0-alpha1"
+version = "0.2.0-alpha2"
 dependencies = [
  "bytes",
  "chrono",

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased next version
+## v0.2.0-alpha2
+
+Released 2026-05-15.
 
 ### Breaking changes
 
