@@ -329,6 +329,7 @@ dependencies = [
 name = "dnst"
 version = "0.2.0-alpha2"
 dependencies = [
+ "bumpalo",
  "bytes",
  "chrono",
  "clap",

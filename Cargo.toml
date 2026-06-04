@@ -101,6 +101,7 @@ futures = "0.3.31"
 fs2 = "0.4.3"
 same-file = "1.0.6"
 supports-color = "3.0.2"
+bumpalo = "3.20.3"
 
 [dev-dependencies]
 const_format = " 0.2.33"
