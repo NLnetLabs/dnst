@@ -62,3 +62,8 @@ include:
     published_pkg: 'ldns-utils'
     # --enablerepo crb is no longer needed since alma10 (https://almalinux.org/blog/2025-09-08-enabling-crb-by-default-for-almalinux10/)
     # rpm_yum_extra_args: --enablerepo crb
+
+# Exclude upgrade testing on Ubuntu Resolute as no prior released versions exist to upgrade from.
+exclude:
+  - image: "ubuntu:resolute"
+    mode: "upgrade-from-published"
