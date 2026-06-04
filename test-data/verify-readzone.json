@@ -1,0 +1,41 @@
+{
+  "tests": [
+    {
+      "info": "Error when using -0 option",
+      "config": [
+        "-0",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. GzQw+QzwLDJr13REPGVmpEChjD1D2XlX0ie1DnWHpgaEw1E/dhs3lCN3+BmHd4Kx3tffTRgiyq65HxR6feQ5v7VmAifjyXUYB1DZur1eP5q0Ms2ygCB3byoeMgCNsFS1oKZ2LdzNBRpy3oace8xQn1SpmHGfyrsgg+WbHKCT1dY=",
+      "output": "The Result ldns-read-zone produces: example.com. 3600 IN RRSIG SOA 8 2 3600 (null) (null) 37444 example.com. (null)",
+      "error": "The option -0 is not implemented. Do you need it?"
+    },
+    {
+      "info": "Do not print the SOA record.",
+      "config": [
+        "-n",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
+      "output": ""
+    },
+    {
+      "info": "Do not print DNSSEC records.",
+      "config": [
+        "-s",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. GzQw+QzwLDJr13REPGVmpEChjD1D2XlX0ie1DnWHpgaEw1E/dhs3lCN3+BmHd4Kx3tffTRgiyq65HxR6feQ5v7VmAifjyXUYB1DZur1eP5q0Ms2ygCB3byoeMgCNsFS1oKZ2LdzNBRpy3oace8xQn1SpmHGfyrsgg+WbHKCT1dY=",
+      "output": ""
+    },
+    {
+      "info": "Only print DNSSEC data.",
+      "config": [
+        "-d",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
+      "output": ""
+    }
+  ]
+}

@@ -44,7 +44,7 @@ pub struct ReadZone {
     /// Print a (null) for the RRSIG inception, expiry and key data. This option
     /// can be used when comparing different signing systems that use the same
     /// DNSKEYs for signing but would have a slightly different timings/jitter.
-    #[arg(short = 'O', default_value_t = false)]
+    #[arg(short = '0', default_value_t = false)]
     print_rrsig_null: bool,
 
     /// Do not print the SOA record
@@ -204,11 +204,11 @@ impl ReadZone {
             };
 
             //--- Only print DNSSEC data
-            if self.print_only_dnssec && is_dnssec_data(record.rtype) {
+            if self.print_only_dnssec && !is_dnssec_data(record.rtype) {
                 continue;
             }
             //--- Do not print DNSSEC data
-            if self.print_not_dnssec && !is_dnssec_data(record.rtype) {
+            if self.print_not_dnssec && is_dnssec_data(record.rtype) {
                 continue;
                 // Check if ldns checks for apex
             }
@@ -217,9 +217,15 @@ impl ReadZone {
             if self.print_not_soa && record.rtype == RType::SOA {
                 continue;
             }
+            if self.print_rrsig_null && record.rtype == RType::RRSIG {
+                // What the fuck, how should I change that to a string?!
+                return Err(Error::new(
+                    "The option -0 is not implemented. Do you need it?",
+                ));
+            }
 
             match out.write_all(format!("{:?}", record).as_bytes()) {
-                Ok(_) => (),
+                Ok(()) => (),
                 Err(e) => eprintln!("Error while writing to Writer {:?}", e),
             }
         }
@@ -237,8 +243,6 @@ fn is_dnssec_data(rtype: RType) -> bool {
 mod test {
     use super::*;
 
-    use std::str::FromStr;
-
     use domain::new::base::name::{NameParseError, RevNameBuf};
 
     use crate::commands::readzone::PathBuf;
@@ -252,6 +256,61 @@ mod test {
             panic!("Not a ReadZone!");
         };
         x
+    }
+
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCase {
+        info: String,
+        config: Vec<String>,
+        input: String,
+        output: String,
+        error: Option<String>,
+    }
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCaseCollection {
+        tests: Vec<TestCase>,
+    }
+
+    #[test]
+    fn verify_readzone_json() {
+        let cmd = FakeCmd::new(["dnst", "read-zone"]);
+
+        // Check the defaults
+        let test_case_collection: TestCaseCollection =
+            serde_json::from_str(include_str!("../../test-data/verify-readzone.json"))
+                .expect("JSON was not well-formatted");
+
+        for (index, test) in test_case_collection.tests.iter().enumerate() {
+            println!("# start test {} - {}", index, test.info);
+
+            let readzone_config: ReadZone = parse(cmd.args(&test.config));
+
+            println!("ReadZone Config {:?}", readzone_config);
+            println!("Input Zonefile\n{:?}", test.input);
+
+            if test.error.is_none() {
+                println!("Expected Output Zonefile\n{:?}", test.output);
+            }
+
+            let mut vec_buf: Vec<u8> = Vec::new();
+            let result = readzone_config.go_through_zone(test.input.as_bytes(), &mut vec_buf);
+
+            if let Some(error_message) = test.error.clone() {
+                println!("Resulting Error\n{:?}", result);
+
+                if let Err(error) = result {
+                    assert_eq!(error.to_string(), error_message);
+                } else {
+                    println!("{:?}", result);
+                    unreachable!("Expected test to fail with error message");
+                };
+            } else {
+                let is_equal = vec_buf == test.output.as_bytes();
+                println!("Resulting Output\n{:?}", String::from_utf8(vec_buf));
+                assert!(is_equal);
+            }
+            println!("# end test {} - {}", index, test.info);
+        }
     }
 
     #[track_caller]
@@ -290,27 +349,6 @@ mod test {
         assert!(rnb.is_ok());
     }
 
-    fn verify_readzone_output(readzone: ReadZone, zonefile: &str, output: &str) {
-        let mut vec_buf: Vec<u8> = Vec::new();
-        let result = readzone.go_through_zone(zonefile.as_bytes(), &mut vec_buf);
-        assert!(result.is_ok());
-
-        let is_equal = vec_buf == output.as_bytes();
-        println!("{:?}", String::from_utf8(vec_buf));
-        assert!(is_equal)
-    }
-
-    #[test]
-    fn not_print_soa() {
-        let zonefile = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1";
-
-        let readzone = ReadZone {
-            print_not_soa: true,
-            ..get_default_readzone("path-does-not-matter-here.txt")
-        };
-        verify_readzone_output(readzone, zonefile, "");
-    }
-
     #[test]
     fn simple_readzone() {
         let res1 = FakeCmd::new([
@@ -326,70 +364,5 @@ mod test {
         println!("{:?}", res1.stdout);
         assert_eq!(res1.stderr, "");
         assert_eq!(res1.exit_code, 0);
-    }
-
-    #[test]
-    fn name_canonicalization() {
-        use bytes::Bytes;
-
-        use domain::base::iana::Class;
-        use domain::base::name::Name;
-        use domain::base::Record;
-        use domain::base::Ttl;
-        use domain::new;
-        use domain::rdata::Mx;
-        use domain::rdata::ZoneRecordData;
-
-        let owner: Name<bytes::Bytes> = Name::<bytes::Bytes>::from_str("EXAMPLE.com.").unwrap();
-        let class = Class::IN;
-        let ttl = Ttl::from_hours(1);
-        let exchange: Name<bytes::Bytes> =
-            Name::<bytes::Bytes>::from_str("mail.example.com.").unwrap();
-        let data: ZoneRecordData<Bytes, Name<Bytes>> = ZoneRecordData::Mx(Mx::new(10, exchange));
-
-        let record: Record<Name<Bytes>, ZoneRecordData<Bytes, Name<Bytes>>>;
-        record = Record::new(owner, class, ttl, data);
-
-        let name: new::base::name::NameBuf = "EXAMPLE.com".parse().unwrap();
-        let rtype: new::base::RType = new::base::RType::MX;
-        let rclass = new::base::RClass::IN;
-        let ttl = new::base::TTL::from(3600);
-        let preference = new::base::wire::U16::new(10);
-        let exchange: new::base::name::NameBuf = "MAIL.example.com".parse().unwrap();
-
-        let rdata: new::rdata::RecordData<new::base::name::NameBuf> =
-            new::rdata::RecordData::Mx(new::rdata::Mx {
-                preference,
-                exchange,
-            });
-
-        let new_record = new::base::Record::new(
-            name,
-            rtype.clone(),
-            rclass.clone(),
-            ttl.clone(),
-            rdata.clone(),
-        );
-
-        let name: new::base::name::NameBuf = "example.com".parse().unwrap();
-
-        let other_new_record = new::base::Record::new(name, rtype, rclass, ttl, rdata);
-
-        println!(
-            "{:?} {:?} {:?}",
-            new_record.rname,
-            new_record.rname.cmp(&other_new_record.rname),
-            other_new_record.rname
-        );
-
-        let mut target = Vec::<u8>::new();
-
-        record
-            .compose_canonical(&mut target)
-            .expect("This is fine!");
-
-        println!("{:?}", record);
-
-        println!("{:?}", String::from_utf8(target));
     }
 }
