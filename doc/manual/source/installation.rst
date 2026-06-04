@@ -21,8 +21,9 @@ to get started.
        To install a dnst package, you need the 64-bit version of one of
        these Debian versions:
 
-         -  Debian Bookworm 12
-         -  Debian Bullseye 11
+         - Debian Trixie 13
+         - Debian Bookworm 12
+         - Debian Bullseye 11
 
        Packages for the ``amd64``/``x86_64`` architecture are available for
        all listed versions. In addition, we offer ``armhf`` architecture
@@ -75,9 +76,9 @@ to get started.
        To install a dnst package, you need the 64-bit version of one of
        these Ubuntu versions:
 
+         - Ubuntu Resolute 26.04 (LTS)
          - Ubuntu Noble 24.04 (LTS)
          - Ubuntu Jammy 22.04 (LTS)
-         - Ubuntu Focal 20.04 (LTS)
 
        Packages are available for the ``amd64``/``x86_64`` architecture only.
        
@@ -126,7 +127,7 @@ to get started.
    .. group-tab:: RHEL
 
        To install a dnst package, you need Red Hat Enterprise Linux
-       (RHEL) 8 or 9, or compatible operating system such as Rocky Linux.
+       (RHEL) 8, 9 or 10 or compatible operating system such as Rocky Linux.
        Packages are available for the ``amd64``/``x86_64`` architecture only.
        
        First create a file named :file:`/etc/yum.repos.d/nlnetlabs.repo`,
