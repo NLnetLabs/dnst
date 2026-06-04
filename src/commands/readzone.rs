@@ -47,6 +47,10 @@ pub struct ReadZone {
     #[arg(short = '0', default_value_t = false)]
     print_rrsig_null: bool,
 
+    /// Include Bubble Babble encoding of DS's.
+    #[arg(short = 'b', default_value_t = false)]
+    print_ds_bubble_babble: bool,
+
     /// Do not print the SOA record
     #[arg(short = 'n', default_value_t = false)]
     print_not_soa: bool,
@@ -158,6 +162,7 @@ impl LdnsCommand for ReadZone {
             canonicalize: args.canonicalize,
             print_only_dnssec: args.print_only_dnssec,
             print_rrsig_null: args.print_rrsig_null,
+            print_ds_bubble_babble: args.print_ds_bubble_babble,
             print_not_soa: args.print_not_soa,
             pad_soa_serial: args.pad_soa_serial,
             print_not_dnssec: args.print_not_dnssec,
@@ -203,6 +208,17 @@ impl ReadZone {
                 continue;
             };
 
+            //--- Through error when trying print_rrsig_null
+            if self.print_rrsig_null {
+                return Err(Error::new(
+                    "The option -0 is not implemented. Do you need it?",
+                ));
+            }
+            if self.print_ds_bubble_babble {
+                return Err(Error::new(
+                    "The option -b is not implemented. Do you need it?",
+                ));
+            }
             //--- Only print DNSSEC data
             if self.print_only_dnssec && !is_dnssec_data(record.rtype) {
                 continue;
@@ -216,12 +232,6 @@ impl ReadZone {
             // Check if ldns checks for apex
             if self.print_not_soa && record.rtype == RType::SOA {
                 continue;
-            }
-            if self.print_rrsig_null && record.rtype == RType::RRSIG {
-                // What the fuck, how should I change that to a string?!
-                return Err(Error::new(
-                    "The option -0 is not implemented. Do you need it?",
-                ));
             }
 
             match out.write_all(format!("{:?}", record).as_bytes()) {
@@ -264,7 +274,6 @@ mod test {
         config: Vec<String>,
         input: String,
         output: String,
-        error: Option<String>,
     }
     #[derive(Debug, serde::Deserialize, serde::Serialize)]
     struct TestCaseCollection {
@@ -285,29 +294,23 @@ mod test {
 
             let readzone_config: ReadZone = parse(cmd.args(&test.config));
 
-            println!("ReadZone Config {:?}", readzone_config);
-            println!("Input Zonefile\n{:?}", test.input);
-
-            if test.error.is_none() {
-                println!("Expected Output Zonefile\n{:?}", test.output);
-            }
+            println!("Input\n{:?}", test.input);
+            println!("Expected Output\n{:?}", test.output);
 
             let mut vec_buf: Vec<u8> = Vec::new();
             let result = readzone_config.go_through_zone(test.input.as_bytes(), &mut vec_buf);
 
-            if let Some(error_message) = test.error.clone() {
-                println!("Resulting Error\n{:?}", result);
-
-                if let Err(error) = result {
-                    assert_eq!(error.to_string(), error_message);
-                } else {
-                    println!("{:?}", result);
-                    unreachable!("Expected test to fail with error message");
-                };
-            } else {
-                let is_equal = vec_buf == test.output.as_bytes();
-                println!("Resulting Output\n{:?}", String::from_utf8(vec_buf));
-                assert!(is_equal);
+            println!("Function Result\n{:?}", result);
+            match result {
+                Ok(_) => {
+                    let is_equal = vec_buf == test.output.as_bytes();
+                    println!("Resulting Output\n{:?}", String::from_utf8(vec_buf));
+                    assert!(is_equal);
+                }
+                Err(e) => {
+                    println!("Resulting Error\n{:?}", String::from_utf8(vec_buf));
+                    assert_eq!(e.to_string(), test.output);
+                }
             }
             println!("# end test {} - {}", index, test.info);
         }
@@ -319,6 +322,7 @@ mod test {
             canonicalize: false,
             print_only_dnssec: false,
             print_rrsig_null: false,
+            print_ds_bubble_babble: false,
             manipulate_serial: None,
             origin: None,
             pad_soa_serial: false,
