@@ -362,8 +362,9 @@ dependencies = [
 
 [[package]]
 name = "domain"
-version = "0.12.0"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#06d0c57543add91876359df9de7d11f0d02b9cb2"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c469892dddfeff64ecfdbc64cf059c77fb0decaeccd4d5d484394bdd6312bac"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -395,7 +396,7 @@ dependencies = [
 [[package]]
 name = "domain-kmip"
 version = "0.0.1"
-source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=main#efb1a8674ef034ebf45c8f205b7d9a53b36e5e1d"
+source = "git+https://github.com/NLnetLabs/domain-kmip.git#bb0da8603febd184c2bae6998d81da81d8570c9c"
 dependencies = [
  "bcder",
  "domain",
@@ -407,8 +408,9 @@ dependencies = [
 
 [[package]]
 name = "domain-macros"
-version = "0.12.0"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=main#06d0c57543add91876359df9de7d11f0d02b9cb2"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fef7ef74e413e36d5364db163ca577ccb56f2f74377705d5f920ee3e1544127"
 dependencies = [
  "proc-macro2",
  "quote",
