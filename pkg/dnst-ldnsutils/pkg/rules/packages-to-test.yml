@@ -64,6 +64,6 @@ include:
     # rpm_yum_extra_args: --enablerepo crb
 
 # Exclude upgrade testing on Ubuntu Resolute as no prior released versions exist to upgrade from.
+# Exclude fresh install testing on Ubuntu Resolute as no prior released version of the dnst dependency exist to install.
 exclude:
   - image: "ubuntu:resolute"
-    mode: "upgrade-from-published"
