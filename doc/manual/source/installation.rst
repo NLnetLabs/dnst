@@ -50,13 +50,13 @@ to get started.
 
           curl -fsSL https://packages.nlnetlabs.nl/aptkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/nlnetlabs-archive-keyring.gpg
 
-       Now, use the following command to set up the *main* repository:
+       Now, use the following command to set up the *proposed* repository:
 
        .. code-block:: bash
 
           echo \
           "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nlnetlabs-archive-keyring.gpg] https://packages.nlnetlabs.nl/linux/debian \
-          $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
+          $(lsb_release -cs)-proposed main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
 
        Update the :program:`apt` package index once more: 
 
@@ -103,13 +103,13 @@ to get started.
 
           curl -fsSL https://packages.nlnetlabs.nl/aptkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/nlnetlabs-archive-keyring.gpg
 
-       Now, use the following command to set up the *main* repository:
+       Now, use the following command to set up the *proposed* repository:
 
        .. code-block:: bash
 
           echo \
           "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nlnetlabs-archive-keyring.gpg] https://packages.nlnetlabs.nl/linux/ubuntu \
-          $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
+          $(lsb_release -cs)-proposed main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
 
        Update the :program:`apt` package index once more: 
 
@@ -129,14 +129,14 @@ to get started.
        (RHEL) 8 or 9, or compatible operating system such as Rocky Linux.
        Packages are available for the ``amd64``/``x86_64`` architecture only.
        
-       First create a file named :file:`/etc/yum.repos.d/nlnetlabs.repo`,
+       First create a file named :file:`/etc/yum.repos.d/nlnetlabs-testing.repo`,
        enter this configuration and save it:
        
        .. code-block:: text
        
           [nlnetlabs]
-          name=NLnet Labs
-          baseurl=https://packages.nlnetlabs.nl/linux/centos/$releasever/main/$basearch
+          name=NLnet Labs Testing
+          baseurl=https://packages.nlnetlabs.nl/linux/centos/$releasever/proposed/$basearch
           enabled=1
         
        Add the GPG key from NLnet Labs:
