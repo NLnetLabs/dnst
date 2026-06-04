@@ -10,6 +10,26 @@
       "output": "The option -0 is not implemented. Do you need it?"
     },
     {
+      "info": "Exclude all NS records",
+      "config": [
+        "-e",
+        "NS",
+        "does-not-matter.zone"
+      ],
+      "input": "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1",
+      "output": "Record { rname: RevName(.com.example), rtype: RType::A, rclass: RClass::IN, ttl: TTL(1), rdata: A(A(1.1.1.1)) }\n"
+    },
+    {
+      "info": "Print only NS records",
+      "config": [
+        "-E",
+        "NS",
+        "does-not-matter.zone"
+      ],
+      "input": "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1",
+      "output": "Record { rname: RevName(.org.example), rtype: RType::NS, rclass: RClass::IN, ttl: TTL(1), rdata: Ns(Ns { server: Name(ns1.net.) }) }\n"
+    },
+    {
       "info": "Error when using -b option",
       "config": [
         "-b",
@@ -26,6 +46,26 @@
       ],
       "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
       "output": ""
+    },
+    {
+      "info": "Set serial to +10",
+      "config": [
+        "-S",
+        "+10",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
+      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(11)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+    },
+    {
+      "info": "Do not print the SOA record.",
+      "config": [
+        "-S",
+        "10",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
+      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(10)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
     },
     {
       "info": "Do not print DNSSEC records.",

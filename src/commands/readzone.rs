@@ -1,5 +1,6 @@
 use core::clone::Clone;
 
+use chrono::Datelike;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io;
@@ -9,7 +10,9 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use domain::new::base::name::RevNameBuf;
-use domain::new::base::RType;
+use domain::new::base::{RType, Serial};
+use domain::new::rdata::RecordData;
+use domain::new::zonefile::scanner::{Scan, ScanError, Scanner};
 use domain::new::zonefile::simple::Entry;
 use domain::new::zonefile::simple::ZonefileScanner;
 
@@ -31,6 +34,16 @@ pub struct ReadZone {
     // -----------------------------------------------------------------------
     // Original ldns-read-zone options in ldns-read-zone -h order:
     // -----------------------------------------------------------------------
+    /// Print a (null) for the RRSIG inception, expiry and key data. This option
+    /// can be used when comparing different signing systems that use the same
+    /// DNSKEYs for signing but would have a slightly different timings/jitter.
+    #[arg(short = '0', default_value_t = false)]
+    print_rrsig_null: bool,
+
+    /// Include Bubble Babble encoding of DS's.
+    #[arg(short = 'b', default_value_t = false)]
+    print_ds_bubble_babble: bool,
+
     /// Canonicalize all resource records in the zone before printing
     #[arg(short = 'c', default_value_t = false)]
     canonicalize: bool,
@@ -41,15 +54,19 @@ pub struct ReadZone {
     #[arg(short = 'd', default_value_t = false)]
     print_only_dnssec: bool,
 
-    /// Print a (null) for the RRSIG inception, expiry and key data. This option
-    /// can be used when comparing different signing systems that use the same
-    /// DNSKEYs for signing but would have a slightly different timings/jitter.
-    #[arg(short = '0', default_value_t = false)]
-    print_rrsig_null: bool,
+    /// -e <rr type>
+    /// Do not print RRs of the given <rr type>.
+    /// This option may be given multiple times.
+    /// -e is not meant to be used together with -E.
+    #[arg(short = 'e')]
+    rrtype_exclude: Vec<String>,
 
-    /// Include Bubble Babble encoding of DS's.
-    #[arg(short = 'b', default_value_t = false)]
-    print_ds_bubble_babble: bool,
+    /// -E <rr type>
+    /// Print only RRs of the given <rr type>.
+    /// This option may be given multiple times.
+    /// -E is not meant to be used together with -e.
+    #[arg(short = 'E', action = clap::ArgAction::Append)]
+    rrtype_include: Vec<String>,
 
     /// Do not print the SOA record
     #[arg(short = 'n', default_value_t = false)]
@@ -74,6 +91,25 @@ pub struct ReadZone {
     /// simply increased by one.
     #[arg(short = 'S', required = false)]
     manipulate_serial: Option<String>,
+
+    /// -u <rr type>
+    /// Mark <rr type> for printing in unknown type format.
+    /// This option may be given multiple times.
+    /// -u is not meant to be used together with -U.
+    #[arg(short = 'u')]
+    rrtype_mark_unknown_include: Vec<String>,
+
+    /// -U <rr type>
+    /// Mark <rr type> for not printing in unknown type format.
+    /// This option may be given multiple times.
+    /// The first occurrence of the -U option marks all RR types for
+    /// printing in unknown type format except for the given <rr type>.
+    /// Subsequent -U options will clear the mark for those <rr type>s
+    /// too, so that only the given <rr type>s will be printed in the
+    /// presentation format specific for those <rr type>s.
+    /// -U is not meant to be used together with -u.
+    #[arg(short = 'U', action = clap::ArgAction::Append)]
+    rrtype_mark_unknown_exclude: Vec<String>,
 
     // TODO: I don't think that -z implies -c. Because you can sort the records
     // even though you print them in the original form i.e. with some capital
@@ -163,6 +199,10 @@ impl LdnsCommand for ReadZone {
             print_only_dnssec: args.print_only_dnssec,
             print_rrsig_null: args.print_rrsig_null,
             print_ds_bubble_babble: args.print_ds_bubble_babble,
+            rrtype_exclude: args.rrtype_exclude,
+            rrtype_include: args.rrtype_include,
+            rrtype_mark_unknown_include: args.rrtype_mark_unknown_include,
+            rrtype_mark_unknown_exclude: args.rrtype_mark_unknown_exclude,
             print_not_soa: args.print_not_soa,
             pad_soa_serial: args.pad_soa_serial,
             print_not_dnssec: args.print_not_dnssec,
@@ -188,7 +228,6 @@ impl ReadZone {
 
         Ok(())
     }
-
     // TODO: Better name
     // pub (super) for testing
     pub(super) fn go_through_zone<R, W>(&self, zf_buf: R, mut out: W) -> Result<(), Error>
@@ -197,17 +236,37 @@ impl ReadZone {
         W: io::Write,
     {
         let mut zf = ZonefileScanner::new(zf_buf, self.origin.as_deref());
+
+        let mut rrtype_exclude: Vec<RType> = Vec::new();
+        for rr in &self.rrtype_exclude {
+            rrtype_exclude.push(scan_rtype(rr.as_bytes())?);
+        }
+        let mut rrtype_include: Vec<RType> = Vec::new();
+        for rr in &self.rrtype_include {
+            rrtype_include.push(scan_rtype(rr.as_bytes())?);
+        }
         loop {
             let entry = match zf.scan() {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break, // no more left
                 Err(e) => return Err(Error::new(&e.to_string())),
             };
-            let Entry::Record(record) = entry else {
+            let Entry::Record(mut record) = entry else {
                 eprintln!("Skipping non-Record entries");
                 continue;
             };
 
+            if let Some(serial_arg) = &self.manipulate_serial {
+                if let RecordData::Soa(soa) = &mut record.rdata {
+                    soa.serial = manipulate_serial(soa.serial, serial_arg)?;
+                }
+            }
+            if !rrtype_include.is_empty() && !rrtype_include.contains(&record.rtype) {
+                continue;
+            }
+            if !rrtype_exclude.is_empty() && rrtype_exclude.contains(&record.rtype) {
+                continue;
+            }
             //--- Through error when trying print_rrsig_null
             if self.print_rrsig_null {
                 return Err(Error::new(
@@ -234,7 +293,7 @@ impl ReadZone {
                 continue;
             }
 
-            match out.write_all(format!("{:?}", record).as_bytes()) {
+            match out.write_all(format!("{:?}\n", record).as_bytes()) {
                 Ok(()) => (),
                 Err(e) => eprintln!("Error while writing to Writer {:?}", e),
             }
@@ -242,6 +301,35 @@ impl ReadZone {
         out.flush()?;
         Ok(())
     }
+}
+
+fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
+    match arg.to_lowercase().as_str() {
+        "unixtime" => Ok(get_unixtime_serial()?),
+        "yyyymmddxx" => Ok(get_yyyymmddxx_serial()),
+        s if s.chars().next() == Some('+') => Ok(current.inc((s[1..]).parse::<i32>()?)),
+        s if s.chars().next() == Some('-') => Ok(current.inc(-(s[1..]).parse::<i32>()?)),
+        s => Ok((s.parse::<u32>())?.into()),
+    }
+}
+
+fn get_unixtime_serial() -> Result<Serial, Error> {
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    Ok((t.as_secs() as u32).into())
+}
+
+fn get_yyyymmddxx_serial() -> Serial {
+    let now = chrono::Utc::now();
+    let yyyy = (now.year() * 1_000_000) as u32;
+    let mm = now.month() * 10_000;
+    let dd = now.day() * 100;
+    (yyyy + mm + dd).into()
+}
+fn scan_rtype(buf: &[u8]) -> Result<RType, ScanError> {
+    let mut scanner = Scanner::new(buf, None);
+    let alloc = bumpalo::Bump::new();
+    let mut buffer = Vec::new();
+    RType::scan(&mut scanner, &alloc, &mut buffer)
 }
 
 fn is_dnssec_data(rtype: RType) -> bool {
@@ -323,6 +411,10 @@ mod test {
             print_only_dnssec: false,
             print_rrsig_null: false,
             print_ds_bubble_babble: false,
+            rrtype_exclude: Vec::new(),
+            rrtype_include: Vec::new(),
+            rrtype_mark_unknown_include: Vec::new(),
+            rrtype_mark_unknown_exclude: Vec::new(),
             manipulate_serial: None,
             origin: None,
             pad_soa_serial: false,
@@ -349,6 +441,9 @@ mod test {
     #[test]
     fn check_revnamebuf() {
         let name = "example.org.";
+        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
+        assert!(rnb.is_err());
+        let name = "example.org";
         let rnb: Result<RevNameBuf, NameParseError> = name.parse();
         assert!(rnb.is_ok());
     }

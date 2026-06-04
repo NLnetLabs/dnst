@@ -127,6 +127,24 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<domain::new::zonefile::scanner::ScanError> for Error {
+    fn from(error: domain::new::zonefile::scanner::ScanError) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
+impl From<std::time::SystemTimeError> for Error {
+    fn from(error: std::time::SystemTimeError) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(error: std::num::ParseIntError) -> Self {
+        Self::new(&error.to_string())
+    }
+}
+
 impl From<ParseError> for Error {
     fn from(error: ParseError) -> Self {
         Self::new(&error.to_string())
