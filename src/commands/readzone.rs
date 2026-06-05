@@ -89,7 +89,7 @@ pub struct ReadZone {
     /// datecounter or in unixtime format respectively. Though is the updated
     /// serial number is smaller than the original one, the original one is
     /// simply increased by one.
-    #[arg(short = 'S', required = false)]
+    #[arg(short = 'S', required = false, allow_negative_numbers = true)]
     manipulate_serial: Option<String>,
 
     /// -u <rr type>
@@ -304,18 +304,26 @@ impl ReadZone {
 }
 
 fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
-    match arg.to_lowercase().as_str() {
-        "unixtime" => Ok(get_unixtime_serial()?),
-        "yyyymmddxx" => Ok(get_yyyymmddxx_serial()),
-        s if s.chars().next() == Some('+') => Ok(current.inc((s[1..]).parse::<i32>()?)),
-        s if s.chars().next() == Some('-') => Ok(current.inc(-(s[1..]).parse::<i32>()?)),
-        s => Ok((s.parse::<u32>())?.into()),
+    let cand = match arg.to_lowercase().as_str() {
+        "unixtime" => get_unixtime_serial()?,
+        "yyyymmddxx" => get_yyyymmddxx_serial(),
+        s if s.chars().next() == Some('+') => return Ok(current.inc((s[1..]).parse::<i32>()?)),
+        s if s.chars().next() == Some('-') => {
+            return Ok(Serial::from(
+                Into::<u32>::into(current).wrapping_sub_signed((s[1..]).parse::<i32>()?),
+            ));
+        }
+        s => return Ok((s.parse::<u32>())?.into()),
+    };
+    let current_plus1 = current.inc(1);
+    if cand < current_plus1 {
+        return Ok(current_plus1);
     }
+    Ok(cand)
 }
 
 fn get_unixtime_serial() -> Result<Serial, Error> {
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-    Ok((t.as_secs() as u32).into())
+    Ok(Serial::unix_time())
 }
 
 fn get_yyyymmddxx_serial() -> Serial {
@@ -433,6 +441,7 @@ mod test {
         // Check the defaults
         let path = "example.org.zone";
         let base = ReadZone {
+            origin: Some("example.org".parse().unwrap()),
             ..get_default_readzone(path)
         };
         assert_eq!(parse(cmd.args(["-o", "example.org", path])), base);
@@ -463,5 +472,54 @@ mod test {
         println!("{:?}", res1.stdout);
         assert_eq!(res1.stderr, "");
         assert_eq!(res1.exit_code, 0);
+    }
+
+    #[test]
+    fn test_serial_manipulation() {
+        assert_eq!(
+            manipulate_serial(Serial::from(1), "10").unwrap(),
+            Serial::from(10),
+            "Increase serial to absolute value"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(1000), "+42").unwrap(),
+            Serial::from(1042),
+            "Increase serial with relative operation +"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(1000), "42").unwrap(),
+            Serial::from(42),
+            "Decrease serial with absolute number"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(1052), "-10").unwrap(),
+            Serial::from(1042),
+            "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(10), "-10").unwrap(),
+            Serial::from(0),
+            "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(9), "-10").unwrap(),
+            Serial::from(u32::MAX),
+            "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(8), "-10").unwrap(),
+            Serial::from(u32::MAX - 1),
+            "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(0), "-1").unwrap(),
+            Serial::from(4294967295),
+            "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(4294967295), "+1").unwrap(),
+            Serial::from(0),
+            "Decrease serial with relative operation -"
+        );
     }
 }

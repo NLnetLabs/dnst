@@ -48,7 +48,7 @@
       "output": ""
     },
     {
-      "info": "Set serial to +10",
+      "info": "Serial addition 10",
       "config": [
         "-S",
         "+10",
@@ -56,6 +56,26 @@
       ],
       "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
       "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(11)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+    },
+    {
+      "info": "Serial addition with wrap around.",
+      "config": [
+        "-S",
+        "+10",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967295 1 1 1 1",
+      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(9)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+    },
+    {
+      "info": "Substract with wrapping around.",
+      "config": [
+        "-S",
+        "-10",
+        "does-not-matter.zone"
+      ],
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
+      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(4294967287)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
     },
     {
       "info": "Do not print the SOA record.",
