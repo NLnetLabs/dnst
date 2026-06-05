@@ -133,12 +133,6 @@ impl From<domain::new::zonefile::scanner::ScanError> for Error {
     }
 }
 
-impl From<std::time::SystemTimeError> for Error {
-    fn from(error: std::time::SystemTimeError) -> Self {
-        Self::new(&error.to_string())
-    }
-}
-
 impl From<std::num::ParseIntError> for Error {
     fn from(error: std::num::ParseIntError) -> Self {
         Self::new(&error.to_string())
