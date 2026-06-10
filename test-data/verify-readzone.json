@@ -17,7 +17,7 @@
         "does-not-matter.zone"
       ],
       "input": "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1",
-      "output": "Record { rname: RevName(.com.example), rtype: RType::A, rclass: RClass::IN, ttl: TTL(1), rdata: A(A(1.1.1.1)) }\n"
+      "output": "example.com. 1 IN A 1.1.1.1\n"
     },
     {
       "info": "Print only NS records",
@@ -27,7 +27,7 @@
         "does-not-matter.zone"
       ],
       "input": "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1",
-      "output": "Record { rname: RevName(.org.example), rtype: RType::NS, rclass: RClass::IN, ttl: TTL(1), rdata: Ns(Ns { server: Name(ns1.net.) }) }\n"
+      "output": "example.org. 1 IN NS ns1.net.\n"
     },
     {
       "info": "Error when using -b option",
@@ -54,8 +54,8 @@
         "+10",
         "does-not-matter.zone"
       ],
-      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
-      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(11)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5",
+      "output": "example.com. 42 IN SOA master.example.com. noc.example.com. 11 2 3 4 5\n"
     },
     {
       "info": "Serial addition with wrap around.",
@@ -64,8 +64,8 @@
         "+10",
         "does-not-matter.zone"
       ],
-      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967295 1 1 1 1",
-      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(9)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967295 2 3 4 5",
+      "output": "example.com. 42 IN SOA master.example.com. noc.example.com. 9 2 3 4 5\n"
     },
     {
       "info": "Substract with wrapping around.",
@@ -74,18 +74,18 @@
         "-10",
         "does-not-matter.zone"
       ],
-      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
-      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(4294967287)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5",
+      "output": "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967287 2 3 4 5\n"
     },
     {
-      "info": "Do not print the SOA record.",
+      "info": "Set serial to 10",
       "config": [
         "-S",
         "10",
         "does-not-matter.zone"
       ],
-      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1",
-      "output": "Record { rname: RevName(.com.example), rtype: RType::SOA, rclass: RClass::IN, ttl: TTL(42), rdata: Soa(Soa { mname: Name(master.example.com.), rname: Name(noc.example.com.), serial: Serial(U32(10)), refresh: U32(1), retry: U32(1), expire: U32(1), minimum: U32(1) }) }\n"
+      "input": "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5",
+      "output": "example.com. 42 IN SOA master.example.com. noc.example.com. 10 2 3 4 5\n"
     },
     {
       "info": "Do not print DNSSEC records.",

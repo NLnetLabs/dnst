@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use domain::new::base::name::RevNameBuf;
-use domain::new::base::{RType, Serial};
+use domain::new::base::{CharStr, RType, Serial};
 use domain::new::rdata::RecordData;
 use domain::new::zonefile::scanner::{Scan, ScanError, Scanner};
 use domain::new::zonefile::simple::Entry;
@@ -293,7 +293,7 @@ impl ReadZone {
                 continue;
             }
 
-            match out.write_all(format!("{:?}\n", record).as_bytes()) {
+            match out.write_all(format!("{}\n", dns_display(&record)).as_bytes()) {
                 Ok(()) => (),
                 Err(e) => eprintln!("Error while writing to Writer {:?}", e),
             }
@@ -320,6 +320,181 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
         return Ok(current_plus1);
     }
     Ok(cand)
+}
+
+use domain::new::base::build::AsBytes;
+use domain::new::base::name::{Name, NameBuf, RevName};
+use domain::new::base::{RClass, Record};
+use std::ascii::escape_default;
+use std::net::{Ipv4Addr, Ipv6Addr};
+
+fn dns_display_type(rtype: RType) -> String {
+    let value = match rtype {
+        RType::A => "A",
+        RType::NS => "NS",
+        RType::CNAME => "CNAME",
+        RType::SOA => "SOA",
+        RType::PTR => "PTR",
+        RType::HINFO => "HINFO",
+        RType::MX => "MX",
+        RType::TXT => "TXT",
+        RType::RP => "RP",
+        RType::AAAA => "AAAA",
+        RType::SRV => "SRV",
+        RType::DNAME => "DNAME",
+        RType::OPT => "OPT",
+        RType::DS => "DS",
+        RType::RRSIG => "RRSIG",
+        RType::NSEC => "NSEC",
+        RType::DNSKEY => "DNSKEY",
+        RType::NSEC3 => "NSEC3",
+        RType::NSEC3PARAM => "NSEC3PARAM",
+        RType::CDS => "CDS",
+        RType::CDNSKEY => "CDNSKEY",
+        RType::ZONEMD => "ZONEMD",
+        RType::TSIG => "TSIG",
+        _ => return format!("TYPE{}", rtype.code),
+    };
+    return value.into();
+}
+
+fn dns_display_charstr(charstr: &CharStr) -> String {
+    charstr
+        .octets
+        .iter()
+        .map(|c| escape_default(*c).to_string())
+        .collect()
+}
+
+fn dns_display_datetime(_serial: Serial) -> String {
+    "20260715080945".into()
+}
+
+fn dns_display_record_data(data: &RecordData<'_, &Name>) -> String {
+    let rdata: String = match data {
+        RecordData::A(a) => format!("{}", Ipv4Addr::from_octets(a.octets)),
+        RecordData::Mx(mx) => format!("{} {}", mx.preference, mx.exchange),
+        RecordData::Ns(ns) => format!("{}", ns.server),
+        RecordData::Soa(soa) => format!(
+            "{} {} {} {} {} {} {}",
+            soa.mname, soa.rname, soa.serial, soa.refresh, soa.retry, soa.expire, soa.minimum
+        ),
+        RecordData::CName(cn) => format!("{}", cn.name),
+        RecordData::Ptr(ptr) => format!("{}", ptr.name),
+        RecordData::HInfo(hi) => format!(
+            "\"{}\" \"{}\"",
+            dns_display_charstr(hi.cpu),
+            dns_display_charstr(hi.os)
+        ),
+        RecordData::Txt(txt) => format!(
+            "\"{}\"",
+            txt.iter()
+                .map(|c| dns_display_charstr(c))
+                .collect::<Vec<String>>()
+                .join("\" \"")
+        ),
+        RecordData::Rp(rp) => format!("{} {}", rp.mailbox, rp.texts),
+        RecordData::Aaaa(aaaa) => format!("{}", Ipv6Addr::from_octets(aaaa.octets)),
+        RecordData::DName(dn) => format!("{}", &dn.name),
+        RecordData::Opt(_opt) => unimplemented!("OPT record is not implemented"),
+        RecordData::Ds(ds) => format!(
+            "{} {} {} {}",
+            ds.keytag,
+            ds.algorithm.code,
+            ds.digest_type.code,
+            // TODO: port encoding into `new`
+            domain::utils::base16::encode_display(&ds.digest),
+        ),
+        RecordData::RRSig(sig) => format!(
+            "{} {} {} {} {} {} {} {} {}",
+            dns_display_type(sig.rtype),
+            sig.algorithm.code,
+            sig.labels,
+            sig.ttl.value,
+            dns_display_datetime(sig.expiration),
+            dns_display_datetime(sig.inception),
+            sig.keytag,
+            sig.signer,
+            domain::utils::base64::encode_display(&sig.signature),
+        ),
+        RecordData::NSec(nsec) => format!(
+            "{} {}",
+            nsec.types
+                .iter()
+                .map(|t| dns_display_type(t))
+                .collect::<Vec<String>>()
+                .join(" "),
+            nsec.next
+        ),
+        RecordData::DNSKey(dnskey) => format!(
+            "{} {} {} {}",
+            dnskey.flags.bits(),
+            dnskey.protocol,
+            dnskey.algorithm.code,
+            // TODO: move to new, and ?Size is missing in the encode_display
+            domain::utils::base64::encode_string(&dnskey.key),
+        ),
+        RecordData::NSec3(nsec3) => format!(
+            "{} {} {} {} {} {}",
+            nsec3.algorithm.code,
+            nsec3.flags.bits(),
+            nsec3.iterations,
+            domain::utils::base16::encode_display(&nsec3.salt.as_bytes()[1..]),
+            domain::utils::base16::encode_display(&nsec3.next.as_bytes()[1..]),
+            nsec3
+                .types
+                .iter()
+                .map(|t| dns_display_type(t))
+                .collect::<Vec<String>>()
+                .join(" "),
+        ),
+        RecordData::NSec3Param(param) => {
+            let mut salt: String = "-".into();
+            if param.salt.as_bytes()[0] != 0 {
+                salt = domain::utils::base16::encode_string(&param.salt.as_bytes()[1..])
+            }
+            format!(
+                "{} {} {} {}",
+                param.algorithm.code,
+                param.flags.bits(),
+                param.iterations,
+                salt,
+            )
+        }
+        RecordData::ZoneMD(zonemd) => format!(
+            "{} {} {} {}",
+            zonemd.serial,
+            zonemd.scheme.code,
+            zonemd.hash_alg.code,
+            domain::utils::base16::encode_display(&zonemd.digest),
+        ),
+        RecordData::Unknown(_, data) => format!(
+            "\\# {} {}",
+            data.octets.len(),
+            domain::utils::base16::encode_display(&data.octets)
+        ),
+        &_ => unimplemented!("Type found that is not implemented!"),
+    };
+    format!("{} {}", dns_display_type(data.rtype()), rdata)
+}
+
+fn dns_display_class(value: RClass) -> String {
+    match value {
+        RClass::IN => "IN".into(),
+        RClass::CH => "CH".into(),
+        _ => format!("CLASS{}", value.code.get()),
+    }
+}
+fn dns_display(record: &Record<&RevName, RecordData<'_, &Name>>) -> String {
+    let name: NameBuf = RevNameBuf::copy_from(record.rname).into();
+    let data = dns_display_record_data(&record.rdata);
+    format!(
+        "{} {} {} {}",
+        name,
+        record.ttl.value.get(),
+        dns_display_class(record.rclass),
+        data,
+    )
 }
 
 fn get_unixtime_serial() -> Result<Serial, Error> {
@@ -350,10 +525,41 @@ mod test {
     use super::*;
 
     use domain::new::base::name::{NameParseError, RevNameBuf};
+    use domain::new::base::wire::U16;
+    use domain::new::base::{RClass, TTL};
+    use domain::new::rdata;
 
     use crate::commands::readzone::PathBuf;
     use crate::commands::Command;
     use crate::env::fake::FakeCmd;
+
+    #[test]
+    fn print_dns_record() {
+        let a_record: Record<&RevName, RecordData<'_, &Name>> = Record {
+            rname: &"example.com".parse::<RevNameBuf>().unwrap(),
+            rtype: RType::A,
+            rclass: RClass::IN,
+            ttl: TTL::from(3600),
+            rdata: rdata::RecordData::<&Name>::A(rdata::A {
+                octets: [1, 1, 1, 1],
+            }),
+        };
+        let mx_record: Record<&RevName, RecordData<'_, &Name>> = Record {
+            rname: &"example.com".parse::<RevNameBuf>().unwrap(),
+            rtype: RType::MX,
+            rclass: RClass::IN,
+            ttl: TTL::from(3600),
+            rdata: rdata::RecordData::Mx(rdata::Mx {
+                preference: U16::from(10),
+                exchange: &"mail.example.com".parse::<NameBuf>().unwrap(),
+            }),
+        };
+        assert_eq!(dns_display(&a_record), "example.com. 3600 IN A 1.1.1.1");
+        assert_eq!(
+            dns_display(&mx_record),
+            "example.com. 3600 IN MX 10 mail.example.com."
+        );
+    }
 
     #[track_caller]
     fn parse(args: FakeCmd) -> ReadZone {
@@ -391,12 +597,12 @@ mod test {
             let readzone_config: ReadZone = parse(cmd.args(&test.config));
 
             println!("Input\n{:?}", test.input);
-            println!("Expected Output\n{:?}", test.output);
+            println!("Expected Output: {:?}", test.output);
 
             let mut vec_buf: Vec<u8> = Vec::new();
             let result = readzone_config.go_through_zone(test.input.as_bytes(), &mut vec_buf);
 
-            println!("Function Result\n{:?}", result);
+            println!("Function Result: {:?}", result);
             match result {
                 Ok(_) => {
                     let is_equal = vec_buf == test.output.as_bytes();
@@ -404,7 +610,7 @@ mod test {
                     assert!(is_equal);
                 }
                 Err(e) => {
-                    println!("Resulting Error\n{:?}", String::from_utf8(vec_buf));
+                    println!("Resulting Error: {:?}", String::from_utf8(vec_buf));
                     assert_eq!(e.to_string(), test.output);
                 }
             }
