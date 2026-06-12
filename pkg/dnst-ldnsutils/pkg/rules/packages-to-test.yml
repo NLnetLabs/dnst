@@ -6,6 +6,7 @@ pkg:
 image:
   - "ubuntu:jammy"    # ubuntu/22.04
   - "ubuntu:noble"    # ubuntu/24.04
+  - "ubuntu:resolute" # ubuntu/26.04
   - "debian:bullseye" # debian/11
   - "debian:bookworm" # debian/12
   - "debian:trixie"   # debian/13
@@ -61,3 +62,8 @@ include:
     published_pkg: 'ldns-utils'
     # --enablerepo crb is no longer needed since alma10 (https://almalinux.org/blog/2025-09-08-enabling-crb-by-default-for-almalinux10/)
     # rpm_yum_extra_args: --enablerepo crb
+
+# Exclude upgrade testing on Ubuntu Resolute as no prior released versions exist to upgrade from.
+# Exclude fresh install testing on Ubuntu Resolute as no prior released version of the dnst dependency exist to install.
+exclude:
+  - image: "ubuntu:resolute"
