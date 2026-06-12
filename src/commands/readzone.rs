@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use domain::new::base::build::BuildBytes;
 use domain::new::base::name::RevNameBuf;
 use domain::new::base::{CharStr, RType, Serial};
 use domain::new::rdata::RecordData;
@@ -219,8 +220,7 @@ impl ReadZone {
     pub fn execute(&self, env: impl Env) -> Result<(), Error> {
         // Read the zone file.
 
-        // Had to impl From<std::io::Error> here
-        // I do the reading of the Zonefile here because then I can test the
+        // I do the reading of the zonefile here because then I can test the
         // output of the zonefile without creating a file for it.
         let zonefile_buf = BufReader::new(File::open(&self.zonefile_path)?);
 
@@ -228,8 +228,7 @@ impl ReadZone {
 
         Ok(())
     }
-    // TODO: Better name
-    // pub (super) for testing
+
     pub(super) fn go_through_zone<R, W>(&self, zf_buf: R, mut out: W) -> Result<(), Error>
     where
         R: io::BufRead,
@@ -245,6 +244,25 @@ impl ReadZone {
         for rr in &self.rrtype_include {
             rrtype_include.push(scan_rtype(rr.as_bytes())?);
         }
+        let mut rrtype_mark_unknown_include: Vec<RType> = Vec::new();
+        for rr in &self.rrtype_mark_unknown_include {
+            rrtype_mark_unknown_include.push(scan_rtype(rr.as_bytes())?);
+        }
+        let mut rrtype_mark_unknown_exclude: Vec<RType> = Vec::new();
+        for rr in &self.rrtype_mark_unknown_exclude {
+            rrtype_mark_unknown_exclude.push(scan_rtype(rr.as_bytes())?);
+        }
+
+        let mark_unknown = match (
+            rrtype_mark_unknown_include.len(),
+            rrtype_mark_unknown_exclude.len(),
+        ) {
+            (0, 0) => RRTypeMarkUnknown::TruelyUnknown,
+            (_, 0) => RRTypeMarkUnknown::Only(&rrtype_mark_unknown_include),
+            (0, _) => RRTypeMarkUnknown::AllExcept(&rrtype_mark_unknown_exclude),
+            (_, _) => return Err(Error::new("-u and -U should not be mixed together!")),
+        };
+
         loop {
             let entry = match zf.scan() {
                 Ok(Some(entry)) => entry,
@@ -267,12 +285,7 @@ impl ReadZone {
             if !rrtype_exclude.is_empty() && rrtype_exclude.contains(&record.rtype) {
                 continue;
             }
-            //--- Through error when trying print_rrsig_null
-            if self.print_rrsig_null {
-                return Err(Error::new(
-                    "The option -0 is not implemented. Do you need it?",
-                ));
-            }
+            //--- Throw error when trying print_rrsig_null
             if self.print_ds_bubble_babble {
                 return Err(Error::new(
                     "The option -b is not implemented. Do you need it?",
@@ -293,13 +306,38 @@ impl ReadZone {
                 continue;
             }
 
-            match out.write_all(format!("{}\n", dns_display(&record)).as_bytes()) {
+            match out.write_all(
+                format!(
+                    "{}\n",
+                    dns_display(&record, &mark_unknown, self.print_rrsig_null)
+                )
+                .as_bytes(),
+            ) {
                 Ok(()) => (),
                 Err(e) => eprintln!("Error while writing to Writer {:?}", e),
             }
         }
         out.flush()?;
         Ok(())
+    }
+}
+
+/// Representation of which resource record types should be printed in unknown mode.
+enum RRTypeMarkUnknown<'a, T = Vec<RType>> {
+    AllExcept(&'a T),
+    Only(&'a T),
+    TruelyUnknown,
+}
+
+impl RRTypeMarkUnknown<'_> {
+    /// Returns information, if the `other` type must be printed in unknown
+    /// format.
+    fn is_unknown(&self, other: &RType) -> bool {
+        match self {
+            Self::AllExcept(v) => !v.contains(&other),
+            Self::Only(v) => v.contains(&other),
+            Self::TruelyUnknown => false,
+        }
     }
 }
 
@@ -322,13 +360,16 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     Ok(cand)
 }
 
-use domain::new::base::build::AsBytes;
 use domain::new::base::name::{Name, NameBuf, RevName};
 use domain::new::base::{RClass, Record};
 use std::ascii::escape_default;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-fn dns_display_type(rtype: RType) -> String {
+fn dns_display_type(rtype: RType, unknown_type: bool) -> String {
+    if unknown_type {
+        return format!("TYPE{}", rtype.code);
+    }
+
     let value = match rtype {
         RType::A => "A",
         RType::NS => "NS",
@@ -366,11 +407,24 @@ fn dns_display_charstr(charstr: &CharStr) -> String {
         .collect()
 }
 
-fn dns_display_datetime(_serial: Serial) -> String {
-    "20260715080945".into()
+fn dns_display_datetime(serial: Serial, date_fmt: bool) -> String {
+    if date_fmt {
+        format!(
+            "{}",
+            chrono::DateTime::from_timestamp_secs(Into::<u32>::into(serial) as i64)
+                .expect("DateTime was out of range.")
+                .format("%Y%m%d%H%M%S")
+        )
+    } else {
+        format!("{}", serial)
+    }
 }
 
-fn dns_display_record_data(data: &RecordData<'_, &Name>) -> String {
+fn dns_display_record_data(
+    data: &RecordData<'_, &Name>,
+    rrtype_mark_unknown: &RRTypeMarkUnknown,
+    print_rrsig_null: bool,
+) -> String {
     let rdata: String = match data {
         RecordData::A(a) => format!("{}", Ipv4Addr::from_octets(a.octets)),
         RecordData::Mx(mx) => format!("{} {}", mx.preference, mx.exchange),
@@ -405,23 +459,38 @@ fn dns_display_record_data(data: &RecordData<'_, &Name>) -> String {
             // TODO: port encoding into `new`
             domain::utils::base16::encode_display(&ds.digest),
         ),
-        RecordData::RRSig(sig) => format!(
-            "{} {} {} {} {} {} {} {} {}",
-            dns_display_type(sig.rtype),
-            sig.algorithm.code,
-            sig.labels,
-            sig.ttl.value,
-            dns_display_datetime(sig.expiration),
-            dns_display_datetime(sig.inception),
-            sig.keytag,
-            sig.signer,
-            domain::utils::base64::encode_display(&sig.signature),
-        ),
+        RecordData::RRSig(sig) => {
+            if print_rrsig_null {
+                format!(
+                    "{} {} {} {} (null) (null) {} {} (null)",
+                    dns_display_type(sig.rtype, rrtype_mark_unknown.is_unknown(&sig.rtype)),
+                    sig.algorithm.code,
+                    sig.labels,
+                    sig.ttl.value,
+                    sig.keytag,
+                    sig.signer,
+                )
+            } else {
+                format!(
+                    "{} {} {} {} {} {} {} {} {}",
+                    dns_display_type(sig.rtype, rrtype_mark_unknown.is_unknown(&sig.rtype)),
+                    sig.algorithm.code,
+                    sig.labels,
+                    sig.ttl.value,
+                    dns_display_datetime(sig.expiration, true),
+                    dns_display_datetime(sig.inception, true),
+                    sig.keytag,
+                    sig.signer,
+                    domain::utils::base64::encode_display(&sig.signature),
+                )
+            }
+        }
         RecordData::NSec(nsec) => format!(
             "{} {}",
             nsec.types
                 .iter()
-                .map(|t| dns_display_type(t))
+                // Print the RType in compatibilty if it is desired
+                .map(|t| dns_display_type(t, rrtype_mark_unknown.is_unknown(&t)))
                 .collect::<Vec<String>>()
                 .join(" "),
             nsec.next
@@ -439,20 +508,21 @@ fn dns_display_record_data(data: &RecordData<'_, &Name>) -> String {
             nsec3.algorithm.code,
             nsec3.flags.bits(),
             nsec3.iterations,
-            domain::utils::base16::encode_display(&nsec3.salt.as_bytes()[1..]),
-            domain::utils::base16::encode_display(&nsec3.next.as_bytes()[1..]),
+            domain::utils::base16::encode_display(&nsec3.salt),
+            domain::utils::base16::encode_display(&nsec3.next),
             nsec3
                 .types
                 .iter()
-                .map(|t| dns_display_type(t))
+                .map(|t| dns_display_type(t, rrtype_mark_unknown.is_unknown(&t)))
                 .collect::<Vec<String>>()
                 .join(" "),
         ),
         RecordData::NSec3Param(param) => {
-            let mut salt: String = "-".into();
-            if param.salt.as_bytes()[0] != 0 {
-                salt = domain::utils::base16::encode_string(&param.salt.as_bytes()[1..])
-            }
+            let salt = if param.salt.is_empty() {
+                domain::utils::base16::encode_string(&param.salt)
+            } else {
+                "-".into()
+            };
             format!(
                 "{} {} {} {}",
                 param.algorithm.code,
@@ -475,7 +545,7 @@ fn dns_display_record_data(data: &RecordData<'_, &Name>) -> String {
         ),
         &_ => unimplemented!("Type found that is not implemented!"),
     };
-    format!("{} {}", dns_display_type(data.rtype()), rdata)
+    rdata
 }
 
 fn dns_display_class(value: RClass) -> String {
@@ -485,14 +555,34 @@ fn dns_display_class(value: RClass) -> String {
         _ => format!("CLASS{}", value.code.get()),
     }
 }
-fn dns_display(record: &Record<&RevName, RecordData<'_, &Name>>) -> String {
+fn dns_display(
+    record: &Record<&RevName, RecordData<'_, &Name>>,
+    rrtype_mark_unknown: &RRTypeMarkUnknown,
+    print_rrsig_null: bool,
+) -> String {
     let name: NameBuf = RevNameBuf::copy_from(record.rname).into();
-    let data = dns_display_record_data(&record.rdata);
+    let data = if rrtype_mark_unknown.is_unknown(&record.rtype) {
+        let buf_len = record.rdata.built_bytes_size();
+        let mut bytes_data = vec![0u8; buf_len];
+        record
+            .rdata
+            .build_bytes(&mut bytes_data)
+            .expect(".built_bytes_size produced insufficient buffer size!");
+        format!(
+            "\\# {} {}",
+            bytes_data.len(),
+            domain::utils::base16::encode_display(&bytes_data)
+        )
+    } else {
+        dns_display_record_data(&record.rdata, rrtype_mark_unknown, print_rrsig_null)
+    };
+
     format!(
-        "{} {} {} {}",
+        "{} {} {} {} {}",
         name,
         record.ttl.value.get(),
         dns_display_class(record.rclass),
+        dns_display_type(record.rtype, rrtype_mark_unknown.is_unknown(&record.rtype)),
         data,
     )
 }
@@ -554,9 +644,12 @@ mod test {
                 exchange: &"mail.example.com".parse::<NameBuf>().unwrap(),
             }),
         };
-        assert_eq!(dns_display(&a_record), "example.com. 3600 IN A 1.1.1.1");
         assert_eq!(
-            dns_display(&mx_record),
+            dns_display(&a_record, &RRTypeMarkUnknown::TruelyUnknown, false),
+            "example.com. 3600 IN A 1.1.1.1"
+        );
+        assert_eq!(
+            dns_display(&mx_record, &RRTypeMarkUnknown::TruelyUnknown, false),
             "example.com. 3600 IN MX 10 mail.example.com."
         );
     }
@@ -588,8 +681,8 @@ mod test {
 
         // Check the defaults
         let test_case_collection: TestCaseCollection =
-            serde_json::from_str(include_str!("../../test-data/verify-readzone.json"))
-                .expect("JSON was not well-formatted");
+            toml::from_str(include_str!("../../test-data/verify-readzone.toml"))
+                .expect("TOML was not well-formatted");
 
         for (index, test) in test_case_collection.tests.iter().enumerate() {
             println!("# start test {} - {}", index, test.info);
@@ -610,7 +703,7 @@ mod test {
                     assert!(is_equal);
                 }
                 Err(e) => {
-                    println!("Resulting Error: {:?}", String::from_utf8(vec_buf));
+                    println!("Resulting Output: {:?}", String::from_utf8(vec_buf));
                     assert_eq!(e.to_string(), test.output);
                 }
             }
