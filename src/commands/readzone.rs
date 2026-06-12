@@ -334,8 +334,8 @@ impl RRTypeMarkUnknown<'_> {
     /// format.
     fn is_unknown(&self, other: &RType) -> bool {
         match self {
-            Self::AllExcept(v) => !v.contains(&other),
-            Self::Only(v) => v.contains(&other),
+            Self::AllExcept(v) => !v.contains(other),
+            Self::Only(v) => v.contains(other),
             Self::TruelyUnknown => false,
         }
     }
@@ -345,8 +345,8 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     let cand = match arg.to_lowercase().as_str() {
         "unixtime" => get_unixtime_serial()?,
         "yyyymmddxx" => get_yyyymmddxx_serial(),
-        s if s.chars().next() == Some('+') => return Ok(current.inc((s[1..]).parse::<i32>()?)),
-        s if s.chars().next() == Some('-') => {
+        s if s.starts_with('+') => return Ok(current.inc((s[1..]).parse::<i32>()?)),
+        s if s.starts_with('-') => {
             return Ok(Serial::from(
                 Into::<u32>::into(current).wrapping_sub_signed((s[1..]).parse::<i32>()?),
             ));
@@ -396,7 +396,7 @@ fn dns_display_type(rtype: RType, unknown_type: bool) -> String {
         RType::TSIG => "TSIG",
         _ => return format!("TYPE{}", rtype.code),
     };
-    return value.into();
+    value.into()
 }
 
 fn dns_display_charstr(charstr: &CharStr) -> String {
@@ -443,7 +443,7 @@ fn dns_display_record_data(
         RecordData::Txt(txt) => format!(
             "\"{}\"",
             txt.iter()
-                .map(|c| dns_display_charstr(c))
+                .map(dns_display_charstr)
                 .collect::<Vec<String>>()
                 .join("\" \"")
         ),
