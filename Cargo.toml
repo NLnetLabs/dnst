@@ -107,11 +107,9 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { version = "0.12.1", features = [
-    "unstable-stelline",
-] }
+domain = { version = "0.12.1", features = ["unstable-stelline"] }
 pretty_assertions = "1.4.1"
-toml = "1.1.2+spec-1.1.0"
+toml = "1.1.2"
 
 # Related reading: https://wiki.debian.org/Teams/RustPackaging/Policy
 [package.metadata.deb]
