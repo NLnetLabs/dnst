@@ -413,7 +413,8 @@ fn dns_display_datetime(serial: Serial, date_fmt: bool) -> String {
     if date_fmt {
         format!(
             "{}",
-            chrono::DateTime::from_timestamp_secs(Into::<u32>::into(serial) as i64)
+            // NOTE: from_timestamp_secs is not yet in MSRV
+            chrono::DateTime::from_timestamp(Into::<u32>::into(serial) as i64, 0)
                 .expect("DateTime was out of range.")
                 .format("%Y%m%d%H%M%S")
         )
