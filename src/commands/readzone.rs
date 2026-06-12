@@ -626,7 +626,7 @@ mod test {
     #[test]
     fn print_dns_record() {
         let name = "example.com".parse::<RevNameBuf>().unwrap();
-
+        let mx_exchange = "mail.example.com".parse::<NameBuf>().unwrap();
         let a_record: Record<&RevName, RecordData<'_, &Name>> = Record {
             rname: &name,
             rtype: RType::A,
@@ -643,7 +643,7 @@ mod test {
             ttl: TTL::from(3600),
             rdata: rdata::RecordData::Mx(rdata::Mx {
                 preference: U16::from(10),
-                exchange: &"mail.example.com".parse::<NameBuf>().unwrap(),
+                exchange: &mx_exchange,
             }),
         };
         assert_eq!(
