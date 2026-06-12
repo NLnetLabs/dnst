@@ -112,6 +112,7 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
+toml = "1.1.2+spec-1.1.0"
 
 # Related reading: https://wiki.debian.org/Teams/RustPackaging/Policy
 [package.metadata.deb]

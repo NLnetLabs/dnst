@@ -1,0 +1,107 @@
+[[tests]]
+info = "Exclude all NS records"
+config = [ "-e", "NS", "does-not-matter.zone",]
+input = "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1"
+output = "example.com. 1 IN A 1.1.1.1\n"
+
+[[tests]]
+info = "Print only NS records"
+config = [ "-E", "NS", "does-not-matter.zone",]
+input = "example.org. 1 IN NS ns1.net.\nexample.com. 1 IN A 1.1.1.1"
+output = "example.org. 1 IN NS ns1.net.\n"
+
+[[tests]]
+info = "Error when using -b option"
+config = [ "-b", "does-not-matter.zone",]
+input = "example.com. 3600 IN DS 57855 5 1 b6dcd485719adca18e5f3d48a2331627fdd3636b"
+output = "The option -b is not implemented. Do you need it?"
+
+[[tests]]
+info = "Do not print the SOA record."
+config = [ "-n", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1"
+output = ""
+
+[[tests]]
+info = "Serial addition 10"
+config = [ "-S", "+10", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5"
+output = "example.com. 42 IN SOA master.example.com. noc.example.com. 11 2 3 4 5\n"
+
+[[tests]]
+info = "Serial addition with wrap around."
+config = [ "-S", "+10", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967295 2 3 4 5"
+output = "example.com. 42 IN SOA master.example.com. noc.example.com. 9 2 3 4 5\n"
+
+[[tests]]
+info = "Substract with wrapping around."
+config = [ "-S", "-10", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5"
+output = "example.com. 42 IN SOA master.example.com. noc.example.com. 4294967287 2 3 4 5\n"
+
+[[tests]]
+info = "Set serial to 10"
+config = [ "-S", "10", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5"
+output = "example.com. 42 IN SOA master.example.com. noc.example.com. 10 2 3 4 5\n"
+
+[[tests]]
+info = "Do not print DNSSEC records."
+config = [ "-s", "does-not-matter.zone",]
+input = "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA=="
+output = ""
+
+[[tests]]
+info = "Only print DNSSEC data."
+config = [ "-d", "does-not-matter.zone",]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1"
+output = ""
+
+[[tests]]
+info = "Mark A rr type as unknown."
+config = [ "-u", "A", "does-not-matter.zone",]
+input = "example.com. 3600 IN A 1.1.1.1"
+output = "example.com. 3600 IN TYPE1 \\# 4 01010101\n"
+
+[[tests]]
+info = "Mark SOA as unkown type in RRSIG."
+config = [ "-u", "SOA", "does-not-matter.zone",]
+input = "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA=="
+output = "example.com. 3600 IN RRSIG TYPE6 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==\n"
+
+[[tests]]
+info = "Read zone with seconds since epoch and print in date format."
+config = [ "does-not-matter.zone",]
+input = "example.com. 3600 IN RRSIG SOA 8 2 3600 1613604280 1611185080 37444 example.com. AA=="
+output = "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==\n"
+
+[[tests]]
+info = "Trigger error by using -u and -U."
+config = [ "-u", "SOA", "-U", "A", "does-not-matter.zone",]
+input = "example.com. 3600 IN A 1.1.1.1"
+output = "-u and -U should not be mixed together!"
+
+[[tests]]
+info = "Combine two -U flags."
+config = [ "-U", "A", "-U", "AAAA", "does-not-matter.zone",]
+input = "example.com. 1 IN A 1.1.1.1\nexample.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352"
+output = "example.com. 1 IN A 1.1.1.1\nexample.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352\n"
+
+[[tests]]
+info = "Combine two -u flags."
+config = [ "-u", "A", "-u", "AAAA", "does-not-matter.zone",]
+input = "example.com. 1 IN A 1.1.1.1\nexample.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352"
+output = "example.com. 1 IN TYPE1 \\# 4 01010101\nexample.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352\n"
+
+[[tests]]
+info = "Read from unknown print to unknown."
+config = [ "-u", "A", "-u", "AAAA", "does-not-matter.zone",]
+input = "example.com. 1 IN TYPE1 \\# 4 01010101\nexample.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352\n"
+output = "example.com. 1 IN TYPE1 \\# 4 01010101\nexample.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352\n"
+
+[[tests]]
+info = "-0 zeroize timestamps and signature in RRSIG records."
+config = [ "-0", "does-not-matter.zone",]
+input = "example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA=="
+output = "example.com. 3600 IN RRSIG SOA 8 2 3600 (null) (null) 37444 example.com. (null)\n"
