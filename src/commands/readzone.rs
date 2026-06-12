@@ -306,16 +306,11 @@ impl ReadZone {
                 continue;
             }
 
-            match out.write_all(
-                format!(
-                    "{}\n",
-                    dns_display(&record, &mark_unknown, self.print_rrsig_null)
-                )
-                .as_bytes(),
-            ) {
-                Ok(()) => (),
-                Err(e) => eprintln!("Error while writing to Writer {:?}", e),
-            }
+            writeln!(
+                &mut out,
+                "{}",
+                dns_display(&record, &mark_unknown, self.print_rrsig_null)
+            )?;
         }
         out.flush()?;
         Ok(())
