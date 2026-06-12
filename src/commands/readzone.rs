@@ -426,7 +426,7 @@ fn dns_display_record_data(
     print_rrsig_null: bool,
 ) -> String {
     let rdata: String = match data {
-        RecordData::A(a) => format!("{}", Ipv4Addr::from_octets(a.octets)),
+        RecordData::A(a) => format!("{}", Ipv4Addr::from_bits(u32::from_be_bytes(a.octets))),
         RecordData::Mx(mx) => format!("{} {}", mx.preference, mx.exchange),
         RecordData::Ns(ns) => format!("{}", ns.server),
         RecordData::Soa(soa) => format!(
@@ -448,7 +448,9 @@ fn dns_display_record_data(
                 .join("\" \"")
         ),
         RecordData::Rp(rp) => format!("{} {}", rp.mailbox, rp.texts),
-        RecordData::Aaaa(aaaa) => format!("{}", Ipv6Addr::from_octets(aaaa.octets)),
+        RecordData::Aaaa(aaaa) => {
+            format!("{}", Ipv6Addr::from_bits(u128::from_be_bytes(aaaa.octets)))
+        }
         RecordData::DName(dn) => format!("{}", &dn.name),
         RecordData::Opt(_opt) => unimplemented!("OPT record is not implemented"),
         RecordData::Ds(ds) => format!(
