@@ -625,8 +625,10 @@ mod test {
 
     #[test]
     fn print_dns_record() {
+        let name = "example.com".parse::<RevNameBuf>().unwrap();
+
         let a_record: Record<&RevName, RecordData<'_, &Name>> = Record {
-            rname: &"example.com".parse::<RevNameBuf>().unwrap(),
+            rname: &name,
             rtype: RType::A,
             rclass: RClass::IN,
             ttl: TTL::from(3600),
@@ -635,7 +637,7 @@ mod test {
             }),
         };
         let mx_record: Record<&RevName, RecordData<'_, &Name>> = Record {
-            rname: &"example.com".parse::<RevNameBuf>().unwrap(),
+            rname: &name,
             rtype: RType::MX,
             rclass: RClass::IN,
             ttl: TTL::from(3600),
