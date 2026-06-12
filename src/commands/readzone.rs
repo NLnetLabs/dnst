@@ -347,9 +347,11 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
         "yyyymmddxx" => get_yyyymmddxx_serial(),
         s if s.starts_with('+') => return Ok(current.inc((s[1..]).parse::<i32>()?)),
         s if s.starts_with('-') => {
-            return Ok(Serial::from(
-                Into::<u32>::into(current).wrapping_sub_signed((s[1..]).parse::<i32>()?),
-            ));
+            // TODO: What are we doing here; how do I fix that?
+            return Ok(current
+                .inc(i32::MAX)
+                .inc(i32::MAX - (s[1..]).parse::<i32>()?)
+                .inc(2));
         }
         s => return Ok((s.parse::<u32>())?.into()),
     };
@@ -821,6 +823,16 @@ mod test {
             manipulate_serial(Serial::from(4294967295), "+1").unwrap(),
             Serial::from(0),
             "Decrease serial with relative operation -"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(10), "+0").unwrap(),
+            Serial::from(10),
+            "Add 0 to serial"
+        );
+        assert_eq!(
+            manipulate_serial(Serial::from(10), "-0").unwrap(),
+            Serial::from(10),
+            "Subtract 0 to serial"
         );
     }
 }
