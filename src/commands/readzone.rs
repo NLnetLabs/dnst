@@ -236,22 +236,37 @@ impl ReadZone {
     {
         let mut zf = ZonefileScanner::new(zf_buf, self.origin.as_deref());
 
-        let mut rrtype_exclude: Vec<RType> = Vec::new();
-        for rr in &self.rrtype_exclude {
-            rrtype_exclude.push(scan_rtype(rr.as_bytes())?);
-        }
-        let mut rrtype_include: Vec<RType> = Vec::new();
-        for rr in &self.rrtype_include {
-            rrtype_include.push(scan_rtype(rr.as_bytes())?);
-        }
-        let mut rrtype_mark_unknown_include: Vec<RType> = Vec::new();
-        for rr in &self.rrtype_mark_unknown_include {
-            rrtype_mark_unknown_include.push(scan_rtype(rr.as_bytes())?);
-        }
-        let mut rrtype_mark_unknown_exclude: Vec<RType> = Vec::new();
-        for rr in &self.rrtype_mark_unknown_exclude {
-            rrtype_mark_unknown_exclude.push(scan_rtype(rr.as_bytes())?);
-        }
+        // parse CLI type arguments for record exclusion/inclusion
+        let rrtype_exclude: Vec<RType> = self
+            .rrtype_exclude
+            .iter()
+            .map(|f| scan_rtype(f.as_bytes()).expect("Unable to parse RType in include args."))
+            .collect();
+
+        let rrtype_include: Vec<RType> = self
+            .rrtype_include
+            .iter()
+            .map(|f| scan_rtype(f.as_bytes()).expect("Unable to parse RType in include args."))
+            .collect();
+
+        // parse CLI type arguments to mark types unknown
+        let rrtype_mark_unknown_include: Vec<RType> = self
+            .rrtype_mark_unknown_include
+            .iter()
+            .map(|f| {
+                scan_rtype(f.as_bytes())
+                    .expect("Unable to parse RType in mark unknown include args.")
+            })
+            .collect();
+
+        let rrtype_mark_unknown_exclude: Vec<RType> = self
+            .rrtype_mark_unknown_exclude
+            .iter()
+            .map(|f| {
+                scan_rtype(f.as_bytes())
+                    .expect("Unable to parse RType in mark unknown exclude args.")
+            })
+            .collect();
 
         let mark_unknown = match (
             rrtype_mark_unknown_include.len(),
@@ -270,7 +285,7 @@ impl ReadZone {
                 Err(e) => return Err(Error::new(&e.to_string())),
             };
             let Entry::Record(mut record) = entry else {
-                eprintln!("Skipping non-Record entries");
+                // Skipping non record entries
                 continue;
             };
 
@@ -331,7 +346,7 @@ impl RRTypeMarkUnknown<'_> {
         match self {
             Self::AllExcept(v) => !v.contains(other),
             Self::Only(v) => v.contains(other),
-            Self::TruelyUnknown => false,
+            Self::TruelyUnknown => false, // no special care
         }
     }
 }
@@ -359,9 +374,22 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
 
 use domain::new::base::name::{Name, NameBuf, RevName};
 use domain::new::base::{RClass, Record};
-use std::ascii::escape_default;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+/// Collect `&CharStr` into escaped ([`std::ascii::escape_default`]) String
+fn dns_display_charstr(charstr: &CharStr) -> String {
+    charstr
+        .octets
+        .iter()
+        .map(|c| std::ascii::escape_default(*c).to_string())
+        .collect()
+}
+
+/// Return mnemonic representation of [`RType`]. If [`RType`] is unknown or
+/// `unkown_type` flag is passed, then the returned string contains the type
+/// in the unknown format as defined in Section 5 in [RFC3597].
+///
+/// [RFC3597]: https://datatracker.ietf.org/doc/html/rfc3597#section-5
 fn dns_display_type(rtype: RType, unknown_type: bool) -> String {
     if unknown_type {
         return format!("TYPE{}", rtype.code);
@@ -396,26 +424,29 @@ fn dns_display_type(rtype: RType, unknown_type: bool) -> String {
     value.into()
 }
 
-fn dns_display_charstr(charstr: &CharStr) -> String {
-    charstr
-        .octets
-        .iter()
-        .map(|c| escape_default(*c).to_string())
-        .collect()
+/// Return mnemonic representation of [`RClass`]. If [`RClass`] is unknown,
+/// then the returned string contains the class in the unknown format as
+/// defined in Section 5 in [RFC3597].
+///
+/// [RFC3597]: https://datatracker.ietf.org/doc/html/rfc3597#section-5
+fn dns_display_class(value: RClass) -> String {
+    match value {
+        RClass::IN => "IN".into(),
+        RClass::CH => "CH".into(),
+        _ => format!("CLASS{}", value.code.get()),
+    }
 }
 
-fn dns_display_datetime(serial: Serial, date_fmt: bool) -> String {
-    if date_fmt {
-        format!(
-            "{}",
-            // NOTE: from_timestamp_secs is not yet in MSRV
-            chrono::DateTime::from_timestamp(Into::<u32>::into(serial) as i64, 0)
-                .expect("DateTime was out of range.")
-                .format("%Y%m%d%H%M%S")
-        )
-    } else {
-        format!("{}", serial)
-    }
+/// Return DateTime format representation of [`Serial`] primarily used for
+/// RRSIGs `inception` and `expiration`.
+fn dns_display_datetime(serial: Serial) -> String {
+    format!(
+        "{}",
+        // NOTE: from_timestamp_secs is not yet in MSRV
+        chrono::DateTime::from_timestamp(Into::<u32>::into(serial) as i64, 0)
+            .expect("DateTime was out of range.")
+            .format("%Y%m%d%H%M%S")
+    )
 }
 
 fn dns_display_record_data(
@@ -477,8 +508,8 @@ fn dns_display_record_data(
                     sig.algorithm.code,
                     sig.labels,
                     sig.ttl.value,
-                    dns_display_datetime(sig.expiration, true),
-                    dns_display_datetime(sig.inception, true),
+                    dns_display_datetime(sig.expiration),
+                    dns_display_datetime(sig.inception),
                     sig.keytag,
                     sig.signer,
                     domain::utils::base64::encode_display(&sig.signature),
@@ -548,13 +579,6 @@ fn dns_display_record_data(
     rdata
 }
 
-fn dns_display_class(value: RClass) -> String {
-    match value {
-        RClass::IN => "IN".into(),
-        RClass::CH => "CH".into(),
-        _ => format!("CLASS{}", value.code.get()),
-    }
-}
 fn dns_display(
     record: &Record<&RevName, RecordData<'_, &Name>>,
     rrtype_mark_unknown: &RRTypeMarkUnknown,
