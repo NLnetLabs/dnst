@@ -27,10 +27,6 @@ use super::{Command, LdnsCommand};
 // TODO: Update
 const DNSSEC_TYPES: [RType; 4] = [RType::DNSKEY, RType::NSEC, RType::NSEC3, RType::RRSIG];
 
-#[cfg(target_family = "windows")]
-const NEWLINE: &str = "\r\n";
-#[cfg(not(target_family = "windows"))]
-const NEWLINE: &str = "\n";
 //------------ ReadZone ------------------------------------------------------
 
 #[derive(Clone, Debug, clap::Parser, PartialEq)]
@@ -345,9 +341,9 @@ impl ReadZone {
             }
 
             // --- Display Record --------------------------------------------
-            write!(
+            writeln!(
                 &mut out,
-                "{}{NEWLINE}",
+                "{}",
                 dns_display(&record, &mark_unknown, self.print_rrsig_null)
             )?;
         }
@@ -668,6 +664,8 @@ fn is_dnssec_data(rtype: RType) -> bool {
 
 #[cfg(test)]
 mod test {
+    use std::io::BufRead;
+
     use super::*;
 
     use domain::new::base::name::{NameParseError, RevNameBuf};
@@ -733,6 +731,14 @@ mod test {
         tests: Vec<TestCase>,
     }
 
+    fn compare_lines(lhs: &[u8], rhs: &[u8]) -> bool {
+        let blhs: io::BufReader<&[u8]> = io::BufReader::new(lhs);
+        let brhs: io::BufReader<&[u8]> = io::BufReader::new(rhs);
+        brhs.lines()
+            .map(|r| r.unwrap())
+            .eq(blhs.lines().map(|l| l.unwrap()))
+    }
+
     #[test]
     fn verify_readzone_json() {
         let cmd = FakeCmd::new(["dnst", "read-zone"]);
@@ -756,13 +762,16 @@ mod test {
             println!("Function Result: {:?}", result);
             match result {
                 Ok(_) => {
-                    let is_equal = vec_buf == test.output.as_bytes();
+                    let is_equal = compare_lines(vec_buf.as_slice(), test.output.as_bytes());
                     println!("Resulting Output\n{:?}", String::from_utf8(vec_buf));
                     assert!(is_equal);
                 }
                 Err(e) => {
                     println!("Resulting Output: {:?}", String::from_utf8(vec_buf));
-                    assert_eq!(e.to_string(), test.output);
+                    assert!(compare_lines(
+                        e.to_string().as_bytes(),
+                        test.output.as_bytes()
+                    ));
                 }
             }
             println!("# end test {} - {}", index, test.info);
