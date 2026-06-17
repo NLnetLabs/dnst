@@ -24,7 +24,7 @@ example.org. 1 IN NS ns1.net.
 info = "Error when using -b option"
 config = ["-b", "does-not-matter.zone"]
 input = "example.com. 3600 IN DS 57855 5 1 b6dcd485719adca18e5f3d48a2331627fdd3636b"
-output = "The option -b is not implemented. Do you need it?"
+output = "The option -b is not implemented."
 
 [[tests]]
 info = "Do not print the SOA record."
@@ -166,4 +166,15 @@ example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 exam
 """
 output = """
 example.com. 3600 IN RRSIG SOA 8 2 3600 (null) (null) 37444 example.com. (null)
+"""
+
+[[tests]]
+info = "Multiple SOA records in one zone. ldns-read-zone only prints the first SOA record."
+config = ["does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+sub.example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
 """

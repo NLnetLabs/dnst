@@ -1,17 +1,17 @@
-use core::clone::Clone;
-
 use chrono::Datelike;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io;
-use std::io::BufReader;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 
 use clap::Parser;
 
 use domain::new::base::build::BuildBytes;
 use domain::new::base::name::RevNameBuf;
+use domain::new::base::name::{Name, NameBuf, RevName};
 use domain::new::base::{CharStr, RType, Serial};
+use domain::new::base::{RClass, Record};
 use domain::new::rdata::RecordData;
 use domain::new::zonefile::scanner::{Scan, ScanError, Scanner};
 use domain::new::zonefile::simple::Entry;
@@ -222,7 +222,7 @@ impl ReadZone {
 
         // I do the reading of the zonefile here because then I can test the
         // output of the zonefile without creating a file for it.
-        let zonefile_buf = BufReader::new(File::open(&self.zonefile_path)?);
+        let zonefile_buf = io::BufReader::new(File::open(&self.zonefile_path)?);
 
         self.go_through_zone(zonefile_buf, &env.stdout())?;
 
@@ -234,9 +234,18 @@ impl ReadZone {
         R: io::BufRead,
         W: io::Write,
     {
+        //--- Throw error when trying print_rrsig_null
+        if self.print_ds_bubble_babble {
+            return Err(Error::new("The option -b is not implemented."));
+        }
+
+        // `ldns-read-zone` prints only one SOA record. Keep track to only print
+        // one record.
+        let mut soa_is_printed = false;
+        let mut warning_at_the_end: Vec<String> = Vec::new();
         let mut zf = ZonefileScanner::new(zf_buf, self.origin.as_deref());
 
-        // parse CLI type arguments for record exclusion/inclusion
+        // --- In/Exclude RTypes from printing -------------------------------
         let rrtype_exclude: Vec<RType> = self
             .rrtype_exclude
             .iter()
@@ -249,7 +258,7 @@ impl ReadZone {
             .map(|f| scan_rtype(f.as_bytes()).expect("Unable to parse RType in include args."))
             .collect();
 
-        // parse CLI type arguments to mark types unknown
+        // --- Print RType in Unknown Format ---------------------------------
         let rrtype_mark_unknown_include: Vec<RType> = self
             .rrtype_mark_unknown_include
             .iter()
@@ -278,6 +287,8 @@ impl ReadZone {
             (_, _) => return Err(Error::new("-u and -U should not be mixed together!")),
         };
 
+        // --- Iterate over all entries in the zonefile. ---------------------
+        let mut first_entry = true;
         loop {
             let entry = match zf.scan() {
                 Ok(Some(entry)) => entry,
@@ -286,25 +297,24 @@ impl ReadZone {
             };
             let Entry::Record(mut record) = entry else {
                 // Skipping non record entries
+                warning_at_the_end
+                    .push("Warning: Non-record entry skipped during parsing!".to_string());
                 continue;
             };
 
-            if let Some(serial_arg) = &self.manipulate_serial {
-                if let RecordData::Soa(soa) = &mut record.rdata {
-                    soa.serial = manipulate_serial(soa.serial, serial_arg)?;
+            if first_entry {
+                first_entry = false;
+                if record.rtype != RType::SOA {
+                    warning_at_the_end
+                        .push("Warning: First record was not SOA record!".to_string());
                 }
             }
+
             if !rrtype_include.is_empty() && !rrtype_include.contains(&record.rtype) {
                 continue;
             }
             if !rrtype_exclude.is_empty() && rrtype_exclude.contains(&record.rtype) {
                 continue;
-            }
-            //--- Throw error when trying print_rrsig_null
-            if self.print_ds_bubble_babble {
-                return Err(Error::new(
-                    "The option -b is not implemented. Do you need it?",
-                ));
             }
             //--- Only print DNSSEC data
             if self.print_only_dnssec && !is_dnssec_data(record.rtype) {
@@ -317,10 +327,19 @@ impl ReadZone {
             }
             //--- Do not print SOA
             // Check if ldns checks for apex
-            if self.print_not_soa && record.rtype == RType::SOA {
+            if soa_is_printed || (self.print_not_soa && record.rtype == RType::SOA) {
                 continue;
             }
+            if let Some(serial_arg) = &self.manipulate_serial {
+                if let RecordData::Soa(soa) = &mut record.rdata {
+                    soa.serial = manipulate_serial(soa.serial, serial_arg)?;
+                }
+            }
+            if record.rtype == RType::SOA {
+                soa_is_printed = true;
+            }
 
+            // --- Display Record --------------------------------------------
             writeln!(
                 &mut out,
                 "{}",
@@ -355,6 +374,9 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     let cand = match arg.to_lowercase().as_str() {
         "unixtime" => get_unixtime_serial()?,
         "yyyymmddxx" => get_yyyymmddxx_serial(),
+
+        // Notice the return, these functions return the `Serial` no matter if
+        // bigger or smaller than the current `Serial`.
         s if s.starts_with('+') => return Ok(current.inc((s[1..]).parse::<i32>()?)),
         s if s.starts_with('-') => {
             // TODO: What are we doing here; how do I fix that?
@@ -371,10 +393,6 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     }
     Ok(cand)
 }
-
-use domain::new::base::name::{Name, NameBuf, RevName};
-use domain::new::base::{RClass, Record};
-use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// Collect `&CharStr` into escaped ([`std::ascii::escape_default`]) String
 fn dns_display_charstr(charstr: &CharStr) -> String {
@@ -449,12 +467,14 @@ fn dns_display_datetime(serial: Serial) -> String {
     )
 }
 
+/// Return [`RecordData`] as a valid DNS string.
 fn dns_display_record_data(
     data: &RecordData<'_, &Name>,
     rrtype_mark_unknown: &RRTypeMarkUnknown,
     print_rrsig_null: bool,
 ) -> String {
     let rdata: String = match data {
+        // TODO: MSRV 1.91.0: [`Ipv4Addr::from_octets()`]
         RecordData::A(a) => format!("{}", Ipv4Addr::from_bits(u32::from_be_bytes(a.octets))),
         RecordData::Mx(mx) => format!("{} {}", mx.preference, mx.exchange),
         RecordData::Ns(ns) => format!("{}", ns.server),
@@ -478,6 +498,7 @@ fn dns_display_record_data(
         ),
         RecordData::Rp(rp) => format!("{} {}", rp.mailbox, rp.texts),
         RecordData::Aaaa(aaaa) => {
+            // TODO: MSRV 1.91.0: [`Ipv6Addr::from_octets()`]
             format!("{}", Ipv6Addr::from_bits(u128::from_be_bytes(aaaa.octets)))
         }
         RecordData::DName(dn) => format!("{}", &dn.name),
@@ -584,7 +605,10 @@ fn dns_display(
     rrtype_mark_unknown: &RRTypeMarkUnknown,
     print_rrsig_null: bool,
 ) -> String {
+    // Copy RevName into NameBuf for Display trait.
     let name: NameBuf = RevNameBuf::copy_from(record.rname).into();
+
+    // if RType should be printed as unkown also print RData in unkonw format.
     let data = if rrtype_mark_unknown.is_unknown(&record.rtype) {
         let buf_len = record.rdata.built_bytes_size();
         let mut bytes_data = vec![0u8; buf_len];
@@ -592,6 +616,7 @@ fn dns_display(
             .rdata
             .build_bytes(&mut bytes_data)
             .expect(".built_bytes_size produced insufficient buffer size!");
+
         format!(
             "\\# {} {}",
             bytes_data.len(),
@@ -622,6 +647,8 @@ fn get_yyyymmddxx_serial() -> Serial {
     let dd = now.day() * 100;
     (yyyy + mm + dd).into()
 }
+
+// This is currently the only way to parse RTypes from a string.
 fn scan_rtype(buf: &[u8]) -> Result<RType, ScanError> {
     let mut scanner = Scanner::new(buf, None);
     let alloc = bumpalo::Bump::new();
@@ -800,7 +827,16 @@ mod test {
     }
 
     #[test]
-    fn test_serial_manipulation() {
+    fn test_dns_display_datetime() {
+        assert_eq!("19700101000000", dns_display_datetime(Serial::from(0)));
+        assert_eq!(
+            "20260102030405",
+            dns_display_datetime(Serial::from(1767323045))
+        );
+    }
+
+    #[test]
+    fn test_dns_manipulate_serial() {
         assert_eq!(
             manipulate_serial(Serial::from(1), "10").unwrap(),
             Serial::from(10),
