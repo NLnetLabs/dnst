@@ -26,6 +26,11 @@ use super::{Command, LdnsCommand};
 //------------ Constants -----------------------------------------------------
 // TODO: Update
 const DNSSEC_TYPES: [RType; 4] = [RType::DNSKEY, RType::NSEC, RType::NSEC3, RType::RRSIG];
+
+#[cfg(target_family = "windows")]
+const NEWLINE: &str = "\r\n";
+#[cfg(not(target_family = "windows"))]
+const NEWLINE: &str = "\n";
 //------------ ReadZone ------------------------------------------------------
 
 #[derive(Clone, Debug, clap::Parser, PartialEq)]
@@ -340,9 +345,9 @@ impl ReadZone {
             }
 
             // --- Display Record --------------------------------------------
-            writeln!(
+            write!(
                 &mut out,
-                "{}",
+                "{}{NEWLINE}",
                 dns_display(&record, &mark_unknown, self.print_rrsig_null)
             )?;
         }
