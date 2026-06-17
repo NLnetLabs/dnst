@@ -10,8 +10,8 @@ use clap::Parser;
 use domain::new::base::build::BuildBytes;
 use domain::new::base::name::RevNameBuf;
 use domain::new::base::name::{Name, NameBuf, RevName};
+use domain::new::base::Record;
 use domain::new::base::{CharStr, RType, Serial};
-use domain::new::base::{RClass, Record};
 use domain::new::rdata::RecordData;
 use domain::new::zonefile::scanner::{Scan, ScanError, Scanner};
 use domain::new::zonefile::simple::Entry;
@@ -278,15 +278,13 @@ impl ReadZone {
             })
             .collect();
 
-        let mark_unknown = match (
-            rrtype_mark_unknown_include.len(),
-            rrtype_mark_unknown_exclude.len(),
-        ) {
-            (0, 0) => RRTypeMarkUnknown::TruelyUnknown,
-            (_, 0) => RRTypeMarkUnknown::Only(&rrtype_mark_unknown_include),
-            (0, _) => RRTypeMarkUnknown::AllExcept(&rrtype_mark_unknown_exclude),
-            (_, _) => return Err(Error::new("-u and -U should not be mixed together!")),
-        };
+        let excluded_rrtypes: FilterSet<RType> =
+            FilterSet::new(&rrtype_exclude, &rrtype_include)
+                .map_err(|_| Error::new("-e and -E should not be mixed together!"))?;
+
+        let unknown_rrtypes: FilterSet<RType> =
+            FilterSet::new(&rrtype_mark_unknown_include, &rrtype_mark_unknown_exclude)
+                .map_err(|_| Error::new("-u and -U should not be mixed together!"))?;
 
         // --- Iterate over all entries in the zonefile. ---------------------
         let mut first_entry = true;
@@ -311,10 +309,7 @@ impl ReadZone {
                 }
             }
 
-            if !rrtype_include.is_empty() && !rrtype_include.contains(&record.rtype) {
-                continue;
-            }
-            if !rrtype_exclude.is_empty() && rrtype_exclude.contains(&record.rtype) {
+            if excluded_rrtypes.contains(&record.rtype) {
                 continue;
             }
             //--- Only print DNSSEC data
@@ -344,7 +339,7 @@ impl ReadZone {
             writeln!(
                 &mut out,
                 "{}",
-                dns_display(&record, &mark_unknown, self.print_rrsig_null)
+                dns_display(&record, &unknown_rrtypes, self.print_rrsig_null)
             )?;
         }
         out.flush()?;
@@ -352,21 +347,45 @@ impl ReadZone {
     }
 }
 
-/// Representation of which resource record types should be printed in unknown mode.
-enum RRTypeMarkUnknown<'a, T = Vec<RType>> {
-    AllExcept(&'a T),
-    Only(&'a T),
-    TruelyUnknown,
+/// [`FilterSet`] is a collection of different things (`T`).
+///
+/// By default the [`FilterSet`] is empty ([`FilterSet::Empty`]). It can
+/// contain only (explicitly) named things ([`FilterSet::EmptyPlus`]). Or it
+/// can contain (implicitly) everything except named things.
+///
+/// (A, B, C) -> this::EmptyPlus(A) -> this.contains(A) => true
+/// (A, B, C) -> this::EmptyPlus(B) -> this.contains(C) => false
+///
+/// (A, B, C) -> this::FullMinus(A) -> this.contains(A) => false
+/// (A, B, C) -> this::FullMinus(B) -> this.contains(A) => true
+///
+/// (A, B, C) -> this::Empty -> this.contains(A) => false
+enum FilterSet<'a, T> {
+    EmptyPlus(&'a [T]),
+    FullMinus(&'a [T]),
+    Empty, // bool tells if Set contains everything or nothing
 }
 
-impl RRTypeMarkUnknown<'_> {
-    /// Returns information, if the `other` type must be printed in unknown
-    /// format.
-    fn is_unknown(&self, other: &RType) -> bool {
+impl<'a, T: PartialEq> FilterSet<'a, T> {
+    //
+    // Err(()) if include and exclude contain things.
+    //
+    fn new(empty_plus: &'a [T], full_minus: &'a [T]) -> Result<Self, ()> {
+        match (empty_plus.is_empty(), full_minus.is_empty()) {
+            // no inclusion or exclusion
+            (true, true) => Ok(Self::Empty),
+            (false, true) => Ok(Self::EmptyPlus(empty_plus)),
+            (true, false) => Ok(Self::FullMinus(full_minus)),
+            (false, false) => Err(()),
+        }
+    }
+
+    // Is the thing part of the collection.
+    fn contains(&self, other: &T) -> bool {
         match self {
-            Self::AllExcept(v) => !v.contains(other),
-            Self::Only(v) => v.contains(other),
-            Self::TruelyUnknown => false, // no special care
+            Self::EmptyPlus(v) => v.contains(other),
+            Self::FullMinus(v) => !v.contains(other),
+            Self::Empty => false,
         }
     }
 }
@@ -413,47 +432,7 @@ fn dns_display_type(rtype: RType, unknown_type: bool) -> String {
     if unknown_type {
         return format!("TYPE{}", rtype.code);
     }
-
-    let value = match rtype {
-        RType::A => "A",
-        RType::NS => "NS",
-        RType::CNAME => "CNAME",
-        RType::SOA => "SOA",
-        RType::PTR => "PTR",
-        RType::HINFO => "HINFO",
-        RType::MX => "MX",
-        RType::TXT => "TXT",
-        RType::RP => "RP",
-        RType::AAAA => "AAAA",
-        RType::SRV => "SRV",
-        RType::DNAME => "DNAME",
-        RType::OPT => "OPT",
-        RType::DS => "DS",
-        RType::RRSIG => "RRSIG",
-        RType::NSEC => "NSEC",
-        RType::DNSKEY => "DNSKEY",
-        RType::NSEC3 => "NSEC3",
-        RType::NSEC3PARAM => "NSEC3PARAM",
-        RType::CDS => "CDS",
-        RType::CDNSKEY => "CDNSKEY",
-        RType::ZONEMD => "ZONEMD",
-        RType::TSIG => "TSIG",
-        _ => return format!("TYPE{}", rtype.code),
-    };
-    value.into()
-}
-
-/// Return mnemonic representation of [`RClass`]. If [`RClass`] is unknown,
-/// then the returned string contains the class in the unknown format as
-/// defined in Section 5 in [RFC3597].
-///
-/// [RFC3597]: https://datatracker.ietf.org/doc/html/rfc3597#section-5
-fn dns_display_class(value: RClass) -> String {
-    match value {
-        RClass::IN => "IN".into(),
-        RClass::CH => "CH".into(),
-        _ => format!("CLASS{}", value.code.get()),
-    }
+    rtype.to_string()
 }
 
 /// Return DateTime format representation of [`Serial`] primarily used for
@@ -471,7 +450,7 @@ fn dns_display_datetime(serial: Serial) -> String {
 /// Return [`RecordData`] as a valid DNS string.
 fn dns_display_record_data(
     data: &RecordData<'_, &Name>,
-    rrtype_mark_unknown: &RRTypeMarkUnknown,
+    unknown_rtypes: &FilterSet<RType>,
     print_rrsig_null: bool,
 ) -> String {
     let rdata: String = match data {
@@ -516,7 +495,7 @@ fn dns_display_record_data(
             if print_rrsig_null {
                 format!(
                     "{} {} {} {} (null) (null) {} {} (null)",
-                    dns_display_type(sig.rtype, rrtype_mark_unknown.is_unknown(&sig.rtype)),
+                    dns_display_type(sig.rtype, unknown_rtypes.contains(&sig.rtype)),
                     sig.algorithm.code,
                     sig.labels,
                     sig.ttl.value,
@@ -526,7 +505,7 @@ fn dns_display_record_data(
             } else {
                 format!(
                     "{} {} {} {} {} {} {} {} {}",
-                    dns_display_type(sig.rtype, rrtype_mark_unknown.is_unknown(&sig.rtype)),
+                    dns_display_type(sig.rtype, unknown_rtypes.contains(&sig.rtype)),
                     sig.algorithm.code,
                     sig.labels,
                     sig.ttl.value,
@@ -543,7 +522,7 @@ fn dns_display_record_data(
             nsec.types
                 .iter()
                 // Print the RType in compatibilty if it is desired
-                .map(|t| dns_display_type(t, rrtype_mark_unknown.is_unknown(&t)))
+                .map(|t| dns_display_type(t, unknown_rtypes.contains(&t)))
                 .collect::<Vec<String>>()
                 .join(" "),
             nsec.next
@@ -566,7 +545,7 @@ fn dns_display_record_data(
             nsec3
                 .types
                 .iter()
-                .map(|t| dns_display_type(t, rrtype_mark_unknown.is_unknown(&t)))
+                .map(|t| dns_display_type(t, unknown_rtypes.contains(&t)))
                 .collect::<Vec<String>>()
                 .join(" "),
         ),
@@ -603,14 +582,14 @@ fn dns_display_record_data(
 
 fn dns_display(
     record: &Record<&RevName, RecordData<'_, &Name>>,
-    rrtype_mark_unknown: &RRTypeMarkUnknown,
+    unknown_rtypes: &FilterSet<RType>,
     print_rrsig_null: bool,
 ) -> String {
     // Copy RevName into NameBuf for Display trait.
     let name: NameBuf = RevNameBuf::copy_from(record.rname).into();
 
     // if RType should be printed as unkown also print RData in unkonw format.
-    let data = if rrtype_mark_unknown.is_unknown(&record.rtype) {
+    let data = if unknown_rtypes.contains(&record.rtype) {
         let buf_len = record.rdata.built_bytes_size();
         let mut bytes_data = vec![0u8; buf_len];
         record
@@ -624,15 +603,15 @@ fn dns_display(
             domain::utils::base16::encode_display(&bytes_data)
         )
     } else {
-        dns_display_record_data(&record.rdata, rrtype_mark_unknown, print_rrsig_null)
+        dns_display_record_data(&record.rdata, unknown_rtypes, print_rrsig_null)
     };
 
     format!(
         "{} {} {} {} {}",
         name,
         record.ttl.value.get(),
-        dns_display_class(record.rclass),
-        dns_display_type(record.rtype, rrtype_mark_unknown.is_unknown(&record.rtype)),
+        record.rclass,
+        dns_display_type(record.rtype, unknown_rtypes.contains(&record.rtype)),
         data,
     )
 }
@@ -701,11 +680,11 @@ mod test {
             }),
         };
         assert_eq!(
-            dns_display(&a_record, &RRTypeMarkUnknown::TruelyUnknown, false),
+            dns_display(&a_record, &FilterSet::Empty, false),
             "example.com. 3600 IN A 1.1.1.1"
         );
         assert_eq!(
-            dns_display(&mx_record, &RRTypeMarkUnknown::TruelyUnknown, false),
+            dns_display(&mx_record, &FilterSet::Empty, false),
             "example.com. 3600 IN MX 10 mail.example.com."
         );
     }

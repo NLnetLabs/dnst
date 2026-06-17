@@ -365,7 +365,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.12.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=new-zonefile?branch=new-zonefile#caa731e331f4f289e162d264631991afa00b4a45"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=new-zonefile?branch=new-zonefile#0f21e679a40793c68a1b7dccb625a7b56dbfe77f"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -410,7 +410,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.12.1"
-source = "git+https://github.com/NLnetLabs/domain.git?branch=new-zonefile?branch=new-zonefile#caa731e331f4f289e162d264631991afa00b4a45"
+source = "git+https://github.com/NLnetLabs/domain.git?branch=new-zonefile?branch=new-zonefile#0f21e679a40793c68a1b7dccb625a7b56dbfe77f"
 dependencies = [
  "proc-macro2",
  "quote",
