@@ -219,72 +219,73 @@ impl LdnsCommand for ReadZone {
 
 impl ReadZone {
     pub fn execute(&self, env: impl Env) -> Result<(), Error> {
-        // Read the zone file.
+        // Command-Line-Arguments validation and reconstruction
 
-        // I do the reading of the zonefile here because then I can test the
-        // output of the zonefile without creating a file for it.
-        let zonefile_buf = io::BufReader::new(File::open(&self.zonefile_path)?);
-
-        self.go_through_zone(zonefile_buf, &env.stdout())?;
-
-        Ok(())
-    }
-
-    pub(super) fn go_through_zone<R, W>(&self, zf_buf: R, mut out: W) -> Result<(), Error>
-    where
-        R: io::BufRead,
-        W: io::Write,
-    {
-        //--- Throw error when trying print_rrsig_null
+        //--- Throw error when trying to use Bubble Babble
         if self.print_ds_bubble_babble {
             return Err(Error::new("The option -b is not implemented."));
         }
 
-        // `ldns-read-zone` prints only one SOA record. Keep track to only print
-        // one record.
-        let mut soa_is_printed = false;
-        let mut warning_at_the_end: Vec<String> = Vec::new();
-        let mut zf = ZonefileScanner::new(zf_buf, self.origin.as_deref());
-
         // --- In/Exclude RTypes from printing -------------------------------
-        let rrtype_exclude: Vec<RType> = self
-            .rrtype_exclude
-            .iter()
-            .map(|f| scan_rtype(f.as_bytes()).expect("Unable to parse RType in include args."))
-            .collect();
 
-        let rrtype_include: Vec<RType> = self
-            .rrtype_include
-            .iter()
-            .map(|f| scan_rtype(f.as_bytes()).expect("Unable to parse RType in include args."))
-            .collect();
+        let mut rrtype_exclude: Vec<RType> = Vec::with_capacity(self.rrtype_exclude.len());
+        parse_rtype_list(&self.rrtype_exclude, &mut rrtype_exclude)?;
 
-        // --- Print RType in Unknown Format ---------------------------------
-        let rrtype_mark_unknown_include: Vec<RType> = self
-            .rrtype_mark_unknown_include
-            .iter()
-            .map(|f| {
-                scan_rtype(f.as_bytes())
-                    .expect("Unable to parse RType in mark unknown include args.")
-            })
-            .collect();
-
-        let rrtype_mark_unknown_exclude: Vec<RType> = self
-            .rrtype_mark_unknown_exclude
-            .iter()
-            .map(|f| {
-                scan_rtype(f.as_bytes())
-                    .expect("Unable to parse RType in mark unknown exclude args.")
-            })
-            .collect();
+        let mut rrtype_include: Vec<RType> = Vec::with_capacity(self.rrtype_include.len());
+        parse_rtype_list(&self.rrtype_include, &mut rrtype_include)?;
 
         let excluded_rrtypes: FilterSet<RType> =
             FilterSet::new(&rrtype_exclude, &rrtype_include)
                 .map_err(|_| Error::new("-e and -E should not be mixed together!"))?;
 
+        // --- In/Exclude RType from unknown format ---------------------------------
+        let mut rrtype_mark_unknown_exclude: Vec<RType> =
+            Vec::with_capacity(self.rrtype_mark_unknown_exclude.len());
+        parse_rtype_list(
+            &self.rrtype_mark_unknown_exclude,
+            &mut rrtype_mark_unknown_exclude,
+        )?;
+
+        let mut rrtype_mark_unknown_include: Vec<RType> =
+            Vec::with_capacity(self.rrtype_mark_unknown_include.len());
+        parse_rtype_list(
+            &self.rrtype_mark_unknown_include,
+            &mut rrtype_mark_unknown_include,
+        )?;
+
         let unknown_rrtypes: FilterSet<RType> =
             FilterSet::new(&rrtype_mark_unknown_include, &rrtype_mark_unknown_exclude)
                 .map_err(|_| Error::new("-u and -U should not be mixed together!"))?;
+
+        // Read the zone file in the current working directory.
+        let zonefile_buf = io::BufReader::new(File::open(env.in_cwd(&self.zonefile_path))?);
+
+        self.walk_zone(
+            zonefile_buf,
+            &env.stdout(),
+            excluded_rrtypes,
+            unknown_rrtypes,
+        )?;
+
+        Ok(())
+    }
+
+    pub(super) fn walk_zone<R, W>(
+        &self,
+        zonefile_buffer: R,
+        mut out: W,
+        excluded_rrtypes: FilterSet<RType>,
+        unknown_rrtypes: FilterSet<RType>,
+    ) -> Result<(), Error>
+    where
+        R: io::BufRead,
+        W: io::Write,
+    {
+        // `ldns-read-zone` prints only one SOA record. Keep track to only print
+        // one record.
+        let mut soa_is_printed = false;
+        let mut warning_at_the_end: Vec<String> = Vec::new();
+        let mut zf = ZonefileScanner::new(zonefile_buffer, self.origin.as_deref());
 
         // --- Iterate over all entries in the zonefile. ---------------------
         let mut first_entry = true;
@@ -360,7 +361,7 @@ impl ReadZone {
 /// (A, B, C) -> this::FullMinus(B) -> this.contains(A) => true
 ///
 /// (A, B, C) -> this::Empty -> this.contains(A) => false
-enum FilterSet<'a, T> {
+pub(super) enum FilterSet<'a, T> {
     EmptyPlus(&'a [T]),
     FullMinus(&'a [T]),
     Empty, // bool tells if Set contains everything or nothing
@@ -390,6 +391,15 @@ impl<'a, T: PartialEq> FilterSet<'a, T> {
     }
 }
 
+fn parse_rtype_list(source: &Vec<String>, destination: &mut Vec<RType>) -> Result<(), Error> {
+    for rtype in source {
+        destination.push(
+            scan_rtype(rtype.as_bytes())
+                .map_err(|_| Error::new("Unable to parse RType in cli arguments."))?,
+        )
+    }
+    Ok(())
+}
 fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     let cand = match arg.to_lowercase().as_str() {
         "unixtime" => get_unixtime_serial()?,
@@ -643,7 +653,7 @@ fn is_dnssec_data(rtype: RType) -> bool {
 
 #[cfg(test)]
 mod test {
-    use std::io::BufRead;
+    use std::io::{BufRead, Write};
 
     use super::*;
 
@@ -654,10 +664,181 @@ mod test {
 
     use crate::commands::readzone::PathBuf;
     use crate::commands::Command;
-    use crate::env::fake::FakeCmd;
+    use crate::env::fake::{FakeCmd, FakeEnv};
+    use tempfile;
+
+    #[track_caller]
+    fn get_default_readzone(path_str: &str) -> ReadZone {
+        ReadZone {
+            canonicalize: false,
+            print_only_dnssec: false,
+            print_rrsig_null: false,
+            print_ds_bubble_babble: false,
+            rrtype_exclude: Vec::new(),
+            rrtype_include: Vec::new(),
+            rrtype_mark_unknown_include: Vec::new(),
+            rrtype_mark_unknown_exclude: Vec::new(),
+            manipulate_serial: None,
+            origin: None,
+            pad_soa_serial: false,
+            print_not_dnssec: false,
+            print_not_soa: false,
+            canonical_sort: false,
+            zonefile_path: PathBuf::from(path_str),
+            invoked_as_ldns: false,
+        }
+    }
+
+    #[track_caller]
+    fn parse(args: &FakeCmd) -> ReadZone {
+        let res = args.parse().unwrap();
+        let Command::ReadZone(x) = res.command else {
+            panic!("Not a ReadZone!");
+        };
+        x
+    }
+
+    /// Run a testcase in a temporary fake environment.
+    ///
+    /// The zonefile gets created with the desired content and
+    #[track_caller]
+    fn run_testcase_in_fakeenv(
+        args: &[String],
+        zonefile_content: &[u8],
+    ) -> (Result<(), Error>, FakeEnv) {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let fake_cmd = FakeCmd::new(["dnst", "read-zone"])
+            .cwd(dir.path())
+            .args(args);
+
+        let readzone_config: ReadZone = parse(&fake_cmd);
+
+        // Fake the zonefile file on the fly
+        let mut file = File::create(dir.path().join(&readzone_config.zonefile_path)).unwrap();
+        file.write_all(zonefile_content).unwrap();
+
+        let env = FakeEnv {
+            cmd: fake_cmd,
+            stdout: Default::default(),
+            stderr: Default::default(),
+            seconds_since_epoch: Default::default(),
+            stelline: None,
+        };
+
+        let fake_result = readzone_config.execute(&env);
+        (fake_result, env)
+    }
+
+    /// Representation of all tests in a test file (i.e. `*.toml` file).
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCaseCollection {
+        tests: Vec<TestCase>,
+    }
+
+    /// Representation of one test in a test file (i.e. `*.toml` file).
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCase {
+        info: String,
+        config: Vec<String>,
+        input: String,
+        output: String,
+    }
+
+    #[track_caller]
+    fn compare_lines(lhs: &[u8], rhs: &[u8]) -> bool {
+        let blhs: io::BufReader<&[u8]> = io::BufReader::new(lhs);
+        let brhs: io::BufReader<&[u8]> = io::BufReader::new(rhs);
+        brhs.lines()
+            .map(|r| r.unwrap())
+            .eq(blhs.lines().map(|l| l.unwrap()))
+    }
 
     #[test]
-    fn print_dns_record() {
+    fn testcases_from_toml_testfile() {
+        let test_case_collection: TestCaseCollection =
+            toml::from_str(include_str!("../../test-data/verify-readzone.toml"))
+                .expect("TOML was not well-formatted");
+
+        for (index, test) in test_case_collection.tests.iter().enumerate() {
+            println!("# start test {} - {}", index, test.info);
+
+            // Run the test in a FakeEnvironment.
+            // The file specified on the command-line gets created and filled
+            // with the desired input. The `stdout` and `stderr` have to be
+            // verified.
+            let (exec_result, env_result) =
+                run_testcase_in_fakeenv(test.config.as_slice(), test.input.as_bytes());
+
+            println!("Input\n{:?}", test.input);
+            println!("Expected Output: {:?}", test.output);
+
+            println!("Function Result: {:?}", exec_result);
+            println!("Resulting Output: {:?}", env_result.get_stdout());
+
+            assert_eq!(env_result.get_stderr(), "");
+            match exec_result {
+                Ok(_) => {
+                    assert!(
+                        compare_lines(test.output.as_bytes(), env_result.get_stdout().as_bytes()),
+                        "stdout was not as expected!"
+                    );
+                }
+                Err(e) => {
+                    assert_eq!(env_result.get_stdout(), "");
+
+                    assert!(compare_lines(
+                        e.to_string().as_bytes(),
+                        test.output.as_bytes()
+                    ));
+                }
+            }
+            println!("# end test {} - {}", index, test.info);
+        }
+    }
+
+    #[test]
+    fn dnst_parse_successes() {
+        let cmd = FakeCmd::new(["dnst", "read-zone"]);
+
+        // Check the defaults
+        let path = "example.org.zone";
+        let base = ReadZone {
+            origin: Some("example.org".parse().unwrap()),
+            ..get_default_readzone(path)
+        };
+        assert_eq!(parse(&cmd.args(["-o", "example.org", path])), base);
+    }
+
+    #[test]
+    fn check_revnamebuf() {
+        let name = "example.org.";
+        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
+        assert!(rnb.is_err());
+        let name = "example.org";
+        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
+        assert!(rnb.is_ok());
+    }
+
+    #[test]
+    fn simple_readzone() {
+        let res1 = FakeCmd::new([
+            "dnst",
+            "read-zone",
+            "-c",
+            "-o",
+            "example.com",
+            "test-data/example.org",
+        ])
+        .run();
+
+        println!("{:?}", res1.stdout);
+        assert_eq!(res1.stderr, "");
+        assert_eq!(res1.exit_code, 0);
+    }
+
+    #[test]
+    fn test_dns_display() {
         let name = "example.com".parse::<RevNameBuf>().unwrap();
         let mx_exchange = "mail.example.com".parse::<NameBuf>().unwrap();
         let a_record: Record<&RevName, RecordData<'_, &Name>> = Record {
@@ -687,136 +868,6 @@ mod test {
             dns_display(&mx_record, &FilterSet::Empty, false),
             "example.com. 3600 IN MX 10 mail.example.com."
         );
-    }
-
-    #[track_caller]
-    fn parse(args: FakeCmd) -> ReadZone {
-        let res = args.parse().unwrap();
-        let Command::ReadZone(x) = res.command else {
-            panic!("Not a ReadZone!");
-        };
-        x
-    }
-
-    #[derive(Debug, serde::Deserialize, serde::Serialize)]
-    struct TestCase {
-        info: String,
-        config: Vec<String>,
-        input: String,
-        output: String,
-    }
-    #[derive(Debug, serde::Deserialize, serde::Serialize)]
-    struct TestCaseCollection {
-        tests: Vec<TestCase>,
-    }
-
-    fn compare_lines(lhs: &[u8], rhs: &[u8]) -> bool {
-        let blhs: io::BufReader<&[u8]> = io::BufReader::new(lhs);
-        let brhs: io::BufReader<&[u8]> = io::BufReader::new(rhs);
-        brhs.lines()
-            .map(|r| r.unwrap())
-            .eq(blhs.lines().map(|l| l.unwrap()))
-    }
-
-    #[test]
-    fn verify_readzone_json() {
-        let cmd = FakeCmd::new(["dnst", "read-zone"]);
-
-        // Check the defaults
-        let test_case_collection: TestCaseCollection =
-            toml::from_str(include_str!("../../test-data/verify-readzone.toml"))
-                .expect("TOML was not well-formatted");
-
-        for (index, test) in test_case_collection.tests.iter().enumerate() {
-            println!("# start test {} - {}", index, test.info);
-
-            let readzone_config: ReadZone = parse(cmd.args(&test.config));
-
-            println!("Input\n{:?}", test.input);
-            println!("Expected Output: {:?}", test.output);
-
-            let mut vec_buf: Vec<u8> = Vec::new();
-            let result = readzone_config.go_through_zone(test.input.as_bytes(), &mut vec_buf);
-
-            println!("Function Result: {:?}", result);
-            match result {
-                Ok(_) => {
-                    let is_equal = compare_lines(vec_buf.as_slice(), test.output.as_bytes());
-                    println!("Resulting Output\n{:?}", String::from_utf8(vec_buf));
-                    assert!(is_equal);
-                }
-                Err(e) => {
-                    println!("Resulting Output: {:?}", String::from_utf8(vec_buf));
-                    assert!(compare_lines(
-                        e.to_string().as_bytes(),
-                        test.output.as_bytes()
-                    ));
-                }
-            }
-            println!("# end test {} - {}", index, test.info);
-        }
-    }
-
-    #[track_caller]
-    fn get_default_readzone(path_str: &str) -> ReadZone {
-        ReadZone {
-            canonicalize: false,
-            print_only_dnssec: false,
-            print_rrsig_null: false,
-            print_ds_bubble_babble: false,
-            rrtype_exclude: Vec::new(),
-            rrtype_include: Vec::new(),
-            rrtype_mark_unknown_include: Vec::new(),
-            rrtype_mark_unknown_exclude: Vec::new(),
-            manipulate_serial: None,
-            origin: None,
-            pad_soa_serial: false,
-            print_not_dnssec: false,
-            print_not_soa: false,
-            canonical_sort: false,
-            zonefile_path: PathBuf::from(path_str),
-            invoked_as_ldns: false,
-        }
-    }
-
-    #[test]
-    fn dnst_parse_successes() {
-        let cmd = FakeCmd::new(["dnst", "read-zone"]);
-
-        // Check the defaults
-        let path = "example.org.zone";
-        let base = ReadZone {
-            origin: Some("example.org".parse().unwrap()),
-            ..get_default_readzone(path)
-        };
-        assert_eq!(parse(cmd.args(["-o", "example.org", path])), base);
-    }
-
-    #[test]
-    fn check_revnamebuf() {
-        let name = "example.org.";
-        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
-        assert!(rnb.is_err());
-        let name = "example.org";
-        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
-        assert!(rnb.is_ok());
-    }
-
-    #[test]
-    fn simple_readzone() {
-        let res1 = FakeCmd::new([
-            "dnst",
-            "read-zone",
-            "-c",
-            "-o",
-            "example.com",
-            "test-data/example.org",
-        ])
-        .run();
-
-        println!("{:?}", res1.stdout);
-        assert_eq!(res1.stderr, "");
-        assert_eq!(res1.exit_code, 0);
     }
 
     #[test]
