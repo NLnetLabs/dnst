@@ -221,9 +221,15 @@ impl ReadZone {
     pub fn execute(&self, env: impl Env) -> Result<(), Error> {
         // Command-Line-Arguments validation and reconstruction
 
-        //--- Throw error when trying to use Bubble Babble
+        //--- Throw error when trying to use not implemented features.
         if self.print_ds_bubble_babble {
             return Err(Error::new("The option -b is not implemented."));
+        }
+        if self.canonical_sort {
+            return Err(Error::new("The option -z is not implemented."));
+        }
+        if self.canonicalize {
+            return Err(Error::new("The option -c is not implemented."));
         }
 
         // --- In/Exclude RTypes from printing -------------------------------
@@ -320,10 +326,9 @@ impl ReadZone {
             //--- Do not print DNSSEC data
             if self.print_not_dnssec && is_dnssec_data(record.rtype) {
                 continue;
-                // Check if ldns checks for apex
             }
             //--- Do not print SOA
-            // Check if ldns checks for apex
+            // ldns-read-zone only prints the first SOA it encounters.
             if soa_is_printed || (self.print_not_soa && record.rtype == RType::SOA) {
                 continue;
             }
@@ -657,7 +662,7 @@ mod test {
 
     use super::*;
 
-    use domain::new::base::name::{NameParseError, RevNameBuf};
+    use domain::new::base::name::RevNameBuf;
     use domain::new::base::wire::U16;
     use domain::new::base::{RClass, TTL};
     use domain::new::rdata;
@@ -667,6 +672,23 @@ mod test {
     use crate::env::fake::{FakeCmd, FakeEnv};
     use tempfile;
 
+    // --- helper structs ----------------------------------------------------
+    /// Representation of all tests in a test file (i.e. `*.toml` file).
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCaseCollection {
+        tests: Vec<TestCase>,
+    }
+
+    /// Representation of one test in a test file (i.e. `*.toml` file).
+    #[derive(Debug, serde::Deserialize, serde::Serialize)]
+    struct TestCase {
+        info: String,
+        config: Vec<String>,
+        input: String,
+        output: String,
+    }
+
+    // --- helper functions --------------------------------------------------
     #[track_caller]
     fn get_default_readzone(path_str: &str) -> ReadZone {
         ReadZone {
@@ -698,9 +720,24 @@ mod test {
         x
     }
 
+    // To avoid issues with Windows' line endings (`\r\n`) compare two buffers
+    // line by line
+    #[track_caller]
+    fn compare_lines(lhs: &[u8], rhs: &[u8]) -> bool {
+        let blhs: io::BufReader<&[u8]> = io::BufReader::new(lhs);
+        let brhs: io::BufReader<&[u8]> = io::BufReader::new(rhs);
+        brhs.lines()
+            .map(|r| r.unwrap())
+            .eq(blhs.lines().map(|l| l.unwrap()))
+    }
+
     /// Run a testcase in a temporary fake environment.
     ///
-    /// The zonefile gets created with the desired content and
+    /// The zonefile gets created with the desired content and the read-zone
+    /// command gets executed with the desired arguements.
+    ///
+    /// The result of the execution including the fake environment gets
+    /// returned.
     #[track_caller]
     fn run_testcase_in_fakeenv(
         args: &[String],
@@ -730,30 +767,6 @@ mod test {
         (fake_result, env)
     }
 
-    /// Representation of all tests in a test file (i.e. `*.toml` file).
-    #[derive(Debug, serde::Deserialize, serde::Serialize)]
-    struct TestCaseCollection {
-        tests: Vec<TestCase>,
-    }
-
-    /// Representation of one test in a test file (i.e. `*.toml` file).
-    #[derive(Debug, serde::Deserialize, serde::Serialize)]
-    struct TestCase {
-        info: String,
-        config: Vec<String>,
-        input: String,
-        output: String,
-    }
-
-    #[track_caller]
-    fn compare_lines(lhs: &[u8], rhs: &[u8]) -> bool {
-        let blhs: io::BufReader<&[u8]> = io::BufReader::new(lhs);
-        let brhs: io::BufReader<&[u8]> = io::BufReader::new(rhs);
-        brhs.lines()
-            .map(|r| r.unwrap())
-            .eq(blhs.lines().map(|l| l.unwrap()))
-    }
-
     #[test]
     fn testcases_from_toml_testfile() {
         let test_case_collection: TestCaseCollection =
@@ -771,7 +784,7 @@ mod test {
                 run_testcase_in_fakeenv(test.config.as_slice(), test.input.as_bytes());
 
             println!("Input\n{:?}", test.input);
-            println!("Expected Output: {:?}", test.output);
+            println!("Expected Output:\n{:?}", test.output);
 
             println!("Function Result: {:?}", exec_result);
             println!("Resulting Output: {:?}", env_result.get_stdout());
@@ -808,16 +821,6 @@ mod test {
             ..get_default_readzone(path)
         };
         assert_eq!(parse(&cmd.args(["-o", "example.org", path])), base);
-    }
-
-    #[test]
-    fn check_revnamebuf() {
-        let name = "example.org.";
-        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
-        assert!(rnb.is_err());
-        let name = "example.org";
-        let rnb: Result<RevNameBuf, NameParseError> = name.parse();
-        assert!(rnb.is_ok());
     }
 
     #[test]
