@@ -6,12 +6,11 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 
 use clap::Parser;
+use tracing::{error, trace};
 
 use domain::new::base::build::BuildBytes;
-use domain::new::base::name::RevNameBuf;
-use domain::new::base::name::{Name, NameBuf, RevName};
-use domain::new::base::Record;
-use domain::new::base::{CharStr, RType, Serial};
+use domain::new::base::name::{Name, NameBuf, RevName, RevNameBuf};
+use domain::new::base::{CharStr, RType, Record, Serial};
 use domain::new::rdata::RecordData;
 use domain::new::zonefile::scanner::{Scan, ScanError, Scanner};
 use domain::new::zonefile::simple::Entry;
@@ -21,7 +20,7 @@ use crate::env::Env;
 use crate::error::Error;
 use crate::Args;
 
-use super::{Command, LdnsCommand};
+use super::LdnsCommand;
 
 //------------ Constants -----------------------------------------------------
 // TODO: Update
@@ -196,24 +195,25 @@ impl LdnsCommand for ReadZone {
         let args = ReadZone::parse();
         println!("{:?}", args);
 
-        Ok(Args::from(Command::ReadZone(Self {
-            canonicalize: args.canonicalize,
-            print_only_dnssec: args.print_only_dnssec,
-            print_rrsig_null: args.print_rrsig_null,
-            print_ds_bubble_babble: args.print_ds_bubble_babble,
-            rrtype_exclude: args.rrtype_exclude,
-            rrtype_include: args.rrtype_include,
-            rrtype_mark_unknown_include: args.rrtype_mark_unknown_include,
-            rrtype_mark_unknown_exclude: args.rrtype_mark_unknown_exclude,
-            print_not_soa: args.print_not_soa,
-            pad_soa_serial: args.pad_soa_serial,
-            print_not_dnssec: args.print_not_dnssec,
-            manipulate_serial: args.manipulate_serial,
-            canonical_sort: args.canonical_sort,
-            origin: args.origin,
-            zonefile_path: args.zonefile_path,
-            invoked_as_ldns: args.invoked_as_ldns,
-        })))
+        unimplemented!("ldns-read-zone drop-in replacement not available!");
+        // Ok(Args::from(Command::ReadZone(Self {
+        //     canonicalize: args.canonicalize,
+        //     print_only_dnssec: args.print_only_dnssec,
+        //     print_rrsig_null: args.print_rrsig_null,
+        //     print_ds_bubble_babble: args.print_ds_bubble_babble,
+        //     rrtype_exclude: args.rrtype_exclude,
+        //     rrtype_include: args.rrtype_include,
+        //     rrtype_mark_unknown_include: args.rrtype_mark_unknown_include,
+        //     rrtype_mark_unknown_exclude: args.rrtype_mark_unknown_exclude,
+        //     print_not_soa: args.print_not_soa,
+        //     pad_soa_serial: args.pad_soa_serial,
+        //     print_not_dnssec: args.print_not_dnssec,
+        //     manipulate_serial: args.manipulate_serial,
+        //     canonical_sort: args.canonical_sort,
+        //     origin: args.origin,
+        //     zonefile_path: args.zonefile_path,
+        //     invoked_as_ldns: args.invoked_as_ldns,
+        // })))
     }
 }
 
@@ -223,12 +223,15 @@ impl ReadZone {
 
         //--- Throw error when trying to use not implemented features.
         if self.print_ds_bubble_babble {
+            error!("-b is not implemented");
             return Err(Error::new("The option -b is not implemented."));
         }
         if self.canonical_sort {
+            error!("-z is not implemented");
             return Err(Error::new("The option -z is not implemented."));
         }
-        if self.canonicalize {
+        if self.canonical_sort {
+            error!("-c is not implemented");
             return Err(Error::new("The option -c is not implemented."));
         }
 
@@ -240,11 +243,14 @@ impl ReadZone {
         let mut rrtype_include: Vec<RType> = Vec::with_capacity(self.rrtype_include.len());
         parse_rtype_list(&self.rrtype_include, &mut rrtype_include)?;
 
-        let excluded_rrtypes: FilterSet<RType> =
-            FilterSet::new(&rrtype_exclude, &rrtype_include)
-                .map_err(|_| Error::new("-e and -E should not be mixed together!"))?;
+        let excluded_rrtypes: FilterSet<RType> = FilterSet::new(&rrtype_exclude, &rrtype_include)
+            .map_err(|_| {
+            error!("-e and -E mixed");
+            Error::new("-e and -E should not be mixed together!")
+        })?;
 
         // --- In/Exclude RType from unknown format ---------------------------------
+
         let mut rrtype_mark_unknown_exclude: Vec<RType> =
             Vec::with_capacity(self.rrtype_mark_unknown_exclude.len());
         parse_rtype_list(
@@ -260,8 +266,12 @@ impl ReadZone {
         )?;
 
         let unknown_rrtypes: FilterSet<RType> =
-            FilterSet::new(&rrtype_mark_unknown_include, &rrtype_mark_unknown_exclude)
-                .map_err(|_| Error::new("-u and -U should not be mixed together!"))?;
+            FilterSet::new(&rrtype_mark_unknown_include, &rrtype_mark_unknown_exclude).map_err(
+                |_| {
+                    error!("-u and -U mixed");
+                    Error::new("-u and -U should not be mixed together!")
+                },
+            )?;
 
         // Read the zone file in the current working directory.
         let zonefile_buf = io::BufReader::new(File::open(env.in_cwd(&self.zonefile_path))?);
@@ -329,7 +339,9 @@ impl ReadZone {
             }
             //--- Do not print SOA
             // ldns-read-zone only prints the first SOA it encounters.
-            if soa_is_printed || (self.print_not_soa && record.rtype == RType::SOA) {
+            if (soa_is_printed && record.rtype == RType::SOA)
+                || (self.print_not_soa && record.rtype == RType::SOA)
+            {
                 continue;
             }
             if let Some(serial_arg) = &self.manipulate_serial {
@@ -424,6 +436,7 @@ fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     };
     let current_plus1 = current.inc(1);
     if cand < current_plus1 {
+        trace!("serial not large enough, increased current serial by 1");
         return Ok(current_plus1);
     }
     Ok(cand)
