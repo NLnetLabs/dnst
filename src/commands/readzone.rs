@@ -6,7 +6,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 
 use clap::Parser;
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 use domain::new::base::build::BuildBytes;
 use domain::new::base::name::{Name, NameBuf, RevName, RevNameBuf};
@@ -20,11 +20,13 @@ use crate::env::Env;
 use crate::error::Error;
 use crate::Args;
 
+use utils::TypeSet;
+
 use super::LdnsCommand;
 
 //------------ Constants -----------------------------------------------------
-// TODO: Update
-const DNSSEC_TYPES: [RType; 4] = [RType::DNSKEY, RType::NSEC, RType::NSEC3, RType::RRSIG];
+// NOTE: https://github.com/NLnetLabs/ldns/blob/develop/examples/ldns-read-zone.c#L148
+const DNSSEC_TYPES: [RType; 3] = [RType::RRSIG, RType::NSEC, RType::NSEC3];
 
 //------------ ReadZone ------------------------------------------------------
 
@@ -230,48 +232,64 @@ impl ReadZone {
             error!("-z is not implemented");
             return Err(Error::new("The option -z is not implemented."));
         }
-        if self.canonical_sort {
+        if self.canonicalize {
             error!("-c is not implemented");
             return Err(Error::new("The option -c is not implemented."));
         }
 
+        if self.print_only_dnssec && self.print_not_dnssec {
+            error!("combining -s and -d is not supported. Results in empty zone");
+            return Err(Error::new(
+                "combining -s and -d is not supported. Results in empty zone",
+            ));
+        }
+
+        // The following behaviors can be hard to predict (i.e. if the include
+        // and exclude flags can be combined). Therefore the behavior is
+        // prevented by raising and error when trying to apply it.
+        if !self.rrtype_mark_unknown_include.is_empty()
+            && !self.rrtype_mark_unknown_exclude.is_empty()
+        {
+            error!("-u and -U should not be mixed together!");
+            return Err(Error::new("-u and -U should not be mixed together!"));
+        }
+
+        if !self.rrtype_include.is_empty() && !self.rrtype_exclude.is_empty() {
+            error!("-e and -E should not be mixed together!");
+            return Err(Error::new("-e and -E should not be mixed together!"));
+        }
+
         // --- In/Exclude RTypes from printing -------------------------------
+        let mut printed_rrtypes: TypeSet = TypeSet::new();
 
-        let mut rrtype_exclude: Vec<RType> = Vec::with_capacity(self.rrtype_exclude.len());
-        parse_rtype_list(&self.rrtype_exclude, &mut rrtype_exclude)?;
+        for rtype in &self.rrtype_exclude {
+            printed_rrtypes.exclude(parse_rtype(rtype)?)?;
+        }
+        for rtype in &self.rrtype_include {
+            printed_rrtypes.include(parse_rtype(rtype)?)?;
+        }
 
-        let mut rrtype_include: Vec<RType> = Vec::with_capacity(self.rrtype_include.len());
-        parse_rtype_list(&self.rrtype_include, &mut rrtype_include)?;
+        // --- In/Exclude DNSSEC RTypes from printing ------------------------
+        if self.print_only_dnssec {
+            for dnssec_rrtype in DNSSEC_TYPES {
+                printed_rrtypes.include(dnssec_rrtype)?;
+            }
+        }
+        if self.print_not_dnssec {
+            for dnssec_rrtype in DNSSEC_TYPES {
+                printed_rrtypes.exclude(dnssec_rrtype)?;
+            }
+        }
 
-        let excluded_rrtypes: FilterSet<RType> = FilterSet::new(&rrtype_exclude, &rrtype_include)
-            .map_err(|_| {
-            error!("-e and -E mixed");
-            Error::new("-e and -E should not be mixed together!")
-        })?;
+        // --- In/Exclude RType from unknown format --------------------------
+        let mut known_rrtypes: TypeSet = TypeSet::new();
 
-        // --- In/Exclude RType from unknown format ---------------------------------
-
-        let mut rrtype_mark_unknown_exclude: Vec<RType> =
-            Vec::with_capacity(self.rrtype_mark_unknown_exclude.len());
-        parse_rtype_list(
-            &self.rrtype_mark_unknown_exclude,
-            &mut rrtype_mark_unknown_exclude,
-        )?;
-
-        let mut rrtype_mark_unknown_include: Vec<RType> =
-            Vec::with_capacity(self.rrtype_mark_unknown_include.len());
-        parse_rtype_list(
-            &self.rrtype_mark_unknown_include,
-            &mut rrtype_mark_unknown_include,
-        )?;
-
-        let unknown_rrtypes: FilterSet<RType> =
-            FilterSet::new(&rrtype_mark_unknown_include, &rrtype_mark_unknown_exclude).map_err(
-                |_| {
-                    error!("-u and -U mixed");
-                    Error::new("-u and -U should not be mixed together!")
-                },
-            )?;
+        for rtype in &self.rrtype_mark_unknown_include {
+            known_rrtypes.exclude(parse_rtype(rtype)?)?;
+        }
+        for rtype in &self.rrtype_mark_unknown_exclude {
+            known_rrtypes.include(parse_rtype(rtype)?)?;
+        }
 
         // Read the zone file in the current working directory.
         let zonefile_buf = io::BufReader::new(File::open(env.in_cwd(&self.zonefile_path))?);
@@ -279,8 +297,8 @@ impl ReadZone {
         self.walk_zone(
             zonefile_buf,
             &env.stdout(),
-            excluded_rrtypes,
-            unknown_rrtypes,
+            &printed_rrtypes,
+            &known_rrtypes,
         )?;
 
         Ok(())
@@ -290,8 +308,8 @@ impl ReadZone {
         &self,
         zonefile_buffer: R,
         mut out: W,
-        excluded_rrtypes: FilterSet<RType>,
-        unknown_rrtypes: FilterSet<RType>,
+        printed_rrtypes: &TypeSet,
+        known_rrtypes: &TypeSet,
     ) -> Result<(), Error>
     where
         R: io::BufRead,
@@ -300,7 +318,6 @@ impl ReadZone {
         // `ldns-read-zone` prints only one SOA record. Keep track to only print
         // one record.
         let mut soa_is_printed = false;
-        let mut warning_at_the_end: Vec<String> = Vec::new();
         let mut zf = ZonefileScanner::new(zonefile_buffer, self.origin.as_deref());
 
         // --- Iterate over all entries in the zonefile. ---------------------
@@ -313,28 +330,18 @@ impl ReadZone {
             };
             let Entry::Record(mut record) = entry else {
                 // Skipping non record entries
-                warning_at_the_end
-                    .push("Warning: Non-record entry skipped during parsing!".to_string());
+                info!("Warning: Non-record entry skipped during parsing!");
                 continue;
             };
 
             if first_entry {
                 first_entry = false;
                 if record.rtype != RType::SOA {
-                    warning_at_the_end
-                        .push("Warning: First record was not SOA record!".to_string());
+                    info!("First record was not SOA record!");
                 }
             }
 
-            if excluded_rrtypes.contains(&record.rtype) {
-                continue;
-            }
-            //--- Only print DNSSEC data
-            if self.print_only_dnssec && !is_dnssec_data(record.rtype) {
-                continue;
-            }
-            //--- Do not print DNSSEC data
-            if self.print_not_dnssec && is_dnssec_data(record.rtype) {
+            if !printed_rrtypes.contains(&record.rtype) {
                 continue;
             }
             //--- Do not print SOA
@@ -357,7 +364,7 @@ impl ReadZone {
             writeln!(
                 &mut out,
                 "{}",
-                dns_display(&record, &unknown_rrtypes, self.print_rrsig_null)
+                dns_display(&record, known_rrtypes, self.print_rrsig_null)
             )?;
         }
         out.flush()?;
@@ -365,58 +372,130 @@ impl ReadZone {
     }
 }
 
-/// [`FilterSet`] is a collection of different things (`T`).
-///
-/// By default the [`FilterSet`] is empty ([`FilterSet::Empty`]). It can
-/// contain only (explicitly) named things ([`FilterSet::EmptyPlus`]). Or it
-/// can contain (implicitly) everything except named things.
-///
-/// (A, B, C) -> this::EmptyPlus(A) -> this.contains(A) => true
-/// (A, B, C) -> this::EmptyPlus(B) -> this.contains(C) => false
-///
-/// (A, B, C) -> this::FullMinus(A) -> this.contains(A) => false
-/// (A, B, C) -> this::FullMinus(B) -> this.contains(A) => true
-///
-/// (A, B, C) -> this::Empty -> this.contains(A) => false
-pub(super) enum FilterSet<'a, T> {
-    EmptyPlus(&'a [T]),
-    FullMinus(&'a [T]),
-    Empty, // bool tells if Set contains everything or nothing
-}
+mod utils {
 
-impl<'a, T: PartialEq> FilterSet<'a, T> {
-    //
-    // Err(()) if include and exclude contain things.
-    //
-    fn new(empty_plus: &'a [T], full_minus: &'a [T]) -> Result<Self, ()> {
-        match (empty_plus.is_empty(), full_minus.is_empty()) {
-            // no inclusion or exclusion
-            (true, true) => Ok(Self::Empty),
-            (false, true) => Ok(Self::EmptyPlus(empty_plus)),
-            (true, false) => Ok(Self::FullMinus(full_minus)),
-            (false, false) => Err(()),
+    use crate::Error;
+    use domain::new::base::RType;
+
+    pub struct TypeSet {
+        pub default_all: bool,
+        pub included: std::collections::HashSet<RType>,
+        pub excluded: std::collections::HashSet<RType>,
+    }
+    impl TypeSet {
+        pub fn new() -> Self {
+            TypeSet {
+                default_all: true,
+                included: std::collections::HashSet::new(),
+                excluded: std::collections::HashSet::new(),
+            }
+        }
+        // Clears the default type set and includes only the specificly mentioned
+        // value.
+        pub fn include(&mut self, value: RType) -> Result<(), Error> {
+            if self.excluded.contains(&value) {
+                return Err(Error::new(&format!(
+                    "{} already in excluded list. This may result in unwanted behaviour!",
+                    value
+                )));
+            }
+
+            self.default_all = false;
+            self.included.insert(value);
+            Ok(())
+        }
+        // Excludes the value from the list.
+        pub fn exclude(&mut self, value: RType) -> Result<(), Error> {
+            if self.included.contains(&value) {
+                return Err(Error::new(&format!(
+                    "{} already in included list. This may result in unwanted behaviour!",
+                    value
+                )));
+            }
+
+            self.excluded.insert(value);
+            Ok(())
+        }
+        pub fn contains(&self, value: &RType) -> bool {
+            if self.excluded.contains(value) {
+                return false;
+            }
+            if self.included.contains(value) {
+                return true;
+            }
+            if self.default_all {
+                return true;
+            }
+
+            false
         }
     }
 
-    // Is the thing part of the collection.
-    fn contains(&self, other: &T) -> bool {
-        match self {
-            Self::EmptyPlus(v) => v.contains(other),
-            Self::FullMinus(v) => !v.contains(other),
-            Self::Empty => false,
+    #[cfg(test)]
+    mod typeset {
+        use super::*;
+        #[test]
+        fn test_type_set_1() {
+            let mut ts = TypeSet::new();
+
+            ts.include(RType::A).unwrap();
+            ts.include(RType::AAAA).unwrap();
+
+            assert!(ts.contains(&RType::A));
+            assert!(ts.contains(&RType::AAAA));
+            assert!(!ts.contains(&RType::MX));
+
+            ts.exclude(RType::A).unwrap_err();
+
+            assert!(ts.contains(&RType::A));
+            assert!(ts.contains(&RType::AAAA));
+            assert!(!ts.contains(&RType::MX));
+        }
+
+        #[test]
+        fn test_type_set_2() {
+            let mut ts = TypeSet::new();
+
+            ts.include(RType::A).unwrap();
+            assert!(ts.contains(&RType::A));
+            assert!(!ts.contains(&RType::MX));
+        }
+
+        #[test]
+        fn test_type_set_3() {
+            let mut ts = TypeSet::new();
+
+            ts.exclude(RType::A).unwrap();
+            assert!(ts.contains(&RType::MX));
+            assert!(!ts.contains(&RType::A));
+        }
+
+        #[test]
+        fn test_type_set_4() {
+            let mut ts = TypeSet::new();
+
+            ts.exclude(RType::AAAA).unwrap();
+            ts.include(RType::A).unwrap();
+
+            assert!(ts.contains(&RType::A));
+            assert!(!ts.contains(&RType::AAAA));
+            assert!(!ts.contains(&RType::MX));
         }
     }
 }
 
-fn parse_rtype_list(source: &Vec<String>, destination: &mut Vec<RType>) -> Result<(), Error> {
-    for rtype in source {
-        destination.push(
-            scan_rtype(rtype.as_bytes())
-                .map_err(|_| Error::new("Unable to parse RType in cli arguments."))?,
-        )
-    }
-    Ok(())
+fn parse_rtype(source: &String) -> Result<RType, Error> {
+    scan_rtype(source.as_bytes()).map_err(|_| Error::new("Unable to parse RType in cli arguments."))
 }
+
+// This is currently the only way to parse RTypes from a string.
+fn scan_rtype(buf: &[u8]) -> Result<RType, ScanError> {
+    let mut scanner = Scanner::new(buf, None);
+    let alloc = bumpalo::Bump::new();
+    let mut buffer = Vec::new();
+    RType::scan(&mut scanner, &alloc, &mut buffer)
+}
+
 fn manipulate_serial(current: Serial, arg: &str) -> Result<Serial, Error> {
     let cand = match arg.to_lowercase().as_str() {
         "unixtime" => get_unixtime_serial()?,
@@ -478,7 +557,7 @@ fn dns_display_datetime(serial: Serial) -> String {
 /// Return [`RecordData`] as a valid DNS string.
 fn dns_display_record_data(
     data: &RecordData<'_, &Name>,
-    unknown_rtypes: &FilterSet<RType>,
+    known_rrtypes: &TypeSet,
     print_rrsig_null: bool,
 ) -> String {
     let rdata: String = match data {
@@ -523,7 +602,7 @@ fn dns_display_record_data(
             if print_rrsig_null {
                 format!(
                     "{} {} {} {} (null) (null) {} {} (null)",
-                    dns_display_type(sig.rtype, unknown_rtypes.contains(&sig.rtype)),
+                    dns_display_type(sig.rtype, !known_rrtypes.contains(&sig.rtype)),
                     sig.algorithm.code,
                     sig.labels,
                     sig.ttl.value,
@@ -533,7 +612,7 @@ fn dns_display_record_data(
             } else {
                 format!(
                     "{} {} {} {} {} {} {} {} {}",
-                    dns_display_type(sig.rtype, unknown_rtypes.contains(&sig.rtype)),
+                    dns_display_type(sig.rtype, !known_rrtypes.contains(&sig.rtype)),
                     sig.algorithm.code,
                     sig.labels,
                     sig.ttl.value,
@@ -550,7 +629,7 @@ fn dns_display_record_data(
             nsec.types
                 .iter()
                 // Print the RType in compatibilty if it is desired
-                .map(|t| dns_display_type(t, unknown_rtypes.contains(&t)))
+                .map(|t| dns_display_type(t, !known_rrtypes.contains(&t)))
                 .collect::<Vec<String>>()
                 .join(" "),
             nsec.next
@@ -563,25 +642,32 @@ fn dns_display_record_data(
             // TODO: move to new, and ?Size is missing in the encode_display
             domain::utils::base64::encode_string(&dnskey.key),
         ),
-        RecordData::NSec3(nsec3) => format!(
-            "{} {} {} {} {} {}",
-            nsec3.algorithm.code,
-            nsec3.flags.bits(),
-            nsec3.iterations,
-            domain::utils::base16::encode_display(&nsec3.salt),
-            domain::utils::base16::encode_display(&nsec3.next),
-            nsec3
-                .types
-                .iter()
-                .map(|t| dns_display_type(t, unknown_rtypes.contains(&t)))
-                .collect::<Vec<String>>()
-                .join(" "),
-        ),
+        RecordData::NSec3(nsec3) => {
+            let salt = if nsec3.salt.is_empty() {
+                "-".into()
+            } else {
+                domain::utils::base16::encode_string(&nsec3.salt)
+            };
+            format!(
+                "{} {} {} {} {} {}",
+                nsec3.algorithm.code,
+                nsec3.flags.bits(),
+                nsec3.iterations,
+                salt,
+                domain::utils::base32::encode_string_hex(&nsec3.next),
+                nsec3
+                    .types
+                    .iter()
+                    .map(|t| dns_display_type(t, !known_rrtypes.contains(&t)))
+                    .collect::<Vec<String>>()
+                    .join(" "),
+            )
+        }
         RecordData::NSec3Param(param) => {
             let salt = if param.salt.is_empty() {
-                domain::utils::base16::encode_string(&param.salt)
-            } else {
                 "-".into()
+            } else {
+                domain::utils::base16::encode_string(&param.salt)
             };
             format!(
                 "{} {} {} {}",
@@ -610,14 +696,15 @@ fn dns_display_record_data(
 
 fn dns_display(
     record: &Record<&RevName, RecordData<'_, &Name>>,
-    unknown_rtypes: &FilterSet<RType>,
+    known_rrtypes: &TypeSet,
     print_rrsig_null: bool,
 ) -> String {
     // Copy RevName into NameBuf for Display trait.
     let name: NameBuf = RevNameBuf::copy_from(record.rname).into();
 
     // if RType should be printed as unkown also print RData in unkonw format.
-    let data = if unknown_rtypes.contains(&record.rtype) {
+    let rrtype_is_unknown = !known_rrtypes.contains(&record.rtype);
+    let data = if rrtype_is_unknown {
         let buf_len = record.rdata.built_bytes_size();
         let mut bytes_data = vec![0u8; buf_len];
         record
@@ -631,7 +718,7 @@ fn dns_display(
             domain::utils::base16::encode_display(&bytes_data)
         )
     } else {
-        dns_display_record_data(&record.rdata, unknown_rtypes, print_rrsig_null)
+        dns_display_record_data(&record.rdata, known_rrtypes, print_rrsig_null)
     };
 
     format!(
@@ -639,7 +726,7 @@ fn dns_display(
         name,
         record.ttl.value.get(),
         record.rclass,
-        dns_display_type(record.rtype, unknown_rtypes.contains(&record.rtype)),
+        dns_display_type(record.rtype, !known_rrtypes.contains(&record.rtype)),
         data,
     )
 }
@@ -656,17 +743,10 @@ fn get_yyyymmddxx_serial() -> Serial {
     (yyyy + mm + dd).into()
 }
 
-// This is currently the only way to parse RTypes from a string.
-fn scan_rtype(buf: &[u8]) -> Result<RType, ScanError> {
-    let mut scanner = Scanner::new(buf, None);
-    let alloc = bumpalo::Bump::new();
-    let mut buffer = Vec::new();
-    RType::scan(&mut scanner, &alloc, &mut buffer)
-}
+// fn is_dnssec_data(rtype: RType) -> bool {
+//     DNSSEC_TYPES.contains(&rtype)
+// }
 
-fn is_dnssec_data(rtype: RType) -> bool {
-    DNSSEC_TYPES.contains(&rtype)
-}
 //------------ Tests ---------------------------------------------------------
 
 #[cfg(test)]
@@ -841,7 +921,6 @@ mod test {
         let res1 = FakeCmd::new([
             "dnst",
             "read-zone",
-            "-c",
             "-o",
             "example.com",
             "test-data/example.org",
@@ -877,11 +956,11 @@ mod test {
             }),
         };
         assert_eq!(
-            dns_display(&a_record, &FilterSet::Empty, false),
+            dns_display(&a_record, &TypeSet::new(), false),
             "example.com. 3600 IN A 1.1.1.1"
         );
         assert_eq!(
-            dns_display(&mx_record, &FilterSet::Empty, false),
+            dns_display(&mx_record, &TypeSet::new(), false),
             "example.com. 3600 IN MX 10 mail.example.com."
         );
     }

@@ -193,6 +193,56 @@ example.com. 42 IN A 1.1.1.1
 example.com. 42 IN MX 10 MAIL.example.com.
 """
 
+[[tests]]
+info = "Signed example zone, AXFR"
+config = ["-o", "example.com", "does-not-matter.zone"]
+input = """
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 6 100 100 100 100
+example.com.            600     IN      NS      ns1.example.com.
+example.com.            600     IN      MX      10 mail.example.com.
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 6 100 100 100 100
+"""
+output = """
+example.com. 600 IN SOA ns1.example.com. noc.example.com. 6 100 100 100 100
+example.com. 600 IN NS ns1.example.com.
+example.com. 600 IN MX 10 mail.example.com.
+"""
+
+[[tests]]
+info = "Signed example zone, AXFR"
+config = ["-o", "example.com", "does-not-matter.zone"]
+input = """
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+example.com.            600     IN      RRSIG   NS 13 2 600 20260619150753 20260619120753 43362 example.com. kTey25SdW/AYCAa0toC6d63BlSSkDRpSclzp4umErXIt0gK3dB68FlI1 K3Jc/aO0LUu1oRnwxU057fxcK+ie6A==
+example.com.            600     IN      RRSIG   SOA 13 2 600 20260619152253 20260619122253 43362 example.com. 02bxZSkJpwoRsBU1WABU4SJAVp7w9e2sq/TAy22IhCeVT7oXeZrpUxcK SitWPAmtrlaH5Fy7s9dIRHEJPtvOJw==
+example.com.            600     IN      RRSIG   MX 13 2 600 20260619151753 20260619121753 43362 example.com. fTZykvEqvQ93lFmOLWTxurKByC3uWJ0iRzapks5X8rQZJFRi8YERl5aq 68eoQVVYeouOlsBTPJBhdN6tcR2rpQ==
+example.com.            600     IN      RRSIG   DNSKEY 13 2 600 20260622091459 20260616091459 19641 example.com. v88z3gkC2tyFiuGI9zApAoAjNmle68W9hIViyspeh7Bi8p1Zqk9CoAqe SLgc2whRuvAYIdHDX6eATCQnhLFhUg==
+example.com.            600     IN      RRSIG   NSEC3PARAM 13 2 600 20260619152253 20260619122253 43362 example.com. fI6h/A3w0oLU3qc+7OX5ZWiGy7RtQ3utX0IsrDwabmA6Unh0qTCKGIxH UJHz8Tq/GG6MMlrbBugPJqDDrh+1TQ==
+example.com.            600     IN      DNSKEY  256 3 13 3vI9AZgHrwVjg9S+DxkGE4YctG5jcpJUke94ajHDHX+bUCehuyFFW6aa VfznASNNv9mxrfN4+S3xoBma5dBRaA==
+example.com.            600     IN      DNSKEY  257 3 13 f6CmWLVaEf9wOk58GtJwsGPGsYsKOYnDVZ67H0fc4YCEO/hqaQ+Y6vpv LLjKSmf0qoHS9XKj50EauPr9WysNbw==
+example.com.            600     IN      NSEC3PARAM 1 0 0 -
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN RRSIG NSEC3 13 3 100 20260619151253 20260619121253 43362 example.com. DA9WA8/0hrE5LAIpjXuq529tljQOYr/ZntjpPoysIaACLSbIegtEy3TS CiazPrKhaCmFuH24YBPKkdFdzGlRPg==
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN NSEC3 1 0 0 - ONIB9MGUB9H0RML3CDF5BGRJ59DKJHVK NS SOA MX RRSIG DNSKEY NSEC3PARAM
+example.com.            600     IN      NS      ns1.example.com.
+example.com.            600     IN      MX      10 mail.example.com.
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+"""
+output = """
+example.com. 600 IN SOA ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+example.com. 600 IN RRSIG NS 13 2 600 20260619150753 20260619120753 43362 example.com. kTey25SdW/AYCAa0toC6d63BlSSkDRpSclzp4umErXIt0gK3dB68FlI1K3Jc/aO0LUu1oRnwxU057fxcK+ie6A==
+example.com. 600 IN RRSIG SOA 13 2 600 20260619152253 20260619122253 43362 example.com. 02bxZSkJpwoRsBU1WABU4SJAVp7w9e2sq/TAy22IhCeVT7oXeZrpUxcKSitWPAmtrlaH5Fy7s9dIRHEJPtvOJw==
+example.com. 600 IN RRSIG MX 13 2 600 20260619151753 20260619121753 43362 example.com. fTZykvEqvQ93lFmOLWTxurKByC3uWJ0iRzapks5X8rQZJFRi8YERl5aq68eoQVVYeouOlsBTPJBhdN6tcR2rpQ==
+example.com. 600 IN RRSIG DNSKEY 13 2 600 20260622091459 20260616091459 19641 example.com. v88z3gkC2tyFiuGI9zApAoAjNmle68W9hIViyspeh7Bi8p1Zqk9CoAqeSLgc2whRuvAYIdHDX6eATCQnhLFhUg==
+example.com. 600 IN RRSIG NSEC3PARAM 13 2 600 20260619152253 20260619122253 43362 example.com. fI6h/A3w0oLU3qc+7OX5ZWiGy7RtQ3utX0IsrDwabmA6Unh0qTCKGIxHUJHz8Tq/GG6MMlrbBugPJqDDrh+1TQ==
+example.com. 600 IN DNSKEY 256 3 13 3vI9AZgHrwVjg9S+DxkGE4YctG5jcpJUke94ajHDHX+bUCehuyFFW6aaVfznASNNv9mxrfN4+S3xoBma5dBRaA==
+example.com. 600 IN DNSKEY 257 3 13 f6CmWLVaEf9wOk58GtJwsGPGsYsKOYnDVZ67H0fc4YCEO/hqaQ+Y6vpvLLjKSmf0qoHS9XKj50EauPr9WysNbw==
+example.com. 600 IN NSEC3PARAM 1 0 0 -
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN RRSIG NSEC3 13 3 100 20260619151253 20260619121253 43362 example.com. DA9WA8/0hrE5LAIpjXuq529tljQOYr/ZntjpPoysIaACLSbIegtEy3TSCiazPrKhaCmFuH24YBPKkdFdzGlRPg==
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN NSEC3 1 0 0 - ONIB9MGUB9H0RML3CDF5BGRJ59DKJHVK NS SOA MX RRSIG DNSKEY NSEC3PARAM
+example.com. 600 IN NS ns1.example.com.
+example.com. 600 IN MX 10 mail.example.com.
+"""
+
 # [[tests]]
 # info = "Canonicalize domain names in the zone"
 # config = ["-c", "-o", "example.com", "does-not-matter.zone"]
