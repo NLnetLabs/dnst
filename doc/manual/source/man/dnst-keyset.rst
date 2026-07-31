@@ -745,7 +745,7 @@ The keyset subcommand provides the following commands:
 
     For example, ``auto-csk true false true false`` means that
     CSK rolls will start automatically, that the propagation1-complete,
-    propagation`2-complete, and roll-done need to be executed manually.
+    propagation2-complete, and roll-done need to be executed manually.
     The cache-expired1 and cache-expired2 steps are executed automatically.
 
     Default: All arguments are set to ``false``.
