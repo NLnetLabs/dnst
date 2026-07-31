@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "May 15, 2026" "0.2.0-alpha2" "dnst"
+.TH "DNST-KEYSET" "1" "Jul 31, 2026" "0.2.0-alpha3" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys
 and generates a signed DNSKEY RRset.
 This subcommand is meant to be part of a DNSSEC signing solution.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -737,12 +737,12 @@ For RSA keys, the length of the key in bits.
 ksk\-roll\-type <KSK\-ROLL\-TYPE>
 .sp
 The type of KSK roll to use. Possible values are double\-signature\-ksk\-roll
-and double\-ds\-ksk\-roll.
+and double\-ds\-ksk\-roll. Defaults to double\-signature\-ksk\-roll.
 .IP \(bu 2
 zsk\-roll\-type <ZSK\-ROLL\-TYPE>
 .sp
 The type of ZSK roll to use. Possible values are pre\-publish\-zsk\-roll
-and double\-signature\-zsk\-roll.
+and double\-signature\-zsk\-roll. Defaults to pre\-publish\-zsk\-roll.
 .IP \(bu 2
 auto\-ksk, auto\-zsk, auto\-csk, auto\-algorithm
 .sp
@@ -833,8 +833,7 @@ base64 encoded secret.
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 {
   \(dqversion\(dq: \(dqv1\(dq,
   \(dqmap\(dq: {
@@ -844,8 +843,7 @@ base64 encoded secret.
     }
   }
 }
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
 .IP \(bu 2

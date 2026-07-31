@@ -717,12 +717,12 @@ The keyset subcommand provides the following commands:
   * ksk-roll-type <KSK-ROLL-TYPE>
 
     The type of KSK roll to use. Possible values are double-signature-ksk-roll
-    and double-ds-ksk-roll.
+    and double-ds-ksk-roll. Defaults to double-signature-ksk-roll.
 
   * zsk-roll-type <ZSK-ROLL-TYPE>
 
     The type of ZSK roll to use. Possible values are pre-publish-zsk-roll
-    and double-signature-zsk-roll.
+    and double-signature-zsk-roll. Defaults to pre-publish-zsk-roll.
 
   * auto-ksk, auto-zsk, auto-csk, auto-algorithm
 
