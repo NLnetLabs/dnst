@@ -732,7 +732,8 @@ The keyset subcommand provides the following commands:
   * zsk-roll-type <ZSK-ROLL-TYPE>
 
     The type of ZSK roll to use. Possible values are ``pre-publish-zsk-roll``
-    and ``double-signature-zsk-roll``.
+    (RFC 7583 Pre-Publication) and ``double-signature-zsk-roll`` (RFC 7583
+    Double-Signature).
 
     Default: ``pre-publish-zsk-roll``.
 
