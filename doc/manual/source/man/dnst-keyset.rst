@@ -694,21 +694,28 @@ The keyset subcommand provides the following commands:
     When true, new keys will be created as CSK otherwise a KSK and a ZSK
     will be created.
 
+    Default: ``false``.
+
   * autoremove <BOOLEAN>
 
     When true, keys that are stale will be removed automatically.
+
+    Default: ``false``.
 
   * autoremove-delay <DELAY>
 
     Set the delay between the time keys become stale and automatic
     removal.
 
+    Default: 7 days.
+
   * algorithm <ALGORITHM>
 
     Set the algorithm to be used when creating new keys. Supported values
-    are RSASHA256, RSASHA512, ECDSAP256SHA256, ECDSAP384SHA384, ED25519,
-    and ED448.
-    Not all values are supported for KMIP keys.
+    are ``RSASHA256``, ``RSASHA512``, ``ECDSAP256SHA256``, ``ECDSAP384SHA384``,
+    ``ED25519``, and ``ED448``. Not all values are supported for KMIP keys.
+
+    Default: ``ECDSAP256SHA256``.
 
     .. option:: -b <BITS>
 
@@ -716,13 +723,19 @@ The keyset subcommand provides the following commands:
 
   * ksk-roll-type <KSK-ROLL-TYPE>
 
-    The type of KSK roll to use. Possible values are double-signature-ksk-roll
-    and double-ds-ksk-roll.
+    The type of KSK roll to use. Possible values are
+    ``double-signature-ksk-roll`` (RFC 7583 Double-KSK) and
+    ``double-ds-ksk-roll`` (RFC 7583 Double-DS).
+
+    Default: ``double-signature-ksk-roll``.
 
   * zsk-roll-type <ZSK-ROLL-TYPE>
 
-    The type of ZSK roll to use. Possible values are pre-publish-zsk-roll
-    and double-signature-zsk-roll.
+    The type of ZSK roll to use. Possible values are ``pre-publish-zsk-roll``
+    (RFC 7583 Pre-Publication) and ``double-signature-zsk-roll`` (RFC 7583
+    Double-Signature).
+
+    Default: ``pre-publish-zsk-roll``.
 
   * auto-ksk, auto-zsk, auto-csk, auto-algorithm
 
@@ -735,10 +748,12 @@ The keyset subcommand provides the following commands:
     propagation2-complete, and roll-done need to be executed manually.
     The cache-expired1 and cache-expired2 steps are executed automatically.
 
+    Default: All arguments are set to ``false``.
+
   * ds-algorithm <ALGORITHM>
 
     Set the hash algorithm to be used for generating DS records.
-    Possible values are ``SHA-256`` and ``SHA-384``.
+    Possible values are ``SHA-256`` and ``SHA-384``. Default: ``SHA-256``.
 
   * dnskey-lifetime <DURATION>, cds-lifetime <DURATION>
 
@@ -746,7 +761,10 @@ The keyset subcommand provides the following commands:
     RRsets are signed (cds-lifetime), how far in the future are the signatures
     set to expire.
     The duration is an integer followed by a suffix, ``s`` or ``secs`` for
-    seconds, ``m`` or ``mins`` for minutes, ``h`` or ``hours``, ``d`` or ``days``, ``w`` or ``weeks``.
+    seconds, ``m`` or ``mins`` for minutes, ``h`` or ``hours``, ``d`` or
+    ``days``, ``w`` or ``weeks``.
+
+    Default: 4 weeks.
 
   * dnskey-remain-time <DURATION>, cds-remain-time <DURATION>
 
@@ -757,6 +775,8 @@ The keyset subcommand provides the following commands:
     specified duration.
     For the syntax of <DURATION> see ``dnskey-lifetime``.
 
+    Default: 2 weeks.
+
   * dnskey-inception-offset <DURATION>, cds-inception-offset <DURATION>
 
     When generating signatures for the DNSKEY RRset (dnskey-inception-offset)
@@ -764,6 +784,8 @@ The keyset subcommand provides the following commands:
     timestamp this amount in the past to compensate for clocks that are a
     bit off or in the wrong time zone.
     For the syntax of <DURATION> see ``dnskey-lifetime``.
+
+    Default: 1 day.
 
   * ksk-validity <DURATION> | ``off``, zsk-validity <DURATION> | ``off``, csk-validity <DURATION> | ``off``
 
@@ -778,12 +800,16 @@ The keyset subcommand provides the following commands:
     The status command shows which keys are no longer valid or when their
     validity will end.
 
+    Default: ``off``
+
   * update-ds-command
 
     Set a command to to run when the DS records in the parent zone need
     to be updated.
     This command can, for example, alert the operator or use an API provided
     by the parent zone to update the DS records automatically.
+
+    Default: None.
 
   * tsig-store-path
 
@@ -814,6 +840,8 @@ The keyset subcommand provides the following commands:
          }
        }
 
+    Default: None.
+
   * publication-nameservers
 
     Set the nameservers to transfer from when checking a zone.
@@ -826,11 +854,15 @@ The keyset subcommand provides the following commands:
     
       <IP_ADDR>:<PORT>[^<TSIG_KEY_NAME>]
 
+    Default: None.
+
   * fake-time
 
     Set the 'wall clock' time to be used for testing.
     The argument is either the Unix time as seconds since Epoch or the string
     'off' to disable fake-time.
+
+    Default: ``off``
 
 * show
 
