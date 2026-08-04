@@ -1,10 +1,19 @@
 # Changelog
 
+## Unreleased changes
+
+### Documentation
+
+- Document the default values for `keyset set` subcommands. ([#184] by
+  @ximon18)
+
+[#184]: https://github.com/NLnetLabs/dnst/pull/184
+
 ## v0.2.0-alpha3
 
 Released 2026-06-04
 
-## Other changes
+### Other changes
 
 - Upgrade domain to 0.12.1.
 
