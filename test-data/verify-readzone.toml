@@ -1,0 +1,258 @@
+[[tests]]
+info = "Exclude all NS records"
+config = ["-e", "NS", "does-not-matter.zone"]
+input = """
+example.org. 1 IN NS ns1.net.
+example.com. 1 IN A 1.1.1.1
+"""
+output = """
+example.com. 1 IN A 1.1.1.1
+"""
+
+[[tests]]
+info = "Print only NS records"
+config = ["-E", "NS", "does-not-matter.zone"]
+input = """
+example.org. 1 IN NS ns1.net.
+example.com. 1 IN A 1.1.1.1
+"""
+output = """
+example.org. 1 IN NS ns1.net.
+"""
+
+[[tests]]
+info = "Error when using -b option"
+config = ["-b", "does-not-matter.zone"]
+input = "example.com. 3600 IN DS 57855 5 1 b6dcd485719adca18e5f3d48a2331627fdd3636b"
+output = "The option -b is not implemented."
+
+[[tests]]
+info = "Do not print the SOA record."
+config = ["-n", "does-not-matter.zone"]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1"
+output = ""
+
+[[tests]]
+info = "Serial addition 10"
+config = ["-S", "+10", "does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 11 2 3 4 5
+"""
+
+[[tests]]
+info = "Serial addition with wrap around."
+config = ["-S", "+10", "does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 4294967295 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 9 2 3 4 5
+"""
+
+[[tests]]
+info = "Substract with wrapping around."
+config = ["-S", "-10", "does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 4294967287 2 3 4 5
+"""
+
+[[tests]]
+info = "Set serial to 10"
+config = ["-S", "10", "does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 10 2 3 4 5
+"""
+
+[[tests]]
+info = "Do not print DNSSEC records."
+config = ["-s", "does-not-matter.zone"]
+input = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==
+"""
+output = ""
+
+[[tests]]
+info = "Only print DNSSEC data."
+config = ["-d", "does-not-matter.zone"]
+input = "example.com. 42 IN SOA master.example.com. noc.example.com. 1 1 1 1 1"
+output = ""
+
+[[tests]]
+info = "Mark A rr type as unknown."
+config = ["-u", "A", "does-not-matter.zone"]
+input = """
+example.com. 3600 IN A 1.1.1.1
+"""
+output = """
+example.com. 3600 IN TYPE1 \\# 4 01010101
+"""
+
+[[tests]]
+info = "Mark SOA as unkown type in RRSIG."
+config = ["-u", "SOA", "does-not-matter.zone"]
+input = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==
+"""
+output = """
+example.com. 3600 IN RRSIG TYPE6 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==
+"""
+
+[[tests]]
+info = "Read zone with seconds since epoch and print in date format."
+config = ["does-not-matter.zone"]
+input = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 1613604280 1611185080 37444 example.com. AA==
+"""
+output = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==
+"""
+
+[[tests]]
+info = "Trigger error by using -u and -U."
+config = ["-u", "SOA", "-U", "A", "does-not-matter.zone"]
+input = ""
+output = "-u and -U should not be mixed together!"
+
+[[tests]]
+info = "Combine two -U flags."
+config = ["-U", "A", "-U", "AAAA", "does-not-matter.zone"]
+input = """
+example.com. 1 IN A 1.1.1.1
+example.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352
+"""
+output = """
+example.com. 1 IN A 1.1.1.1
+example.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352
+"""
+
+[[tests]]
+info = "Combine two -u flags."
+config = ["-u", "A", "-u", "AAAA", "does-not-matter.zone"]
+input = """
+example.com. 1 IN A 1.1.1.1
+example.com. 1 IN AAAA 91ed:8890:2a75:555f:8d20:fe9e:7635:7352
+"""
+output = """
+example.com. 1 IN TYPE1 \\# 4 01010101
+example.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352
+"""
+
+[[tests]]
+info = "Read from unknown print to unknown."
+config = ["-u", "A", "-u", "AAAA", "does-not-matter.zone"]
+input = """
+example.com. 1 IN TYPE1 \\# 4 01010101
+example.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352
+"""
+output = """
+example.com. 1 IN TYPE1 \\# 4 01010101
+example.com. 1 IN TYPE28 \\# 16 91ED88902A75555F8D20FE9E76357352
+"""
+
+[[tests]]
+info = "-0 zeroize timestamps and signature in RRSIG records."
+config = ["-0", "does-not-matter.zone"]
+input = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 20210217232440 20210120232440 37444 example.com. AA==
+"""
+output = """
+example.com. 3600 IN RRSIG SOA 8 2 3600 (null) (null) 37444 example.com. (null)
+"""
+
+[[tests]]
+info = "Multiple SOA records in one zone. ldns-read-zone only prints the first SOA record."
+config = ["does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+sub.example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+output = """
+example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+"""
+
+[[tests]]
+info = "Non-Canonical domain names in the zone, do not change them"
+config = ["-o", "example.com", "does-not-matter.zone"]
+input = """
+example.com. 42 IN SOA MASTER.Example.com. noc.example.com. 1 2 3 4 5
+example.com. 42 IN A 1.1.1.1
+ 42 IN MX 10 MAIL
+"""
+output = """
+example.com. 42 IN SOA MASTER.Example.com. noc.example.com. 1 2 3 4 5
+example.com. 42 IN A 1.1.1.1
+example.com. 42 IN MX 10 MAIL.example.com.
+"""
+
+[[tests]]
+info = "Signed example zone, AXFR"
+config = ["-o", "example.com", "does-not-matter.zone"]
+input = """
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 6 100 100 100 100
+example.com.            600     IN      NS      ns1.example.com.
+example.com.            600     IN      MX      10 mail.example.com.
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 6 100 100 100 100
+"""
+output = """
+example.com. 600 IN SOA ns1.example.com. noc.example.com. 6 100 100 100 100
+example.com. 600 IN NS ns1.example.com.
+example.com. 600 IN MX 10 mail.example.com.
+"""
+
+[[tests]]
+info = "Signed example zone, AXFR"
+config = ["-o", "example.com", "does-not-matter.zone"]
+input = """
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+example.com.            600     IN      RRSIG   NS 13 2 600 20260619150753 20260619120753 43362 example.com. kTey25SdW/AYCAa0toC6d63BlSSkDRpSclzp4umErXIt0gK3dB68FlI1 K3Jc/aO0LUu1oRnwxU057fxcK+ie6A==
+example.com.            600     IN      RRSIG   SOA 13 2 600 20260619152253 20260619122253 43362 example.com. 02bxZSkJpwoRsBU1WABU4SJAVp7w9e2sq/TAy22IhCeVT7oXeZrpUxcK SitWPAmtrlaH5Fy7s9dIRHEJPtvOJw==
+example.com.            600     IN      RRSIG   MX 13 2 600 20260619151753 20260619121753 43362 example.com. fTZykvEqvQ93lFmOLWTxurKByC3uWJ0iRzapks5X8rQZJFRi8YERl5aq 68eoQVVYeouOlsBTPJBhdN6tcR2rpQ==
+example.com.            600     IN      RRSIG   DNSKEY 13 2 600 20260622091459 20260616091459 19641 example.com. v88z3gkC2tyFiuGI9zApAoAjNmle68W9hIViyspeh7Bi8p1Zqk9CoAqe SLgc2whRuvAYIdHDX6eATCQnhLFhUg==
+example.com.            600     IN      RRSIG   NSEC3PARAM 13 2 600 20260619152253 20260619122253 43362 example.com. fI6h/A3w0oLU3qc+7OX5ZWiGy7RtQ3utX0IsrDwabmA6Unh0qTCKGIxH UJHz8Tq/GG6MMlrbBugPJqDDrh+1TQ==
+example.com.            600     IN      DNSKEY  256 3 13 3vI9AZgHrwVjg9S+DxkGE4YctG5jcpJUke94ajHDHX+bUCehuyFFW6aa VfznASNNv9mxrfN4+S3xoBma5dBRaA==
+example.com.            600     IN      DNSKEY  257 3 13 f6CmWLVaEf9wOk58GtJwsGPGsYsKOYnDVZ67H0fc4YCEO/hqaQ+Y6vpv LLjKSmf0qoHS9XKj50EauPr9WysNbw==
+example.com.            600     IN      NSEC3PARAM 1 0 0 -
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN RRSIG NSEC3 13 3 100 20260619151253 20260619121253 43362 example.com. DA9WA8/0hrE5LAIpjXuq529tljQOYr/ZntjpPoysIaACLSbIegtEy3TS CiazPrKhaCmFuH24YBPKkdFdzGlRPg==
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN NSEC3 1 0 0 - ONIB9MGUB9H0RML3CDF5BGRJ59DKJHVK NS SOA MX RRSIG DNSKEY NSEC3PARAM
+example.com.            600     IN      NS      ns1.example.com.
+example.com.            600     IN      MX      10 mail.example.com.
+example.com.            600     IN      SOA     ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+"""
+output = """
+example.com. 600 IN SOA ns1.example.com. noc.example.com. 2026064019 100 100 100 100
+example.com. 600 IN RRSIG NS 13 2 600 20260619150753 20260619120753 43362 example.com. kTey25SdW/AYCAa0toC6d63BlSSkDRpSclzp4umErXIt0gK3dB68FlI1K3Jc/aO0LUu1oRnwxU057fxcK+ie6A==
+example.com. 600 IN RRSIG SOA 13 2 600 20260619152253 20260619122253 43362 example.com. 02bxZSkJpwoRsBU1WABU4SJAVp7w9e2sq/TAy22IhCeVT7oXeZrpUxcKSitWPAmtrlaH5Fy7s9dIRHEJPtvOJw==
+example.com. 600 IN RRSIG MX 13 2 600 20260619151753 20260619121753 43362 example.com. fTZykvEqvQ93lFmOLWTxurKByC3uWJ0iRzapks5X8rQZJFRi8YERl5aq68eoQVVYeouOlsBTPJBhdN6tcR2rpQ==
+example.com. 600 IN RRSIG DNSKEY 13 2 600 20260622091459 20260616091459 19641 example.com. v88z3gkC2tyFiuGI9zApAoAjNmle68W9hIViyspeh7Bi8p1Zqk9CoAqeSLgc2whRuvAYIdHDX6eATCQnhLFhUg==
+example.com. 600 IN RRSIG NSEC3PARAM 13 2 600 20260619152253 20260619122253 43362 example.com. fI6h/A3w0oLU3qc+7OX5ZWiGy7RtQ3utX0IsrDwabmA6Unh0qTCKGIxHUJHz8Tq/GG6MMlrbBugPJqDDrh+1TQ==
+example.com. 600 IN DNSKEY 256 3 13 3vI9AZgHrwVjg9S+DxkGE4YctG5jcpJUke94ajHDHX+bUCehuyFFW6aaVfznASNNv9mxrfN4+S3xoBma5dBRaA==
+example.com. 600 IN DNSKEY 257 3 13 f6CmWLVaEf9wOk58GtJwsGPGsYsKOYnDVZ67H0fc4YCEO/hqaQ+Y6vpvLLjKSmf0qoHS9XKj50EauPr9WysNbw==
+example.com. 600 IN NSEC3PARAM 1 0 0 -
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN RRSIG NSEC3 13 3 100 20260619151253 20260619121253 43362 example.com. DA9WA8/0hrE5LAIpjXuq529tljQOYr/ZntjpPoysIaACLSbIegtEy3TSCiazPrKhaCmFuH24YBPKkdFdzGlRPg==
+onib9mgub9h0rml3cdf5bgrj59dkjhvk.example.com. 100 IN NSEC3 1 0 0 - ONIB9MGUB9H0RML3CDF5BGRJ59DKJHVK NS SOA MX RRSIG DNSKEY NSEC3PARAM
+example.com. 600 IN NS ns1.example.com.
+example.com. 600 IN MX 10 mail.example.com.
+"""
+
+# [[tests]]
+# info = "Canonicalize domain names in the zone"
+# config = ["-c", "-o", "example.com", "does-not-matter.zone"]
+# input = """
+# example.com. 42 IN SOA MASTER.Example.com. noc.example.com. 1 2 3 4 5
+# example.com. 42 IN A 1.1.1.1
+#  42 IN MX 10 MAIL
+# """
+# output = """
+# example.com. 42 IN SOA master.example.com. noc.example.com. 1 2 3 4 5
+# example.com. 42 IN A 1.1.1.1
+# example.com. 42 IN MX 10 mail.example.com.
+# """
