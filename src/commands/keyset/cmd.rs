@@ -163,6 +163,15 @@ pub struct Keyset {
     #[arg(short = 'c')]
     keyset_conf: PathBuf,
 
+    /// Make commands verbose.
+    #[arg(short = 'v', long)]
+    verbose: bool,
+
+    /// Invoked by Cascade. Output and behavior changes to match what is
+    /// needed by the Cascade DNSSEC signer.
+    #[arg(long)]
+    cascade: bool,
+
     /// Subcommand
     #[command(subcommand)]
     cmd: Commands,
@@ -248,7 +257,8 @@ enum Commands {
     /// Report status, such as key rolls that are in progress, expired
     /// keys, when to call the 'cron' subcommand next.
     Status {
-        /// Make status verbose.
+        /// Make status verbose. Obsolete, instead use the verbose option at
+        /// the keyset subcommand.
         #[arg(short = 'v', long)]
         verbose: bool,
     },
@@ -700,6 +710,12 @@ struct WorkSpace {
     /// Whether the command to update DS records has to be executed.
     run_update_ds_command: bool,
 
+    /// Change behavior and output to help Cascade.
+    cascade: bool,
+
+    /// Generate verbose output.
+    verbose: bool,
+
     /// Store the locked config file to avoid accidental unlocking.
     _locked_config_file: Option<File>,
 
@@ -801,6 +817,8 @@ impl Keyset {
                 config_changed: false,
                 state_changed: false,
                 run_update_ds_command: false,
+                cascade: self.cascade,
+                verbose: self.verbose,
                 _locked_config_file: None,
                 #[cfg(feature = "kmip")]
                 pools: HashMap::new(),
@@ -841,6 +859,8 @@ impl Keyset {
             config_changed: false,
             state_changed: false,
             run_update_ds_command: false,
+            cascade: self.cascade,
+            verbose: self.verbose,
             _locked_config_file: Some(config_file),
             #[cfg(feature = "kmip")]
             pools: HashMap::new(),
@@ -931,15 +951,43 @@ impl Keyset {
                 ws.state_changed = true;
             }
 
-            Commands::Status { verbose } => {
+            Commands::Status {
+                verbose: status_verbose,
+            } => {
+                let verbose = ws.verbose || status_verbose;
+
                 // This clone is needed because public_key_from_url needs a
                 // mutable reference to kss. Rewrite the kmip code to avoid
                 // that.
+                // Clone rollstates() to avoid holding on to ws.
                 let rollstates = ws.state.keyset.rollstates().clone();
-                for (roll, state) in rollstates.iter() {
-                    println!("{roll:?}: {state:?}");
+                for (roll, state) in &rollstates {
+                    print!("{roll:?}: {state:?}");
 
                     if verbose {
+                        let (roll_subcommand, auto) = match roll {
+                            RollType::KskRoll => ("ksk", &ws.config.auto_ksk),
+                            RollType::KskDoubleDsRoll => ("ksk", &ws.config.auto_ksk),
+                            RollType::ZskRoll => ("zsk", &ws.config.auto_zsk),
+                            RollType::ZskDoubleSignatureRoll => ("zsk", &ws.config.auto_zsk),
+                            RollType::CskRoll => ("csk", &ws.config.auto_csk),
+                            RollType::AlgorithmRoll => ("algorithm", &ws.config.auto_algorithm),
+                        };
+                        let (state_subcommand, auto) = match state {
+                            RollState::Propagation1 => ("propagation1-complete <ttl>", auto.report),
+                            RollState::CacheExpire1(_) => ("cache-expired1", auto.expire),
+                            RollState::Propagation2 => ("propagation2-complete <ttl>", auto.report),
+                            RollState::CacheExpire2(_) => ("cache-expired2", auto.expire),
+                            RollState::Done => ("roll-done", auto.done),
+                        };
+
+                        if auto {
+                            println!(" (automation is enabled for this step.)");
+                        } else {
+                            println!(" (automation is disabled for this step.)");
+                        }
+                        println!();
+
                         let mut keyset = ws.state.keyset.clone();
                         let res = match state {
                             RollState::CacheExpire1(_) => Some(keyset.cache_expired1(*roll)),
@@ -947,6 +995,9 @@ impl Keyset {
                             _ => None,
                         };
                         if let Some(res) = res {
+                            if auto {
+                                println!("Automatic key roll state:");
+                            }
                             if let Err(keyset::Error::Wait(remain)) = res {
                                 println!(
                                     "Wait until {} to let caches expire",
@@ -970,51 +1021,115 @@ impl Keyset {
                                 | Action::UpdateDsRrset
                                 | Action::UpdateRrsig => (),
                                 Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
-                                    println!("Check that the following RRset has propagated to all name servers:");
-                                    for r in &ws.state.dnskey_rrset {
-                                        println!("{r}");
+                                    if !auto {
+                                        println!("Check that the following RRset has propagated to all name servers:");
+                                        for r in &ws.state.dnskey_rrset {
+                                            println!("{r}");
+                                        }
+                                        println!();
                                     }
-                                    println!();
                                 }
                                 Action::ReportDsPropagated | Action::WaitDsPropagated => {
-                                    println!("Check that all nameservers of the parent zone have the following RRset (or equivalent):");
-                                    for r in &ws.state.ds_rrset {
-                                        println!("{r}");
+                                    if !auto {
+                                        println!("Check that all nameservers of the parent zone have the following RRset (or equivalent):");
+                                        for r in &ws.state.ds_rrset {
+                                            println!("{r}");
+                                        }
+                                        println!();
                                     }
-                                    println!();
                                 }
                                 Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
-                                    println!("Check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
-                                    // This clone is needed because
-                                    // public_key_from_url needs a mutable
-                                    // reference to kss. Rewrite the kmip
-                                    // code to avoid that.
-                                    let keys = ws.state.keyset.keys().clone();
-                                    for (pubref, k) in keys {
-                                        let status = match k.keytype() {
-                                            KeyType::Zsk(status) => status,
-                                            KeyType::Csk(_, zsk_status) => zsk_status,
-                                            KeyType::Ksk(_) | KeyType::Include(_) => continue,
-                                        };
-                                        if status.signer() {
-                                            let url = Url::parse(&pubref).map_err(|e| {
-                                                format!("unable to parse {pubref} as URL: {e}")
-                                            })?;
-                                            let public_key =
-                                                ws.public_key_from_url::<Vec<u8>>(&url, env)?;
-                                            println!(
-                                                "{public_key} ; key tag {}",
-                                                public_key.data().key_tag()
-                                            );
+                                    if !auto {
+                                        println!("Check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
+                                        // This clone is needed because
+                                        // public_key_from_url needs a mutable
+                                        // reference to kss. Rewrite the kmip
+                                        // code to avoid that.
+                                        let keys = ws.state.keyset.keys().clone();
+                                        for (pubref, k) in keys {
+                                            let status = match k.keytype() {
+                                                KeyType::Zsk(status) => status,
+                                                KeyType::Csk(_, zsk_status) => zsk_status,
+                                                KeyType::Ksk(_) | KeyType::Include(_) => continue,
+                                            };
+                                            if status.signer() {
+                                                let url = Url::parse(&pubref).map_err(|e| {
+                                                    format!("unable to parse {pubref} as URL: {e}")
+                                                })?;
+                                                let public_key =
+                                                    ws.public_key_from_url::<Vec<u8>>(&url, env)?;
+                                                println!(
+                                                    "{public_key} ; key tag {}",
+                                                    public_key.data().key_tag()
+                                                );
+                                            }
                                         }
+                                        println!();
                                     }
-                                    println!();
                                 }
                             }
                         }
 
-                        let keyset_cmd = format!("dnst keyset -c {}", self.keyset_conf.display());
+                        if !auto {
+                            let keyset_cmd =
+                                format!("dnst keyset -c {}", self.keyset_conf.display());
 
+                            println!("For the next step run:");
+                            println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                            println!();
+                        }
+
+                        // Clone to avoid holding on to ws.
+                        let auto_state = ws.state.internal.get(roll).expect("should exist").clone();
+                        match state {
+                            // Nothing to report.
+                            RollState::CacheExpire1(_) | RollState::CacheExpire2(_) => (),
+
+                            RollState::Propagation1 => {
+                                let auto_state =
+                                    auto_state.propagation1.lock().expect("should not fail");
+                                if auto_state.dnskey.is_none()
+                                    && auto_state.ds.is_none()
+                                    && auto_state.rrsig.is_none()
+                                {
+                                    continue;
+                                }
+                                println!("Automatic key roll state:");
+                                show_automatic_roll_state(&auto_state, &mut ws, true, env)?;
+                            }
+                            RollState::Propagation2 => {
+                                let auto_state =
+                                    auto_state.propagation2.lock().expect("should not fail");
+                                if auto_state.dnskey.is_none()
+                                    && auto_state.ds.is_none()
+                                    && auto_state.rrsig.is_none()
+                                {
+                                    continue;
+                                }
+                                println!("Automatic key roll state:");
+                                show_automatic_roll_state(&auto_state, &mut ws, true, env)?;
+                            }
+                            RollState::Done => {
+                                let auto_state = auto_state.done.lock().expect("should not fail");
+                                if auto_state.dnskey.is_none()
+                                    && auto_state.ds.is_none()
+                                    && auto_state.rrsig.is_none()
+                                {
+                                    continue;
+                                }
+                                println!("Automatic key roll state:");
+                                show_automatic_roll_state(&auto_state, &mut ws, false, env)?;
+                            }
+                        }
+                        println!();
+                    } else {
+                        println!();
+                    }
+                }
+
+                let commands: Vec<_> = rollstates
+                    .iter()
+                    .filter_map(|(roll, state)| {
                         let (roll_subcommand, auto) = match roll {
                             RollType::KskRoll => ("ksk", &ws.config.auto_ksk),
                             RollType::KskDoubleDsRoll => ("ksk", &ws.config.auto_ksk),
@@ -1030,70 +1145,39 @@ impl Keyset {
                             RollState::CacheExpire2(_) => ("cache-expired2", auto.expire),
                             RollState::Done => ("roll-done", auto.done),
                         };
-                        println!("For the next step run:");
+                        if auto {
+                            Some((roll_subcommand, state_subcommand))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let keyset_cmd = format!("dnst keyset -c {}", self.keyset_conf.display());
+                let actor = if self.cascade {
+                    "The Cascade key manager"
+                } else {
+                    "Dnst keyset"
+                };
+                if !verbose { // Skip
+                } else if commands.len() >= 2 {
+                    println!("{actor} will execute the following steps by itself.");
+                    println!(
+                        "They are listed here in case there is a need to execute the step manually"
+                    );
+                } else if !commands.is_empty() {
+                    println!("{actor} will execute the following step by itself.");
+                    println!(
+                        "It is listed here in case there is a need to execute the steps manually"
+                    );
+                }
+                for (roll_subcommand, state_subcommand) in &commands {
+                    if verbose {
                         println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
-                        println!(
-                            "\tautomation is {} for this step.",
-                            if auto { "enabled" } else { "disabled" }
-                        );
-                        println!();
                     }
                 }
 
-                let mut first = true;
-                for (r, s) in ws.state.keyset.rollstates() {
-                    let auto_state = ws.state.internal.get(r).expect("should exist");
-                    match s {
-                        // Nothing to report.
-                        RollState::CacheExpire1(_) | RollState::CacheExpire2(_) => (),
-
-                        RollState::Propagation1 => {
-                            let auto_state =
-                                auto_state.propagation1.lock().expect("should not fail");
-                            if auto_state.dnskey.is_none()
-                                && auto_state.ds.is_none()
-                                && auto_state.rrsig.is_none()
-                            {
-                                continue;
-                            }
-                            if first {
-                                first = false;
-                                println!("Automatic key roll state:");
-                            }
-                            show_automatic_roll_state(*r, s, &auto_state, true);
-                        }
-                        RollState::Propagation2 => {
-                            let auto_state =
-                                auto_state.propagation2.lock().expect("should not fail");
-                            if auto_state.dnskey.is_none()
-                                && auto_state.ds.is_none()
-                                && auto_state.rrsig.is_none()
-                            {
-                                continue;
-                            }
-                            if first {
-                                first = false;
-                                println!("Automatic key roll state:");
-                            }
-                            show_automatic_roll_state(*r, s, &auto_state, true);
-                        }
-                        RollState::Done => {
-                            let auto_state = auto_state.done.lock().expect("should not fail");
-                            if auto_state.dnskey.is_none()
-                                && auto_state.ds.is_none()
-                                && auto_state.rrsig.is_none()
-                            {
-                                continue;
-                            }
-                            if first {
-                                first = false;
-                                println!("Automatic key roll state:");
-                            }
-                            show_automatic_roll_state(*r, s, &auto_state, false);
-                        }
-                    }
-                }
-                if !first {
+                if verbose && !commands.is_empty() {
                     println!();
                 }
 
@@ -2093,6 +2177,19 @@ struct RollStateReports {
     done: Mutex<ReportState>,
 }
 
+impl Clone for RollStateReports {
+    fn clone(&self) -> Self {
+        let propagation1 = Mutex::new(self.propagation1.lock().expect("should not fail").clone());
+        let propagation2 = Mutex::new(self.propagation2.lock().expect("should not fail").clone());
+        let done = Mutex::new(self.done.lock().expect("should not fail").clone());
+        Self {
+            propagation1,
+            propagation2,
+            done,
+        }
+    }
+}
+
 /// State for the report progration checks.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ReportState {
@@ -2347,32 +2444,38 @@ impl WorkSpace {
             }
             RollCommands::Propagation1Complete { ttl } => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state.keyset.propagation1_complete(roll, ttl)
+                self.state
+                    .keyset
+                    .propagation1_complete(roll, ttl)
+                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?
             }
             RollCommands::CacheExpired1 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state.keyset.cache_expired1(roll)
+                dbg!(&roll);
+                self.state
+                    .keyset
+                    .cache_expired1(roll)
+                    .map_err(|err| format!("Error reporting cache expired: {err}\n"))?
             }
             RollCommands::Propagation2Complete { ttl } => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state.keyset.propagation2_complete(roll, ttl)
+                self.state
+                    .keyset
+                    .propagation2_complete(roll, ttl)
+                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?
             }
             RollCommands::CacheExpired2 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state.keyset.cache_expired2(roll)
+                self.state
+                    .keyset
+                    .cache_expired2(roll)
+                    .map_err(|err| format!("Error reporting cache expired: {err}\n"))?
             }
             RollCommands::RollDone => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.do_done(roll)?;
                 self.state_changed = true;
                 return Ok(());
-            }
-        };
-
-        let actions = match actions {
-            Ok(actions) => actions,
-            Err(err) => {
-                return Err(format!("Error reporting propagation complete: {err}\n").into());
             }
         };
 
@@ -4585,7 +4688,7 @@ enum AutoReportRrsigResult {
         /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
     },
-    /// For NSEC3 record, it is not possible to directly check if they got new
+    /// For NSEC3 records, it is not possible to directly check if they got new
     /// signatures. Instead, wait for a new version of the zone and check the
     /// entire zone.
     WaitNextSerial {
@@ -6076,17 +6179,28 @@ async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Erro
 
 /// Show the automatic roll state for one state in a roll.
 fn show_automatic_roll_state(
-    roll: RollType,
-    state: &RollState,
     auto_state: &ReportState,
+    ws: &mut WorkSpace,
     report: bool,
-) {
-    println!("Roll {roll:?}, state {state:?}:");
+    env: &impl Env,
+) -> Result<(), Error> {
+    let mut first = true;
+
+    let actor = if ws.cascade {
+        "The Cascade key manager"
+    } else {
+        "Dnst keyset"
+    };
     if let Some(status) = &auto_state.dnskey {
         match status {
             AutoReportActionsResult::Wait(retry) => {
+                println!("\t{actor} will check that the following RRset has propagated to all name servers:");
+                for r in &ws.state.dnskey_rrset {
+                    println!("\t{r}");
+                }
+                println!();
                 println!("\tWait until the new DNSKEY RRset has propagated to all nameservers.");
-                println!("\tTry again after {retry}");
+                println!("\tThe next check will be after {retry}");
             }
             AutoReportActionsResult::Report(ttl) => {
                 println!("\tThe new DNSKEY RRset has propagated to all nameservers.");
@@ -6095,12 +6209,21 @@ fn show_automatic_roll_state(
                 }
             }
         }
+        first = false;
     }
     if let Some(status) = &auto_state.ds {
+        if !first {
+            println!();
+        }
         match status {
             AutoReportActionsResult::Wait(retry) => {
+                println!("\t{actor} will check that all nameservers of the parent zone have the following RRset (or equivalent):");
+                for r in &ws.state.ds_rrset {
+                    println!("\t{r}");
+                }
+                println!();
                 println!("\tWait until the new DS RRset has propagated to all nameservers");
-                println!("\tof the parent zone. Try again after {retry}");
+                println!("\tof the parent zone. The next check will be after {retry}");
             }
             AutoReportActionsResult::Report(ttl) => {
                 println!("\tThe new DS RRset has propagated to all nameservers.");
@@ -6109,26 +6232,50 @@ fn show_automatic_roll_state(
                 }
             }
         }
+        first = false;
     }
     if let Some(status) = &auto_state.rrsig {
+        if !first {
+            println!();
+        }
         match status {
             AutoReportRrsigResult::Wait(next) => {
                 println!("\tSomething went wrong transferring the zone to be verified.");
-                println!("\tTry again after {next}");
+                println!("\tThe next check will be after {next}");
             }
             AutoReportRrsigResult::WaitRecord {
                 name, rtype, next, ..
             } => {
+                println!("\t{actor} will check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
+                // This clone is needed because
+                // public_key_from_url needs a mutable
+                // reference to kss. Rewrite the kmip
+                // code to avoid that.
+                let keys = ws.state.keyset.keys().clone();
+                for (pubref, k) in keys {
+                    let status = match k.keytype() {
+                        KeyType::Zsk(status) => status,
+                        KeyType::Csk(_, zsk_status) => zsk_status,
+                        KeyType::Ksk(_) | KeyType::Include(_) => continue,
+                    };
+                    if status.signer() {
+                        let url = Url::parse(&pubref)
+                            .map_err(|e| format!("unable to parse {pubref} as URL: {e}"))?;
+                        let public_key = ws.public_key_from_url::<Vec<u8>>(&url, env)?;
+                        println!("\t{public_key} ; key tag {}", public_key.data().key_tag());
+                    }
+                }
+                println!();
                 println!("\tWait until {name}/{rtype} is signed with the right keys.");
-                println!("\tTry again after {next}");
+                println!("\tThe next check will be after {next}");
             }
             AutoReportRrsigResult::WaitNextSerial { serial, next, .. } => {
                 println!("\tWait for a zone with serial higher than {serial}");
-                println!("\tTry again after {next}");
+                println!("\tThe next check will be after {next}");
             }
             AutoReportRrsigResult::WaitSoa { serial, next, .. } => {
                 println!("\tWait until the zone with at least serial {serial} has propagated");
-                println!("\tto all nameservers. Try again after {next}");
+                println!("\tto all nameservers. The next check will be after {next}");
             }
             AutoReportRrsigResult::Report(ttl) => {
                 println!("\tThe new RRSIG records have propagated to all nameservers.");
@@ -6138,6 +6285,7 @@ fn show_automatic_roll_state(
             }
         }
     }
+    Ok(())
 }
 
 /// Open filename, get an exclusive lock and return the open file.
