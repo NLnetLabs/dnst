@@ -258,7 +258,7 @@ enum Commands {
     /// keys, when to call the 'cron' subcommand next.
     Status {
         /// Make status verbose. Obsolete, instead use the verbose option at
-	/// the keyset subcommand.
+        /// the keyset subcommand.
         #[arg(short = 'v', long)]
         verbose: bool,
     },
@@ -817,8 +817,8 @@ impl Keyset {
                 config_changed: false,
                 state_changed: false,
                 run_update_ds_command: false,
-		cascade: self.cascade,
-		verbose: self.verbose,
+                cascade: self.cascade,
+                verbose: self.verbose,
                 _locked_config_file: None,
                 #[cfg(feature = "kmip")]
                 pools: HashMap::new(),
@@ -859,8 +859,8 @@ impl Keyset {
             config_changed: false,
             state_changed: false,
             run_update_ds_command: false,
-	    cascade: self.cascade,
-	    verbose: self.verbose,
+            cascade: self.cascade,
+            verbose: self.verbose,
             _locked_config_file: Some(config_file),
             #[cfg(feature = "kmip")]
             pools: HashMap::new(),
@@ -951,8 +951,10 @@ impl Keyset {
                 ws.state_changed = true;
             }
 
-            Commands::Status { verbose: status_verbose } => {
-		let verbose = ws.verbose || status_verbose;
+            Commands::Status {
+                verbose: status_verbose,
+            } => {
+                let verbose = ws.verbose || status_verbose;
 
                 // This clone is needed because public_key_from_url needs a
                 // mutable reference to kss. Rewrite the kmip code to avoid
@@ -1152,7 +1154,11 @@ impl Keyset {
                     .collect();
 
                 let keyset_cmd = format!("dnst keyset -c {}", self.keyset_conf.display());
-		let actor = if self.cascade { "The Cascade key manager" } else { "Dnst keyset" };
+                let actor = if self.cascade {
+                    "The Cascade key manager"
+                } else {
+                    "Dnst keyset"
+                };
                 if !verbose { // Skip
                 } else if commands.len() >= 2 {
                     println!("{actor} will execute the following steps by itself.");
@@ -6180,7 +6186,11 @@ fn show_automatic_roll_state(
 ) -> Result<(), Error> {
     let mut first = true;
 
-    let actor = if ws.cascade { "The Cascade key manager" } else { "Dnst keyset" };
+    let actor = if ws.cascade {
+        "The Cascade key manager"
+    } else {
+        "Dnst keyset"
+    };
     if let Some(status) = &auto_state.dnskey {
         match status {
             AutoReportActionsResult::Wait(retry) => {
