@@ -21,8 +21,9 @@ to get started.
        To install a dnst package, you need the 64-bit version of one of
        these Debian versions:
 
-         -  Debian Bookworm 12
-         -  Debian Bullseye 11
+         - Debian Trixie 13
+         - Debian Bookworm 12
+         - Debian Bullseye 11
 
        Packages for the ``amd64``/``x86_64`` architecture are available for
        all listed versions. In addition, we offer ``armhf`` architecture
@@ -50,13 +51,13 @@ to get started.
 
           curl -fsSL https://packages.nlnetlabs.nl/aptkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/nlnetlabs-archive-keyring.gpg
 
-       Now, use the following command to set up the *main* repository:
+       Now, use the following command to set up the *proposed* repository:
 
        .. code-block:: bash
 
           echo \
           "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nlnetlabs-archive-keyring.gpg] https://packages.nlnetlabs.nl/linux/debian \
-          $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
+          $(lsb_release -cs)-proposed main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
 
        Update the :program:`apt` package index once more: 
 
@@ -75,9 +76,9 @@ to get started.
        To install a dnst package, you need the 64-bit version of one of
        these Ubuntu versions:
 
+         - Ubuntu Resolute 26.04 (LTS)
          - Ubuntu Noble 24.04 (LTS)
          - Ubuntu Jammy 22.04 (LTS)
-         - Ubuntu Focal 20.04 (LTS)
 
        Packages are available for the ``amd64``/``x86_64`` architecture only.
        
@@ -103,13 +104,13 @@ to get started.
 
           curl -fsSL https://packages.nlnetlabs.nl/aptkey.asc | sudo gpg --dearmor -o /usr/share/keyrings/nlnetlabs-archive-keyring.gpg
 
-       Now, use the following command to set up the *main* repository:
+       Now, use the following command to set up the *proposed* repository:
 
        .. code-block:: bash
 
           echo \
           "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nlnetlabs-archive-keyring.gpg] https://packages.nlnetlabs.nl/linux/ubuntu \
-          $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
+          $(lsb_release -cs)-proposed main" | sudo tee /etc/apt/sources.list.d/nlnetlabs.list > /dev/null
 
        Update the :program:`apt` package index once more: 
 
@@ -126,17 +127,17 @@ to get started.
    .. group-tab:: RHEL
 
        To install a dnst package, you need Red Hat Enterprise Linux
-       (RHEL) 8 or 9, or compatible operating system such as Rocky Linux.
+       (RHEL) 8, 9 or 10 or compatible operating system such as Rocky Linux.
        Packages are available for the ``amd64``/``x86_64`` architecture only.
        
-       First create a file named :file:`/etc/yum.repos.d/nlnetlabs.repo`,
+       First create a file named :file:`/etc/yum.repos.d/nlnetlabs-testing.repo`,
        enter this configuration and save it:
        
        .. code-block:: text
        
           [nlnetlabs]
-          name=NLnet Labs
-          baseurl=https://packages.nlnetlabs.nl/linux/centos/$releasever/main/$basearch
+          name=NLnet Labs Testing
+          baseurl=https://packages.nlnetlabs.nl/linux/centos/$releasever/proposed/$basearch
           enabled=1
         
        Add the GPG key from NLnet Labs:

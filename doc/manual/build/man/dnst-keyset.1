@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "May 15, 2026" "0.2.0-alpha2" "dnst"
+.TH "DNST-KEYSET" "1" "Jul 31, 2026" "0.2.0-alpha3" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\fI\%RFC 9364\fP) signing keys
+The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys
 and generates a signed DNSKEY RRset.
 This subcommand is meant to be part of a DNSSEC signing solution.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -712,22 +712,29 @@ use\-csk <BOOLEAN>
 .sp
 When true, new keys will be created as CSK otherwise a KSK and a ZSK
 will be created.
+.sp
+Default: \fBfalse\fP\&.
 .IP \(bu 2
 autoremove <BOOLEAN>
 .sp
 When true, keys that are stale will be removed automatically.
+.sp
+Default: \fBfalse\fP\&.
 .IP \(bu 2
 autoremove\-delay <DELAY>
 .sp
 Set the delay between the time keys become stale and automatic
 removal.
+.sp
+Default: 7 days.
 .IP \(bu 2
 algorithm <ALGORITHM>
 .sp
 Set the algorithm to be used when creating new keys. Supported values
-are RSASHA256, RSASHA512, ECDSAP256SHA256, ECDSAP384SHA384, ED25519,
-and ED448.
-Not all values are supported for KMIP keys.
+are \fBRSASHA256\fP, \fBRSASHA512\fP, \fBECDSAP256SHA256\fP, \fBECDSAP384SHA384\fP,
+\fBED25519\fP, and \fBED448\fP\&. Not all values are supported for KMIP keys.
+.sp
+Default: \fBECDSAP256SHA256\fP\&.
 .INDENT 2.0
 .TP
 .B \-b <BITS>
@@ -736,13 +743,19 @@ For RSA keys, the length of the key in bits.
 .IP \(bu 2
 ksk\-roll\-type <KSK\-ROLL\-TYPE>
 .sp
-The type of KSK roll to use. Possible values are double\-signature\-ksk\-roll
-and double\-ds\-ksk\-roll.
+The type of KSK roll to use. Possible values are
+\fBdouble\-signature\-ksk\-roll\fP (RFC 7583 Double\-KSK) and
+\fBdouble\-ds\-ksk\-roll\fP (RFC 7583 Double\-DS).
+.sp
+Default: \fBdouble\-signature\-ksk\-roll\fP\&.
 .IP \(bu 2
 zsk\-roll\-type <ZSK\-ROLL\-TYPE>
 .sp
-The type of ZSK roll to use. Possible values are pre\-publish\-zsk\-roll
-and double\-signature\-zsk\-roll.
+The type of ZSK roll to use. Possible values are \fBpre\-publish\-zsk\-roll\fP
+(RFC 7583 Pre\-Publication) and \fBdouble\-signature\-zsk\-roll\fP (RFC 7583
+Double\-Signature).
+.sp
+Default: \fBpre\-publish\-zsk\-roll\fP\&.
 .IP \(bu 2
 auto\-ksk, auto\-zsk, auto\-csk, auto\-algorithm
 .sp
@@ -754,11 +767,13 @@ For example, \fBauto\-csk true false true false\fP means that
 CSK rolls will start automatically, that the propagation1\-complete,
 propagation2\-complete, and roll\-done need to be executed manually.
 The cache\-expired1 and cache\-expired2 steps are executed automatically.
+.sp
+Default: All arguments are set to \fBfalse\fP\&.
 .IP \(bu 2
 ds\-algorithm <ALGORITHM>
 .sp
 Set the hash algorithm to be used for generating DS records.
-Possible values are \fBSHA\-256\fP and \fBSHA\-384\fP\&.
+Possible values are \fBSHA\-256\fP and \fBSHA\-384\fP\&. Default: \fBSHA\-256\fP\&.
 .IP \(bu 2
 dnskey\-lifetime <DURATION>, cds\-lifetime <DURATION>
 .sp
@@ -766,7 +781,10 @@ When a DNSKEY RRset is signed (dnskey\-lifetime) or when CDS or CDNSKEY
 RRsets are signed (cds\-lifetime), how far in the future are the signatures
 set to expire.
 The duration is an integer followed by a suffix, \fBs\fP or \fBsecs\fP for
-seconds, \fBm\fP or \fBmins\fP for minutes, \fBh\fP or \fBhours\fP, \fBd\fP or \fBdays\fP, \fBw\fP or \fBweeks\fP\&.
+seconds, \fBm\fP or \fBmins\fP for minutes, \fBh\fP or \fBhours\fP, \fBd\fP or
+\fBdays\fP, \fBw\fP or \fBweeks\fP\&.
+.sp
+Default: 4 weeks.
 .IP \(bu 2
 dnskey\-remain\-time <DURATION>, cds\-remain\-time <DURATION>
 .sp
@@ -776,6 +794,8 @@ to be valid.
 New signatures are generated when the remaining time drops below the
 specified duration.
 For the syntax of <DURATION> see \fBdnskey\-lifetime\fP\&.
+.sp
+Default: 2 weeks.
 .IP \(bu 2
 dnskey\-inception\-offset <DURATION>, cds\-inception\-offset <DURATION>
 .sp
@@ -784,6 +804,8 @@ or the CDS and CDNSKEY RRsets (cds\-inception\-offset), set the inception
 timestamp this amount in the past to compensate for clocks that are a
 bit off or in the wrong time zone.
 For the syntax of <DURATION> see \fBdnskey\-lifetime\fP\&.
+.sp
+Default: 1 day.
 .IP \(bu 2
 ksk\-validity <DURATION> | \fBoff\fP, zsk\-validity <DURATION> | \fBoff\fP, csk\-validity <DURATION> | \fBoff\fP
 .sp
@@ -797,6 +819,8 @@ next invocation of the cron command.
 .sp
 The status command shows which keys are no longer valid or when their
 validity will end.
+.sp
+Default: \fBoff\fP
 .IP \(bu 2
 update\-ds\-command
 .sp
@@ -804,6 +828,8 @@ Set a command to to run when the DS records in the parent zone need
 to be updated.
 This command can, for example, alert the operator or use an API provided
 by the parent zone to update the DS records automatically.
+.sp
+Default: None.
 .IP \(bu 2
 tsig\-store\-path
 .sp
@@ -833,8 +859,7 @@ base64 encoded secret.
 .INDENT 2.0
 .INDENT 3.5
 .sp
-.nf
-.ft C
+.EX
 {
   \(dqversion\(dq: \(dqv1\(dq,
   \(dqmap\(dq: {
@@ -844,10 +869,11 @@ base64 encoded secret.
     }
   }
 }
-.ft P
-.fi
+.EE
 .UNINDENT
 .UNINDENT
+.sp
+Default: None.
 .IP \(bu 2
 publication\-nameservers
 .sp
@@ -863,12 +889,16 @@ arguments, each nameserver being one argument in the form:
 <IP_ADDR>:<PORT>[^<TSIG_KEY_NAME>]
 .UNINDENT
 .UNINDENT
+.sp
+Default: None.
 .IP \(bu 2
 fake\-time
 .sp
 Set the \(aqwall clock\(aq time to be used for testing.
 The argument is either the Unix time as seconds since Epoch or the string
 \(aqoff\(aq to disable fake\-time.
+.sp
+Default: \fBoff\fP
 .UNINDENT
 .IP \(bu 2
 show

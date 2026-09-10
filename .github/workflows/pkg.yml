@@ -40,6 +40,16 @@ jobs:
       package_test_rules: pkg/dnst-ldnsutils/pkg/rules/packages-to-test.yml
       package_test_scripts_path: pkg/dnst-ldnsutils/pkg/test-scripts/test-<package>.sh
 
+      # Make sure that testing of the meta package dnst-ldnsutils is able
+      # to find a dnst package from the proposed repos to install.
+      deb_apt_source: 'deb [arch=amd64] https://packages.nlnetlabs.nl/linux/${OS_NAME}/ ${OS_REL}-proposed main'
+      rpm_yum_repo: |
+          [nlnetlabs]
+          name=NLnet Labs Testing
+          baseurl=https://packages.nlnetlabs.nl/linux/centos/$releasever/proposed/$basearch
+          enabled=1
+      package_test_always_add_repo: true
+
       rpm_scriptlets_path: pkg/dnst-ldnsutils/pkg/rpm/scriptlets.toml
 
       manifest_dir: pkg/dnst-ldnsutils
