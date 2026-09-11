@@ -71,7 +71,7 @@ use tokio::net::TcpStream;
 #[cfg(feature = "kmip")]
 use tracing::{debug, error, info, warn};
 #[cfg(not(feature = "kmip"))]
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 #[cfg(feature = "kmip")]
