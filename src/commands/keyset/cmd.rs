@@ -69,7 +69,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::net::TcpStream;
 #[cfg(feature = "kmip")]
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(not(feature = "kmip"))]
 use tracing::{debug, error, warn};
 use url::Url;
@@ -5901,17 +5901,51 @@ fn check_rrsigs(
                 // remember this by setting result to WaitNextSerial but
                 // keep checking.
                 if rtype != Rtype::NSEC3 {
-                    warn!(
-                        "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
-                        set, expected_set
+                    let mut set_str = "".to_string();
+                    let mut expected_set_str = "".to_string();
+                    let mut first = true;
+                    for (algorithm, keytag) in set {
+                        set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    first = true;
+                    for (algorithm, keytag) in expected_set {
+                        expected_set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    info!(
+                        "Waiting for {key}/{rtype} to be resigned: found {set_str} expected {expected_set_str}",
                     );
                     let name = key.to_name::<Vec<u8>>();
                     return CheckRrsigsResult::WaitRecord { name, rtype };
                 }
                 if result == CheckRrsigsResult::Done {
-                    warn!(
-                        "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
-                        set, expected_set
+                    let mut set_str = "".to_string();
+                    let mut expected_set_str = "".to_string();
+                    let mut first = true;
+                    for (algorithm, keytag) in set {
+                        set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    first = true;
+                    for (algorithm, keytag) in &expected_set {
+                        expected_set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    info!(
+                        "Waiting for {key}/{rtype} to be resigned: found {set_str} expected {expected_set_str}",
                     );
                 }
                 result = CheckRrsigsResult::WaitNextSerial;
