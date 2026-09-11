@@ -107,7 +107,7 @@ fn signzone_with_both_ksk_and_zsk() {
         false,
     );
 
-    verify_signed_zone(dnst_out_path);
+    verify_signed_zone_with_dnssec_verify(dnst_out_path);
 }
 
 #[ignore = "should only be run if ldns command line tools are installed"]
@@ -184,7 +184,7 @@ fn signzone_with_nsec3_no_opt_out() {
         false,
     );
 
-    verify_signed_zone(dnst_out_path);
+    verify_signed_zone_with_dnssec_verify(dnst_out_path);
 }
 
 #[ignore = "should only be run if ldns command line tools are installed"]
@@ -218,7 +218,7 @@ fn signzone_with_nsec3_opt_out() {
         false,
     );
 
-    verify_signed_zone(dnst_out_path);
+    verify_signed_zone_with_dnssec_verify(dnst_out_path);
 }
 
 // Note: We don't test for correct handling of early glue due to the original
@@ -234,6 +234,39 @@ fn verify_signed_zone(dnst_out_path: String) {
     if !verify_output.status.success() {
         eprintln!(
             "ldns-verify-zone failed with exit code {:?} and stderr output:\n{}",
+            verify_output.status.code(),
+            std::str::from_utf8(&verify_output.stderr).unwrap()
+        );
+    }
+
+    assert!(
+        verify_output.status.success(),
+        "Expected zone verification to succeed"
+    );
+}
+
+// Also verify with dnssec-verify as ldns-verify-zone has known issues. See:
+// https://github.com/NLnetLabs/ldns/issues/277. Note: -o is required as
+// dnssec-verify otherwise assumes the zone file name is the origin.
+fn verify_signed_zone_with_dnssec_verify(dnst_out_path: String) {
+    verify_signed_zone(dnst_out_path.clone());
+
+    let origin = std::fs::read_to_string(&dnst_out_path)
+        .unwrap()
+        .lines()
+        .find(|l| l.contains("SOA"))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap()
+        .to_string();
+
+    let verify_output = Command::new("dnssec-verify")
+        .args(["-o", &origin, &dnst_out_path])
+        .output()
+        .unwrap();
+
+    if !verify_output.status.success() {
+        eprintln!(
+            "dnssec-verify failed with exit code {:?} and stderr output:\n{}",
             verify_output.status.code(),
             std::str::from_utf8(&verify_output.stderr).unwrap()
         );
