@@ -5920,7 +5920,7 @@ fn check_rrsigs(
                         first = false;
                     }
                     info!(
-                        "Waiting for {key}/{rtype} to be resigned: found {set_str} expected {expected_set_str}",
+                        "Waiting for {key}/{rtype} to be re-signed: found {set_str} expected {expected_set_str}",
                     );
                     let name = key.to_name::<Vec<u8>>();
                     return CheckRrsigsResult::WaitRecord { name, rtype };
@@ -5945,7 +5945,7 @@ fn check_rrsigs(
                         first = false;
                     }
                     info!(
-                        "Waiting for {key}/{rtype} to be resigned: found {set_str} expected {expected_set_str}",
+                        "Waiting for {key}/{rtype} to be re-signed: found {set_str} expected {expected_set_str}",
                     );
                 }
                 result = CheckRrsigsResult::WaitNextSerial;
