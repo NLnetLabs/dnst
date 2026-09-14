@@ -2906,6 +2906,7 @@ impl WorkSpace {
                 rand::fill(&mut random_bytes[..]);
                 let private_key_random_label = encode_string_hex(&random_bytes);
 
+                debug!("Generating KMIP key with labels: pub={public_key_random_label}, pri={private_key_random_label}");
                 let key_pair = kmip::sign::generate(
                     public_key_random_label,
                     private_key_random_label,
@@ -2963,6 +2964,10 @@ impl WorkSpace {
                             // If key generation succeeded then the most likely reason
                             // for the rename operation to fail is lack of support for
                             // key relabeling.
+                            debug!(
+                                "Re-labeling public key {} to {public_key_label}",
+                                key_pair.public_key_id()
+                            );
                             match conn.rename_key(key_pair.public_key_id(), public_key_label) {
                                 Ok(_res) => {
                                     // TODO: Inspect the response attributes to see if
@@ -2973,6 +2978,10 @@ impl WorkSpace {
                                     // re-labelling the private key fails, that is
                                     // unexpected. Why would it succeed for one and
                                     // fail for the other?
+                                    debug!(
+                                        "Re-labeling private key {} to {private_key_label}",
+                                        key_pair.private_key_id()
+                                    );
                                     conn.rename_key(key_pair.private_key_id(), private_key_label)
 				.map_err(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()))?;
                                 }
