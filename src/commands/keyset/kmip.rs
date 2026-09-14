@@ -280,6 +280,10 @@ pub enum KmipCommands {
         )]
         client_key_path: Option<PathBuf>,
 
+        /// Disable use of TLS server certificate authentication.
+        #[arg(help_heading = "Server Certificate Verification", long = "no-server-auth", action = clap::ArgAction::SetTrue)]
+        no_server_auth: bool,
+
         /// Modify whether or not to accept the KMIP server TLS certificate
         /// without verifying it.
         #[arg(help_heading = "Server Certificate Verification", long = "insecure")]
@@ -452,6 +456,7 @@ pub fn kmip_command(
             client_cert_path,
             client_key_path,
             insecure,
+            no_server_auth,
             server_cert_path,
             ca_cert_path,
             connect_timeout,
@@ -497,11 +502,17 @@ pub fn kmip_command(
                 }
             }
 
-            if let Some(v) = server_cert_path {
-                crl_server_cert_path = ChangeRemoveLeave::Change(v);
+            if no_server_auth {
+                crl_server_cert_path = ChangeRemoveLeave::Remove;
+                crl_ca_cert_path = ChangeRemoveLeave::Remove;
+            } else {
+                if let Some(v) = server_cert_path {
+                    crl_server_cert_path = ChangeRemoveLeave::Change(v);
+                }
+                if let Some(v) = ca_cert_path {
+                    crl_ca_cert_path = ChangeRemoveLeave::Change(v);
+                }
             }
-            if let Some(v) = ca_cert_path {
-                crl_ca_cert_path = ChangeRemoveLeave::Change(v);
             }
 
             modify_kmip_server(
