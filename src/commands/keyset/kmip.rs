@@ -172,6 +172,14 @@ pub enum KmipCommands {
         #[arg(help_heading = "Server Certificate Verification", long = "insecure", default_value_t = false, action = clap::ArgAction::SetTrue)]
         insecure: bool,
 
+        /// Optional TLS server name (SNI) to use when connecting to the
+        /// server.
+        ///
+        /// If not provided then the IP_HOST_OR_FQDN name, if any, will be
+        /// used instead.
+        #[arg(help_heading = "Server Certificate Verification", long = "server-name")]
+        server_name: Option<String>,
+
         /// Optional path to a TLS PEM certificate for the server.
         #[arg(help_heading = "Server Certificate Verification", long = "server-cert")]
         server_cert_path: Option<PathBuf>,
@@ -289,6 +297,16 @@ pub enum KmipCommands {
         #[arg(help_heading = "Server Certificate Verification", long = "insecure")]
         insecure: Option<bool>,
 
+        /// Disable use of an alternate server name to that of the address as
+        /// the TLS SNI name.
+        #[arg(help_heading = "Server Certificate Verification", long = "no-server-name", action = clap::ArgAction::SetTrue)]
+        no_server_name: bool,
+
+        /// Modify the TLS SNI server name used, if not given via or different
+        /// to address.
+        #[arg(help_heading = "Server Certificate Verification", long = "server-name")]
+        server_name: Option<String>,
+
         /// Modify the path to a TLS PEM certificate for the server.
         #[arg(help_heading = "Server Certificate Verification", long = "server-cert")]
         server_cert_path: Option<PathBuf>,
@@ -374,6 +392,7 @@ pub fn kmip_command(
             client_cert_path,
             client_key_path,
             insecure,
+            server_name,
             server_cert_path,
             ca_cert_path,
             connect_timeout,
@@ -415,6 +434,7 @@ pub fn kmip_command(
                 verify_certificate: insecure.not(),
                 server_cert_path,
                 ca_cert_path,
+                server_name,
             };
 
             let limits = KmipClientLimits {
@@ -457,6 +477,8 @@ pub fn kmip_command(
             client_key_path,
             insecure,
             no_server_auth,
+            no_server_name,
+            server_name,
             server_cert_path,
             ca_cert_path,
             connect_timeout,
@@ -473,6 +495,7 @@ pub fn kmip_command(
             let mut crl_client_key_path = ChangeRemoveLeave::Leave;
             let mut crl_server_cert_path = ChangeRemoveLeave::Leave;
             let mut crl_ca_cert_path = ChangeRemoveLeave::Leave;
+            let mut crl_server_name = ChangeRemoveLeave::Leave;
 
             if no_credentials {
                 crl_credentials_store_path = ChangeRemoveLeave::Remove;
@@ -505,6 +528,7 @@ pub fn kmip_command(
             if no_server_auth {
                 crl_server_cert_path = ChangeRemoveLeave::Remove;
                 crl_ca_cert_path = ChangeRemoveLeave::Remove;
+                crl_server_name = ChangeRemoveLeave::Remove;
             } else {
                 if let Some(v) = server_cert_path {
                     crl_server_cert_path = ChangeRemoveLeave::Change(v);
@@ -512,7 +536,13 @@ pub fn kmip_command(
                 if let Some(v) = ca_cert_path {
                     crl_ca_cert_path = ChangeRemoveLeave::Change(v);
                 }
+                if let Some(v) = server_name {
+                    crl_server_name = ChangeRemoveLeave::Change(v);
+                }
             }
+
+            if no_server_name {
+                crl_server_name = ChangeRemoveLeave::Remove;
             }
 
             modify_kmip_server(
@@ -526,6 +556,7 @@ pub fn kmip_command(
                 crl_client_cert_path,
                 crl_client_key_path,
                 insecure,
+                crl_server_name,
                 crl_server_cert_path,
                 crl_ca_cert_path,
                 connect_timeout,
@@ -772,6 +803,7 @@ fn modify_kmip_server(
     client_cert_path: ChangeRemoveLeave<PathBuf>,
     client_key_path: ChangeRemoveLeave<PathBuf>,
     server_insecure: Option<bool>,
+    server_name: ChangeRemoveLeave<String>,
     server_cert_path: ChangeRemoveLeave<PathBuf>,
     ca_cert_path: ChangeRemoveLeave<PathBuf>,
     connect_timeout: Option<Duration>,
@@ -964,6 +996,11 @@ fn modify_kmip_server(
     match ca_cert_path {
         ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.ca_cert_path = Some(v),
         ChangeRemoveLeave::Remove => cfg.server_cert_verification.ca_cert_path = None,
+        ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+    }
+    match server_name {
+        ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.server_name = Some(v),
+        ChangeRemoveLeave::Remove => cfg.server_cert_verification.server_name = None,
         ChangeRemoveLeave::Leave => { /* Nothing to do */ }
     }
 
@@ -1256,6 +1293,10 @@ pub struct KmipServerTlsCertificateVerificationConfig {
     /// Path to the server CA certificate file in PEM format.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub ca_cert_path: Option<PathBuf>,
+
+    /// TLS server name (SNI) to use when connecting to the server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub server_name: Option<String>,
 }
 
 //--- impl Default
@@ -1266,6 +1307,7 @@ impl Default for KmipServerTlsCertificateVerificationConfig {
             verify_certificate: true,
             server_cert_path: None,
             ca_cert_path: None,
+            server_name: None,
         }
     }
 }
@@ -1382,7 +1424,7 @@ pub struct KmipServerConnectionConfig {
 /// Displays in multi-line tabulated format like so:
 ///
 /// ```text
-/// Address:                           127.0.0.1:5696
+/// Address:                           127.0.0.1:5696 (SNI: some.host.name)
 /// Server Certificate Verification:   Disabled
 /// Server Certificate:                None
 /// Certificate Authority Certificate: None
@@ -1405,11 +1447,15 @@ impl std::fmt::Display for KmipServerConnectionConfig {
             }
         }
 
-        writeln!(
+        write!(
             f,
             "Address:                           {}:{}",
             self.server_addr, self.server_port
         )?;
+        if let Some(server_name) = &self.server_cert_verification.server_name {
+            write!(f, " (SNI: {server_name})")?;
+        }
+        writeln!(f)?;
         let enabled = match self.server_cert_verification.verify_certificate {
             true => "Enabled",
             false => "Disabled",
@@ -1494,6 +1540,7 @@ impl KmipServerConnectionConfig {
             read_timeout: Some(self.client_limits.read_timeout),
             write_timeout: Some(self.client_limits.write_timeout),
             max_response_bytes: Some(self.client_limits.max_response_bytes),
+            server_name: self.server_cert_verification.server_name.clone(),
         })
     }
 
