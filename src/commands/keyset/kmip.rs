@@ -344,6 +344,19 @@ pub enum KmipCommands {
 
     /// List all configured KMIP servers.
     ListServers,
+
+    /// Set whether or not KMIP logs will expand TTLV protocol sequences into
+    /// human readable (and potentially sensitive) form.
+    ///
+    /// Warning! Enabling this may cause sensitive data exchanged with a KMIP
+    /// server (such as authentication details) to be logged.
+    SetExpandedLogging {
+        /// The identifier of the KMIP server to get.
+        server_id: String,
+
+        /// Enable expanded logging or not.
+        enable: bool,
+    },
 }
 
 //------------ kmip_command() ------------------------------------------------
@@ -556,6 +569,13 @@ pub fn kmip_command(
             write!(env.stdout(), "{}", kss.kmip);
             return Ok(false);
         }
+
+        KmipCommands::SetExpandedLogging { server_id, enable } => {
+            let Some(server) = kss.kmip.servers.get_mut(&server_id) else {
+                return Err(format!("KMIP server id '{server_id}' is not known").into());
+            };
+            server.expanded_logging = enable;
+        }
     }
 
     Ok(true)
@@ -721,6 +741,7 @@ fn add_kmip_server(
         client_cert_auth,
         client_limits,
         key_label_config,
+        expanded_logging: false,
     };
 
     kmip.servers.insert(server_id.clone(), settings);
@@ -1364,6 +1385,10 @@ pub struct KmipServerConnectionConfig {
 
     /// Key labeling configuration.
     pub key_label_config: KeyLabelConfig,
+
+    /// Whether or not KMIP logs will expand TTLV protocol sequences into
+    /// human readable (and potentially sensitive) form.
+    pub expanded_logging: bool,
 }
 
 //--- impl Display
@@ -1623,7 +1648,7 @@ impl KmipState {
                 })?;
                 // TODO: Should the timeouts used here be configurable and/or set to some
                 // other value?
-                let pool = ConnectionManager::create_connection_pool(
+                let mut pool = ConnectionManager::create_connection_pool(
                     id.to_string(),
                     conn_settings.into(),
                     1,
@@ -1631,6 +1656,10 @@ impl KmipState {
                     Some(Duration::from_secs(60)),
                 )
                 .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
+
+                if srv_conn_settings.expanded_logging {
+                    pool.set_expanded_logging(true);
+                }
 
                 pools.insert(id.to_string(), pool.clone());
                 Ok(pool)
