@@ -945,8 +945,12 @@ impl Keyset {
                     if !ws.state.dnskey_rrset.is_empty() {
                         ws.update_dnskey_rrset(env, true)?;
                     }
-
-                    // What about CDS/CDNSKEY/DS?
+                    if !ws.state.ds_rrset.is_empty() {
+                        ws.update_ds_rrset(env, true)?;
+                    }
+                    if !ws.state.cds_rrset.is_empty() {
+                        ws.create_cds_rrset(env, true)?;
+                    }
                 }
                 ws.state_changed = true;
             }
@@ -1163,12 +1167,12 @@ impl Keyset {
                 } else if commands.len() >= 2 {
                     println!("{actor} will execute the following steps by itself.");
                     println!(
-                        "They are listed here in case there is a need to execute the step manually"
+                        "They are listed here in case there is a need to execute the steps manually"
                     );
                 } else if !commands.is_empty() {
                     println!("{actor} will execute the following step by itself.");
                     println!(
-                        "It is listed here in case there is a need to execute the steps manually"
+                        "It is listed here in case there is a need to execute the step manually"
                     );
                 }
                 for (roll_subcommand, state_subcommand) in &commands {
@@ -2451,7 +2455,6 @@ impl WorkSpace {
             }
             RollCommands::CacheExpired1 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                dbg!(&roll);
                 self.state
                     .keyset
                     .cache_expired1(roll)
@@ -2541,6 +2544,12 @@ impl WorkSpace {
         // an incomplete DNSKEY RRset.
         if !self.state.dnskey_rrset.is_empty() {
             self.update_dnskey_rrset(env, true)?;
+        }
+        if !self.state.ds_rrset.is_empty() {
+            self.update_ds_rrset(env, true)?;
+        }
+        if !self.state.cds_rrset.is_empty() {
+            self.create_cds_rrset(env, true)?;
         }
         Ok(())
     }
@@ -4066,7 +4075,7 @@ impl WorkSpace {
                     )
                     .await
                     {
-                        AutoReportActionsResult::Wait(_) => continue,
+                        AutoReportActionsResult::Wait { .. } => continue,
                         AutoReportActionsResult::Report(ttl) => {
                             let actions = match state {
                                 RollState::Propagation1 => {
@@ -4206,8 +4215,8 @@ impl WorkSpace {
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                return AutoActionsResult::Wait(next.clone())
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                return AutoActionsResult::Wait(until.clone())
                             }
                             AutoReportActionsResult::Report(_) => continue,
                         }
@@ -4221,8 +4230,8 @@ impl WorkSpace {
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                return AutoActionsResult::Wait(next.clone())
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                return AutoActionsResult::Wait(until.clone())
                             }
                             AutoReportActionsResult::Report(_) => continue,
                         }
@@ -4236,11 +4245,11 @@ impl WorkSpace {
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(rrsig_status) = &report_state_locked.rrsig {
                         match rrsig_status {
-                            AutoReportRrsigResult::Wait(next)
-                            | AutoReportRrsigResult::WaitRecord { next, .. }
-                            | AutoReportRrsigResult::WaitNextSerial { next, .. }
-                            | AutoReportRrsigResult::WaitSoa { next, .. } => {
-                                return AutoActionsResult::Wait(next.clone())
+                            AutoReportRrsigResult::Wait { until, .. }
+                            | AutoReportRrsigResult::WaitRecord { until, .. }
+                            | AutoReportRrsigResult::WaitNextSerial { until, .. }
+                            | AutoReportRrsigResult::WaitSoa { until, .. } => {
+                                return AutoActionsResult::Wait(until.clone())
                             }
                             AutoReportRrsigResult::Report(_) => continue,
                         }
@@ -4654,7 +4663,12 @@ enum AutoReportActionsResult {
     /// The action has completed, report at least the Ttl in the parameter.
     Report(Ttl),
     /// Try again after the UnixTime parameter.
-    Wait(UnixTime),
+    Wait {
+        /// Wait until this time before trying again.
+        until: UnixTime,
+        /// Notice to the user why this value was created.
+        notice: String,
+    },
 }
 
 /// The result of checking for RRSIG propagation.
@@ -4664,40 +4678,52 @@ enum AutoReportRrsigResult {
     Report(Ttl),
     /// A DNS request failed (for example due to a network problem). Try again
     /// after the UnixTime parameter.
-    Wait(UnixTime),
+    Wait {
+        /// Wait until this time before trying again.
+        until: UnixTime,
+        /// Notice to the user why this value was created.
+        notice: String,
+    },
     /// The zone has updated signatures, wait for this version of the zone to
     /// appear on all name servers.
     WaitSoa {
         /// Try again after this time.
-        next: UnixTime,
+        until: UnixTime,
         /// Wait for this serial or newer.
         serial: Serial,
         /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
         /// The ttl to put in the Report variable when the check succeeds.
         report_ttl: Ttl,
+        /// Notice to the user why this value was created.
+        notice: String,
     },
     /// Wait for a specific record to get updated signatures.
     WaitRecord {
-        /// Try again after this time.
-        next: UnixTime,
+        /// Wait until this time to try again.
+        until: UnixTime,
         /// Name to check.
         name: Name<Vec<u8>>,
         /// Rtype to check.
         rtype: Rtype,
-        /// The ttl to use to compute a new 'next' wait time if the check fails.
+        /// The ttl to use to compute a new 'until' wait time if the
+        /// check fails.
         ttl: Ttl,
+        /// Notice to the user why this value was created.
+        notice: String,
     },
     /// For NSEC3 records, it is not possible to directly check if they got new
     /// signatures. Instead, wait for a new version of the zone and check the
     /// entire zone.
     WaitNextSerial {
         /// Try again after this time.
-        next: UnixTime,
+        until: UnixTime,
         /// Wait until the zone version is new than this serial.
         serial: Serial,
         /// The ttl to use to compute a new 'next' wait time if the check fails.
         ttl: Ttl,
+        /// Notice to the user why this value was created.
+        notice: String,
     },
 }
 
@@ -4728,9 +4754,9 @@ async fn auto_wait_actions(
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
-                                    return AutoActionsResult::Wait(next.clone());
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                if *until > now {
+                                    return AutoActionsResult::Wait(until.clone());
                                 }
                             }
                             AutoReportActionsResult::Report(_) => continue,
@@ -4748,7 +4774,9 @@ async fn auto_wait_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportActionsResult::Wait(next) => return AutoActionsResult::Wait(next),
+                    AutoReportActionsResult::Wait { until, .. } => {
+                        return AutoActionsResult::Wait(until)
+                    }
                     AutoReportActionsResult::Report(_) => (),
                 }
             }
@@ -4758,9 +4786,9 @@ async fn auto_wait_actions(
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
-                                    return AutoActionsResult::Wait(next.clone());
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                if *until > now {
+                                    return AutoActionsResult::Wait(until.clone());
                                 }
                             }
                             AutoReportActionsResult::Report(_) => continue,
@@ -4773,7 +4801,10 @@ async fn auto_wait_actions(
                     .await
                     .unwrap_or_else(|e| {
                         warn!("Check DS propagation failed: {e}");
-                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
+                        AutoReportActionsResult::Wait {
+                            until: now.clone() + DEFAULT_WAIT,
+                            notice: format!("Check DS propagation failed: {e}"),
+                        }
                     });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
@@ -4782,7 +4813,9 @@ async fn auto_wait_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportActionsResult::Wait(next) => return AutoActionsResult::Wait(next),
+                    AutoReportActionsResult::Wait { until, .. } => {
+                        return AutoActionsResult::Wait(until)
+                    }
                     AutoReportActionsResult::Report(_) => (),
                 }
             }
@@ -4799,29 +4832,39 @@ async fn auto_wait_actions(
 
                 if let Some(rrsig_status) = opt_rrsig_status {
                     match rrsig_status {
-                        AutoReportRrsigResult::Wait(next) => {
-                            if next > now {
-                                return AutoActionsResult::Wait(next.clone());
+                        AutoReportRrsigResult::Wait { until, .. } => {
+                            if until > now {
+                                return AutoActionsResult::Wait(until.clone());
                             }
                         }
                         AutoReportRrsigResult::Report(_) => continue,
                         AutoReportRrsigResult::WaitSoa {
-                            next,
+                            until,
                             serial,
                             ttl,
                             report_ttl,
+                            notice: _,
                         } => {
-                            if next > now {
-                                return AutoActionsResult::Wait(next.clone());
+                            if until > now {
+                                return AutoActionsResult::Wait(until.clone());
                             }
-                            let res =
-                                check_soa(serial, state, now.clone())
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        warn!("Check SOA propagation failed: {e}");
-                                        false
-                                    });
-                            if res {
+                            let res = check_soa(serial, state, now.clone()).await;
+                            if let Err(e) = res {
+                                warn!("Check SOA propagation failed: {e}");
+                                let next = now + ttl.into();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
+                                    until: until.clone(),
+                                    serial,
+                                    ttl,
+                                    report_ttl,
+                                    notice: e.to_string(),
+                                });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoActionsResult::Wait(next);
+                            } else {
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -4829,73 +4872,58 @@ async fn auto_wait_actions(
                                 drop(report_state_locked);
                                 *state_changed = true;
                                 continue;
-                            } else {
-                                let next = now + ttl.into();
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
-                                    next: next.clone(),
-                                    serial,
-                                    ttl,
-                                    report_ttl,
-                                });
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                return AutoActionsResult::Wait(next);
                             }
                         }
                         AutoReportRrsigResult::WaitRecord {
-                            next,
+                            until,
                             name,
                             rtype,
                             ttl,
+                            notice: _,
                         } => {
-                            if next > now {
-                                return AutoActionsResult::Wait(next.clone());
+                            if until > now {
+                                return AutoActionsResult::Wait(until.clone());
                             }
-                            let res =
-                                check_record(&name, &rtype, state)
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        warn!("record check failed: {e}");
-                                        false
-                                    });
-                            if !res {
-                                let next = now + ttl.into();
+                            let res = check_record(&name, &rtype, state).await;
+                            if let Err(e) = res {
+                                warn!("record check failed: {e}");
+                                let until = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitRecord {
-                                        next: next.clone(),
+                                        until: until.clone(),
                                         name: name.clone(),
                                         rtype,
                                         ttl,
+                                        notice: e.to_string(),
                                     });
                                 drop(report_state_locked);
                                 *state_changed = true;
-                                return AutoActionsResult::Wait(next);
+                                return AutoActionsResult::Wait(until);
                             }
 
                             // This record has the right signatures. Check
                             // the zone.
                         }
-                        AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
-                            if next > now {
-                                return AutoActionsResult::Wait(next.clone());
+                        AutoReportRrsigResult::WaitNextSerial {
+                            until, serial, ttl, ..
+                        } => {
+                            if until > now {
+                                return AutoActionsResult::Wait(until.clone());
                             }
-                            let res = check_next_serial(serial, state).await.unwrap_or_else(|e| {
+                            let res = check_next_serial(serial, state).await;
+                            if let Err(e) = res {
                                 warn!("next serial check failed: {e}");
-                                false
-                            });
-                            if !res {
                                 let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitNextSerial {
-                                        next: next.clone(),
+                                        until: until.clone(),
                                         serial,
                                         ttl,
+                                        notice: e.to_string(),
                                     });
                                 drop(report_state_locked);
                                 *state_changed = true;
@@ -4911,7 +4939,10 @@ async fn auto_wait_actions(
                     .await
                     .unwrap_or_else(|e| {
                         warn!("Check RRSIG propagation failed: {e}");
-                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
+                        AutoReportRrsigResult::Wait {
+                            until: now.clone() + DEFAULT_WAIT,
+                            notice: format!("Check RRSIG propagation failed: {e}"),
+                        }
                     });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
@@ -4920,11 +4951,11 @@ async fn auto_wait_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportRrsigResult::Wait(next)
-                    | AutoReportRrsigResult::WaitRecord { next, .. }
-                    | AutoReportRrsigResult::WaitNextSerial { next, .. }
-                    | AutoReportRrsigResult::WaitSoa { next, .. } => {
-                        return AutoActionsResult::Wait(next)
+                    AutoReportRrsigResult::Wait { until, .. }
+                    | AutoReportRrsigResult::WaitRecord { until, .. }
+                    | AutoReportRrsigResult::WaitNextSerial { until, .. }
+                    | AutoReportRrsigResult::WaitSoa { until, .. } => {
+                        return AutoActionsResult::Wait(until)
                     }
                     AutoReportRrsigResult::Report(_) => (),
                 }
@@ -4961,8 +4992,8 @@ async fn auto_report_actions(
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(dnskey_status) = &report_state_locked.dnskey {
                         match dnskey_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                if *until > now {
                                     return dnskey_status.clone();
                                 }
                             }
@@ -4983,7 +5014,7 @@ async fn auto_report_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportActionsResult::Wait(_) => return result,
+                    AutoReportActionsResult::Wait { .. } => return result,
                     AutoReportActionsResult::Report(ttl) => {
                         max_ttl = max(max_ttl, ttl);
                     }
@@ -4995,8 +5026,8 @@ async fn auto_report_actions(
                     let report_state_locked = report_state.lock().expect("lock() should not fail");
                     if let Some(ds_status) = &report_state_locked.ds {
                         match ds_status {
-                            AutoReportActionsResult::Wait(next) => {
-                                if *next > now {
+                            AutoReportActionsResult::Wait { until, .. } => {
+                                if *until > now {
                                     return ds_status.clone();
                                 }
                             }
@@ -5013,7 +5044,10 @@ async fn auto_report_actions(
                     .await
                     .unwrap_or_else(|e| {
                         warn!("Check DS propagation failed: {e}");
-                        AutoReportActionsResult::Wait(now.clone() + DEFAULT_WAIT)
+                        AutoReportActionsResult::Wait {
+                            until: now.clone() + DEFAULT_WAIT,
+                            notice: format!("Check DS propagation failed: {e}"),
+                        }
                     });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
@@ -5022,7 +5056,7 @@ async fn auto_report_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportActionsResult::Wait(_) => return result,
+                    AutoReportActionsResult::Wait { .. } => return result,
                     AutoReportActionsResult::Report(ttl) => {
                         max_ttl = max(max_ttl, ttl);
                     }
@@ -5041,9 +5075,12 @@ async fn auto_report_actions(
 
                 if let Some(rrsig_status) = opt_rrsig_status {
                     match rrsig_status {
-                        AutoReportRrsigResult::Wait(next) => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
+                        AutoReportRrsigResult::Wait { until, notice } => {
+                            if until > now {
+                                return AutoReportActionsResult::Wait {
+                                    until: until.clone(),
+                                    notice,
+                                };
                             }
                         }
                         AutoReportRrsigResult::Report(ttl) => {
@@ -5051,22 +5088,37 @@ async fn auto_report_actions(
                             continue;
                         }
                         AutoReportRrsigResult::WaitSoa {
-                            next,
+                            until,
                             serial,
                             ttl,
                             report_ttl,
+                            notice,
                         } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
+                            if until > now {
+                                return AutoReportActionsResult::Wait {
+                                    until: until.clone(),
+                                    notice,
+                                };
                             }
-                            let res =
-                                check_soa(serial, kss, now.clone())
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        warn!("Check SOA propagation failed: {e}");
-                                        false
-                                    });
-                            if res {
+                            let res = check_soa(serial, kss, now.clone()).await;
+                            if let Err(e) = res {
+                                let until = now + ttl.into();
+                                let mut report_state_locked =
+                                    report_state.lock().expect("lock() should not fail");
+                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
+                                    until: until.clone(),
+                                    serial,
+                                    ttl,
+                                    report_ttl,
+                                    notice: e.to_string(),
+                                });
+                                drop(report_state_locked);
+                                *state_changed = true;
+                                return AutoReportActionsResult::Wait {
+                                    until,
+                                    notice: e.to_string(),
+                                };
+                            } else {
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
@@ -5075,74 +5127,77 @@ async fn auto_report_actions(
                                 *state_changed = true;
                                 max_ttl = max(max_ttl, report_ttl);
                                 continue;
-                            } else {
-                                let next = now + ttl.into();
-                                let mut report_state_locked =
-                                    report_state.lock().expect("lock() should not fail");
-                                report_state_locked.rrsig = Some(AutoReportRrsigResult::WaitSoa {
-                                    next: next.clone(),
-                                    serial,
-                                    ttl,
-                                    report_ttl,
-                                });
-                                drop(report_state_locked);
-                                *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
                             }
                         }
                         AutoReportRrsigResult::WaitRecord {
-                            next,
+                            until,
                             name,
                             rtype,
                             ttl,
+                            notice,
                         } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
+                            if until > now {
+                                return AutoReportActionsResult::Wait {
+                                    until: until.clone(),
+                                    notice,
+                                };
                             }
-                            let res = check_record(&name, &rtype, kss).await.unwrap_or_else(|e| {
+                            let res = check_record(&name, &rtype, kss).await;
+                            if let Err(e) = res {
                                 warn!("record check failed: {e}");
-                                false
-                            });
-                            if !res {
-                                let next = now + ttl.into();
+                                let until = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitRecord {
-                                        next: next.clone(),
+                                        until: until.clone(),
                                         name: name.clone(),
                                         rtype,
                                         ttl,
+                                        notice: e.to_string(),
                                     });
                                 drop(report_state_locked);
                                 *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
+                                return AutoReportActionsResult::Wait {
+                                    until: until.clone(),
+                                    notice: e.to_string(),
+                                };
                             }
 
                             // This record has the right signatures. Check
                             // the zone.
                         }
-                        AutoReportRrsigResult::WaitNextSerial { next, serial, ttl } => {
-                            if next > now {
-                                return AutoReportActionsResult::Wait(next.clone());
+                        AutoReportRrsigResult::WaitNextSerial {
+                            until,
+                            serial,
+                            ttl,
+                            notice,
+                        } => {
+                            if until > now {
+                                return AutoReportActionsResult::Wait {
+                                    until: until.clone(),
+                                    notice,
+                                };
                             }
-                            let res = check_next_serial(serial, kss).await.unwrap_or_else(|e| {
+                            let res = check_next_serial(serial, kss).await;
+                            if let Err(e) = res {
                                 warn!("next serial check failed: {e}");
-                                false
-                            });
-                            if !res {
                                 let next = now + ttl.into();
                                 let mut report_state_locked =
                                     report_state.lock().expect("lock() should not fail");
                                 report_state_locked.rrsig =
                                     Some(AutoReportRrsigResult::WaitNextSerial {
-                                        next: next.clone(),
+                                        until: until.clone(),
                                         serial,
                                         ttl,
+                                        notice: e.to_string(),
                                     });
                                 drop(report_state_locked);
                                 *state_changed = true;
-                                return AutoReportActionsResult::Wait(next);
+                                return AutoReportActionsResult::Wait {
+                                    until: next.clone(),
+                                    notice: e.to_string(),
+                                };
                             }
 
                             // A new serial. Check the zone.
@@ -5154,7 +5209,10 @@ async fn auto_report_actions(
                     .await
                     .unwrap_or_else(|e| {
                         warn!("Check RRSIG propagation failed: {e}");
-                        AutoReportRrsigResult::Wait(now.clone() + DEFAULT_WAIT)
+                        AutoReportRrsigResult::Wait {
+                            until: now.clone() + DEFAULT_WAIT,
+                            notice: format!("Check RRSIG propagation failed: {e}"),
+                        }
                     });
 
                 let mut report_state_locked = report_state.lock().expect("lock() should not fail");
@@ -5163,11 +5221,14 @@ async fn auto_report_actions(
                 *state_changed = true;
 
                 match result {
-                    AutoReportRrsigResult::Wait(next)
-                    | AutoReportRrsigResult::WaitRecord { next, .. }
-                    | AutoReportRrsigResult::WaitNextSerial { next, .. }
-                    | AutoReportRrsigResult::WaitSoa { next, .. } => {
-                        return AutoReportActionsResult::Wait(next)
+                    AutoReportRrsigResult::Wait { until, notice, .. }
+                    | AutoReportRrsigResult::WaitRecord { until, notice, .. }
+                    | AutoReportRrsigResult::WaitNextSerial { until, notice, .. }
+                    | AutoReportRrsigResult::WaitSoa { until, notice, .. } => {
+                        return AutoReportActionsResult::Wait {
+                            until: until.clone(),
+                            notice,
+                        };
                     }
                     AutoReportRrsigResult::Report(ttl) => {
                         max_ttl = max(max_ttl, ttl);
@@ -5218,7 +5279,10 @@ async fn report_dnskey_propagated(kss: &KeySetState, now: UnixTime) -> AutoRepor
         Ok(a) => a,
         Err(e) => {
             warn!("Getting nameserver addresses for {zone} failed: {e}");
-            return AutoReportActionsResult::Wait(now + DEFAULT_WAIT);
+            return AutoReportActionsResult::Wait {
+                until: now + DEFAULT_WAIT,
+                notice: format!("Getting nameserver addresses for {zone} failed: {e}"),
+            };
         }
     };
 
@@ -5240,12 +5304,15 @@ async fn report_dnskey_propagated(kss: &KeySetState, now: UnixTime) -> AutoRepor
             Ok(r) => r,
             Err(e) => {
                 warn!("DNSKEY check failed: {e}");
-                return AutoReportActionsResult::Wait(now + DEFAULT_WAIT);
+                return AutoReportActionsResult::Wait {
+                    until: now + DEFAULT_WAIT,
+                    notice: format!("DNSKEY check failed: {e}"),
+                };
             }
         };
         match r {
             // It doesn't really matter how long we have to wait.
-            AutoReportActionsResult::Wait(_) => return r,
+            AutoReportActionsResult::Wait { .. } => return r,
             AutoReportActionsResult::Report(ttl) => {
                 max_ttl = Some(max(max_ttl.unwrap_or(Ttl::from_secs(0)), ttl));
             }
@@ -5314,7 +5381,7 @@ async fn report_ds_propagated(
         let r = r?;
         match r {
             // It doesn't really matter how long we have to wait.
-            AutoReportActionsResult::Wait(_) => return Ok(r),
+            AutoReportActionsResult::Wait { .. } => return Ok(r),
             AutoReportActionsResult::Report(ttl) => {
                 max_ttl = Some(max(max_ttl.unwrap_or(Ttl::from_secs(0)), ttl));
             }
@@ -5355,7 +5422,7 @@ async fn report_rrsig_propagated(
     let result = check_zone(kss, now.clone(), nameservers, tsig_store).await?;
     let (serial, ttl, report_ttl) = match result {
         // check_zone never returns Report or Wait.
-        AutoReportRrsigResult::Report(_) | AutoReportRrsigResult::Wait(_) => unreachable!(),
+        AutoReportRrsigResult::Report(_) | AutoReportRrsigResult::Wait { .. } => unreachable!(),
         AutoReportRrsigResult::WaitSoa {
             serial,
             ttl,
@@ -5367,24 +5434,18 @@ async fn report_rrsig_propagated(
         }
     };
 
-    Ok(
-        if check_soa(serial, kss, now.clone())
-            .await
-            .unwrap_or_else(|e| {
-                warn!("Check SOA propagation failed: {e}");
-                false
-            })
-        {
-            AutoReportRrsigResult::Report(report_ttl)
-        } else {
-            AutoReportRrsigResult::WaitSoa {
-                next: now + ttl.into(),
-                serial,
-                ttl,
-                report_ttl,
-            }
-        },
-    )
+    Ok(if let Err(e) = check_soa(serial, kss, now.clone()).await {
+        warn!("Check SOA propagation failed: {e}");
+        AutoReportRrsigResult::WaitSoa {
+            until: now + ttl.into(),
+            serial,
+            ttl,
+            report_ttl,
+            notice: e.to_string(),
+        }
+    } else {
+        AutoReportRrsigResult::Report(report_ttl)
+    })
 }
 
 /// Check whether the zone has signatures from the right keys.
@@ -5534,25 +5595,39 @@ async fn check_zone(
                     // The end.
                     let res = check_rrsigs(treemap, sigmap, zone, expected_set);
                     return match res {
-                        CheckRrsigsResult::Done => Ok(AutoReportRrsigResult::WaitSoa {
-                            next: now,
-                            serial,
-                            ttl: r.ttl(),
-                            report_ttl: max_ttl,
-                        }),
-                        CheckRrsigsResult::WaitRecord { name, rtype } => {
-                            Ok(AutoReportRrsigResult::WaitRecord {
-                                next: now + r.ttl().into(),
-                                name,
-                                rtype,
-                                ttl: r.ttl(),
-                            })
+                        CheckRrsigsResult::Done => {
+                            let res = check_soa(serial, kss, now.clone()).await;
+                            if let Err(e) = res {
+                                warn!("Check SOA propagation failed: {e}");
+                                let until = now + r.ttl().into();
+                                Ok(AutoReportRrsigResult::WaitSoa {
+                                    until: until.clone(),
+                                    serial,
+                                    ttl: r.ttl(),
+                                    report_ttl: max_ttl,
+                                    notice: e.to_string(),
+                                })
+                            } else {
+                                Ok(AutoReportRrsigResult::Report(max_ttl))
+                            }
                         }
-                        CheckRrsigsResult::WaitNextSerial => {
+                        CheckRrsigsResult::WaitRecord {
+                            name,
+                            rtype,
+                            notice,
+                        } => Ok(AutoReportRrsigResult::WaitRecord {
+                            until: now + r.ttl().into(),
+                            name,
+                            rtype,
+                            ttl: r.ttl(),
+                            notice,
+                        }),
+                        CheckRrsigsResult::WaitNextSerial { notice } => {
                             Ok(AutoReportRrsigResult::WaitNextSerial {
-                                next: now + r.ttl().into(),
+                                until: now + r.ttl().into(),
                                 serial,
                                 ttl: r.ttl(),
+                                notice,
                             })
                         }
                     };
@@ -5686,8 +5761,8 @@ async fn check_dnskey_for_address(
             } else {
                 // The current record is not found in the target set. Wait
                 // until the TTL has expired.
-                debug!("Check DNSKEY RRset: DNSKEY record not expected");
-                return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
+                debug!("Check DNSKEY RRset: DNSKEY record {} found on server {} that is not part of the target RRset", r, address);
+                return Ok(AutoReportActionsResult::Wait { until: now + r.ttl().into_duration(), notice: format!("Check DNSKEY RRset: DNSKEY record {} found on server {} that is not part of the target RRset", r, address) });
             }
             continue;
         }
@@ -5711,16 +5786,25 @@ async fn check_dnskey_for_address(
             } else {
                 // The current record is not found in the target set. Wait
                 // until the TTL has expired.
-                debug!("Check DNSKEY RRset: RRSIG record not expected");
-                return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
+                debug!("Check DNSKEY RRset: RRSIG record {} found on server {} that is not part of the target RRset", r, address);
+                return Ok(AutoReportActionsResult::Wait { until: now + r.ttl().into_duration(), notice: format!("Check DNSKEY RRset: RRSIG record {} found on server {} that is not part of the target RRset", r, address)});
             }
             continue;
         }
     }
     if let Some(record) = target_dnskey.iter().next() {
         // Not all DNSKEY records were found.
-        warn!("Not all required DNSKEY records were found for {zone}");
-        Ok(AutoReportActionsResult::Wait(now + record.ttl().into()))
+        warn!(
+            "Not all required DNSKEY records were found: {} is missing on server {}",
+            record, address
+        );
+        Ok(AutoReportActionsResult::Wait {
+            until: now + record.ttl().into(),
+            notice: format!(
+                "Not all required DNSKEY records were found: {} is missing on server {}",
+                record, address
+            ),
+        })
     } else {
         Ok(AutoReportActionsResult::Report(max_ttl))
     }
@@ -5758,16 +5842,25 @@ async fn check_ds_for_address(
         } else {
             // The current record is not found in the target set. Wait
             // until the TTL has expired.
-            debug!("Check DS RRset: DS record not expected");
-            return Ok(AutoReportActionsResult::Wait(now + r.ttl().into_duration()));
+            debug!(
+                "Check DS RRset: unexpected DS record {} found on server {}",
+                r, address
+            );
+            return Ok(AutoReportActionsResult::Wait {
+                until: now + r.ttl().into_duration(),
+                notice: format!(
+                    "Check DS RRset: unexpected DS record {} found on server {}",
+                    r, address
+                ),
+            });
         }
         continue;
     }
     let dnskey = target_dnskey.iter().next();
     if let Some(dnskey) = dnskey {
-        debug!("Check DS RRset: expected DS record not present");
+        debug!("Check DS RRset: DS record that corresponds to a DNSKEY with key tag {} not present on server {}", dnskey.data().key_tag(), address);
         let ttl = dnskey.ttl();
-        Ok(AutoReportActionsResult::Wait(now + ttl.into_duration()))
+        Ok(AutoReportActionsResult::Wait { until: now + ttl.into_duration(), notice: format!("Check DS RRset: DS record that corresponds to a DNSKEY with key tag {} not present on server {}", dnskey.data().key_tag(), address) })
     } else {
         Ok(AutoReportActionsResult::Report(max_ttl))
     }
@@ -5784,21 +5877,28 @@ async fn check_soa_for_address(
     let records = lookup_name_rtype_at_address::<Soa<_>>(zone, Rtype::SOA, address).await?;
 
     if records.is_empty() {
-        return Ok(AutoReportActionsResult::Wait(now + DEFAULT_WAIT));
+        return Ok(AutoReportActionsResult::Wait {
+            until: now + DEFAULT_WAIT,
+            notice: format!("no SOA record found for zone {zone} at server{address}"),
+        });
     }
 
-    if let Some(ttl) = records
+    if let Some((ttl, current_serial)) = records
         .iter()
         .filter_map(|r| {
-            if r.data().serial() < serial {
-                Some(r.ttl())
+            let current_serial = r.data().serial();
+            if current_serial < serial {
+                Some((r.ttl(), current_serial))
             } else {
                 None
             }
         })
         .next()
     {
-        return Ok(AutoReportActionsResult::Wait(now + ttl.into()));
+        return Ok(AutoReportActionsResult::Wait {
+            until: now + ttl.into(),
+            notice: format!("server {} has serial {}", address, current_serial,),
+        });
     }
     // Return a dummy TTL. The caller knows the real TTL to report.
     Ok(AutoReportActionsResult::Report(Ttl::from_secs(0)))
@@ -5938,9 +6038,14 @@ enum CheckRrsigsResult {
         name: Name<Vec<u8>>,
         /// And the Rtype.
         rtype: Rtype,
+        /// Notice to the user why this value was created.
+        notice: String,
     },
     /// Wait for the next version of the zone.
-    WaitNextSerial,
+    WaitNextSerial {
+        /// Notice to the user why this value was created.
+        notice: String,
+    },
 }
 
 /// Type for the key of the signature HashMap.
@@ -6003,13 +6108,20 @@ fn check_rrsigs(
                 // efficient. Therefore, if the mismatch is at an NSEC3 then
                 // remember this by setting result to WaitNextSerial but
                 // keep checking.
-                if rtype != Rtype::NSEC3 {
+                if false && rtype != Rtype::NSEC3 {
                     warn!(
                         "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
                         set, expected_set
                     );
                     let name = key.to_name::<Vec<u8>>();
-                    return CheckRrsigsResult::WaitRecord { name, rtype };
+                    return CheckRrsigsResult::WaitRecord {
+                        name,
+                        rtype,
+                        notice: format!(
+                            "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
+                            set, expected_set
+                        ),
+                    };
                 }
                 if result == CheckRrsigsResult::Done {
                     warn!(
@@ -6017,7 +6129,12 @@ fn check_rrsigs(
                         set, expected_set
                     );
                 }
-                result = CheckRrsigsResult::WaitNextSerial;
+                result = CheckRrsigsResult::WaitNextSerial {
+                    notice: format!(
+                        "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
+                        set, expected_set
+                    ),
+                };
             }
         }
     }
@@ -6028,11 +6145,7 @@ fn check_rrsigs(
 }
 
 /// Check if a name, Rtype pair has the right signatures.
-async fn check_record(
-    name: &Name<Vec<u8>>,
-    rtype: &Rtype,
-    kss: &KeySetState,
-) -> Result<bool, Error> {
+async fn check_record(name: &Name<Vec<u8>>, rtype: &Rtype, kss: &KeySetState) -> Result<(), Error> {
     let expected = get_expected_zsk_key_tags(kss);
     let addresses = get_primary_addresses(kss.keyset.name()).await?;
     for address in &addresses {
@@ -6066,13 +6179,18 @@ async fn check_record(
             }
             alg_tag_set.insert((r.data().algorithm(), r.data().key_tag()));
         }
-        return Ok(alg_tag_set == expected);
+        if alg_tag_set != expected {
+            return Err(
+                format!("found RRSIG records for {alg_tag_set:?}, expected  {expected:?}").into(),
+            );
+        }
+        return Ok(());
     }
     Err(format!("lookup of {name}/{rtype} failed for all addresses {addresses:?}").into())
 }
 
 /// Check if the zone has move to the next serial.
-async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Error> {
+async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<(), Error> {
     let zone = kss.keyset.name();
     let addresses = get_primary_addresses(zone).await?;
     for address in &addresses {
@@ -6098,17 +6216,24 @@ async fn check_next_serial(serial: Serial, kss: &KeySetState) -> Result<bool, Er
 
         if let Some(r) = response.answer()?.limit_to_in::<Soa<_>>().next() {
             let r = r?;
-            return Ok(r.data().serial() > serial);
+            let current_serial = r.data().serial();
+            if current_serial <= serial {
+                return Err(format!("server {address} has serial {current_serial}").into());
+            }
+            return Ok(());
         }
         warn!("No SOA record in reply to SOA query for zone {zone}");
-        return Ok(false);
+        return Err(format!(
+            "No SOA record in reply from server {address} to SOA query for zone {zone}"
+        )
+        .into());
     }
     Err(format!("lookup of {zone}/SOA failed for all addresses {addresses:?}").into())
 }
 
 /// Check if all addresses of all nameservers of the zone to see if they
 /// have at least the SOA serial passed as parameter.
-async fn check_soa(serial: Serial, kss: &KeySetState, now: UnixTime) -> Result<bool, Error> {
+async fn check_soa(serial: Serial, kss: &KeySetState, now: UnixTime) -> Result<(), Error> {
     // Find the address of all name servers of zone
     // Ask each nameserver for the SOA record.
     // Check that it's version is at least the version we checked.
@@ -6128,12 +6253,12 @@ async fn check_soa(serial: Serial, kss: &KeySetState, now: UnixTime) -> Result<b
         let r = r?;
         match r {
             // It doesn't really matter how long we have to wait.
-            AutoReportActionsResult::Wait(_) => return Ok(false),
+            AutoReportActionsResult::Wait { notice, .. } => return Err(notice.into()),
             AutoReportActionsResult::Report(_) => (),
         }
     }
 
-    Ok(true)
+    Ok(())
 }
 
 /// Get the expected key tags.
@@ -6193,14 +6318,15 @@ fn show_automatic_roll_state(
     };
     if let Some(status) = &auto_state.dnskey {
         match status {
-            AutoReportActionsResult::Wait(retry) => {
+            AutoReportActionsResult::Wait { until, notice } => {
                 println!("\t{actor} will check that the following RRset has propagated to all name servers:");
                 for r in &ws.state.dnskey_rrset {
                     println!("\t{r}");
                 }
                 println!();
+                println!("\tNote: {notice}");
                 println!("\tWait until the new DNSKEY RRset has propagated to all nameservers.");
-                println!("\tThe next check will be after {retry}");
+                println!("\tThe next check will be after {until}");
             }
             AutoReportActionsResult::Report(ttl) => {
                 println!("\tThe new DNSKEY RRset has propagated to all nameservers.");
@@ -6216,14 +6342,15 @@ fn show_automatic_roll_state(
             println!();
         }
         match status {
-            AutoReportActionsResult::Wait(retry) => {
+            AutoReportActionsResult::Wait { until, notice } => {
                 println!("\t{actor} will check that all nameservers of the parent zone have the following RRset (or equivalent):");
                 for r in &ws.state.ds_rrset {
                     println!("\t{r}");
                 }
                 println!();
+                println!("\tNote: {notice}");
                 println!("\tWait until the new DS RRset has propagated to all nameservers");
-                println!("\tof the parent zone. The next check will be after {retry}");
+                println!("\tof the parent zone. The next check will be after {until}");
             }
             AutoReportActionsResult::Report(ttl) => {
                 println!("\tThe new DS RRset has propagated to all nameservers.");
@@ -6239,12 +6366,17 @@ fn show_automatic_roll_state(
             println!();
         }
         match status {
-            AutoReportRrsigResult::Wait(next) => {
-                println!("\tSomething went wrong transferring the zone to be verified.");
-                println!("\tThe next check will be after {next}");
+            AutoReportRrsigResult::Wait { until, notice } => {
+                println!("\tSomething went wrong transferring the zone to be verified:");
+                println!("\t{notice}");
+                println!("\tThe next check will be after {until}");
             }
             AutoReportRrsigResult::WaitRecord {
-                name, rtype, next, ..
+                name,
+                rtype,
+                until,
+                notice,
+                ..
             } => {
                 println!("\t{actor} will check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
                 // This clone is needed because
@@ -6266,16 +6398,29 @@ fn show_automatic_roll_state(
                     }
                 }
                 println!();
+                println!("\tNotice: {notice}");
                 println!("\tWait until {name}/{rtype} is signed with the right keys.");
-                println!("\tThe next check will be after {next}");
+                println!("\tThe next check will be after {until}");
             }
-            AutoReportRrsigResult::WaitNextSerial { serial, next, .. } => {
+            AutoReportRrsigResult::WaitNextSerial {
+                serial,
+                until,
+                notice,
+                ..
+            } => {
+                println!("\tNotice: {notice}");
                 println!("\tWait for a zone with serial higher than {serial}");
-                println!("\tThe next check will be after {next}");
+                println!("\tThe next check will be after {until}");
             }
-            AutoReportRrsigResult::WaitSoa { serial, next, .. } => {
+            AutoReportRrsigResult::WaitSoa {
+                serial,
+                until,
+                notice,
+                ..
+            } => {
+                println!("\tNotice: {notice}");
                 println!("\tWait until the zone with at least serial {serial} has propagated");
-                println!("\tto all nameservers. The next check will be after {next}");
+                println!("\tto all nameservers. The next check will be after {until}");
             }
             AutoReportRrsigResult::Report(ttl) => {
                 println!("\tThe new RRSIG records have propagated to all nameservers.");
