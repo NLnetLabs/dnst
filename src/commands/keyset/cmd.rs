@@ -551,19 +551,20 @@ enum SetCommands {
 enum RollCommands {
     /// Start a key roll.
     StartRoll,
-    /// Report that the first propagation step has completed.
-    Propagation1Complete {
+
+    /// Report the before-ttl for the propagation1 and propagation2 steps.
+    BeforeTtl {
         /// The TTL that is required to be reported by the Report actions.
         ttl: u32,
     },
+
+    /// Report that the first propagation step has completed.
+    Propagation1Complete,
     /// Cached information from before Propagation1Complete should have
     /// expired by now.
     CacheExpired1,
     /// Report that the second propagation step has completed.
-    Propagation2Complete {
-        /// The TTL that is required to be reported by the Report actions.
-        ttl: u32,
-    },
+    Propagation2Complete,
     /// Cached information from before Propagation2Complete should have
     /// expired by now.
     CacheExpired2,
@@ -908,18 +909,16 @@ impl Keyset {
                     let (new_stored, _) = ws.new_csk_or_ksk_zsk(env)?;
 
                     let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-                    let actions = ws
-                        .state
+                    ws.state
                         .keyset
                         .start_roll(RollType::AlgorithmRoll, &[], &new)
                         .expect("should not happen");
 
-                    ws.handle_actions(&actions, env, true)?;
                     ws.state
                         .internal
                         .insert(RollType::AlgorithmRoll, Default::default());
 
-                    print_actions(&actions);
+                    ws.init_before_ttl(RollType::AlgorithmRoll);
                 }
                 ws.state_changed = true;
             }
@@ -2197,12 +2196,78 @@ impl Clone for RollStateReports {
 /// State for the report progration checks.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct ReportState {
+    /// State for before-ttl checks.
+    before_ttl: BeforeTtl,
     /// State for DNSKEY propagation checks.
     dnskey: Option<AutoReportActionsResult>,
     /// State for DS propagation checks.
     ds: Option<AutoReportActionsResult>,
     /// State for RRSIG propagation checks.
     rrsig: Option<AutoReportRrsigResult>,
+}
+
+/// State of before-ttl checks.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct BeforeTtl {
+    /// Current state of the checks.
+    state: BeforeTtlState,
+    /// State of DNSKEY checks.
+    dnskey: Option<BeforeTtlDsDnskey>,
+    /// State of DS checks.
+    ds: Option<BeforeTtlDsDnskey>,
+    /// State of RRSIG checks.
+    rrsigs: Option<BeforeTtlRrsigs>,
+}
+
+/// Current state of before-ttl checks.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+enum BeforeTtlState {
+    /// No check needed.
+    #[default]
+    Idle,
+    /// Wait for check to be completed.
+    Wait,
+    /// Result of the check (with the before-ttl).
+    Report(Ttl),
+}
+
+/// State to capture the before-ttl of DS or DNSKEY RRsets.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum BeforeTtlDsDnskey {
+    /// Before-ttl to report.
+    Report(Ttl),
+    /// State to capture the before-ttl of all nameservers.
+    Wait {
+        /// Wait until this time before trying again.
+        until: UnixTime,
+        /// Before-ttl of nameservers that responded.
+        servers: HashMap<IpAddr, Ttl>,
+        /// Notice why we have to wait.
+        notice: String,
+    },
+}
+
+/// State to capture the before-ttl of RRSIG records.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum BeforeTtlRrsigs {
+    /// Before-ttl to report.
+    Report(Ttl),
+    /// State to capture the before-ttl.
+    Wait {
+        /// Wait until this time before trying again.
+        until: UnixTime,
+        /// Notice why we have to wait.
+        notice: String,
+    },
+}
+
+/// Whether to record the before TTL for the DS RRset or the DNSKEY RRset.
+#[derive(Clone, Copy)]
+enum DsOrDnskey {
+    /// Get before-ttl for the DNSKEY RRset.
+    Dnskey,
+    /// Get before-ttl for the DS RRset.
+    Ds,
 }
 
 // Put functions here that take WorkSpace as a parameter.
@@ -2435,37 +2500,113 @@ impl WorkSpace {
     ) -> Result<(), Error> {
         let actions = match cmd {
             RollCommands::StartRoll => {
-                let actions = match roll_variant {
-                    RollVariant::Ksk => self.start_ksk_roll(env, true)?,
-                    RollVariant::Zsk => self.start_zsk_roll(env, true)?,
-                    RollVariant::Csk => self.start_csk_roll(env, true)?,
-                    RollVariant::Algorithm => self.start_algorithm_roll(env, true)?,
+                match roll_variant {
+                    RollVariant::Ksk => self.start_ksk_roll(env)?,
+                    RollVariant::Zsk => self.start_zsk_roll(env)?,
+                    RollVariant::Csk => self.start_csk_roll(env)?,
+                    RollVariant::Algorithm => self.start_algorithm_roll(env)?,
                 };
 
-                print_actions(&actions);
                 self.state_changed = true;
                 return Ok(());
             }
-            RollCommands::Propagation1Complete { ttl } => {
+            RollCommands::BeforeTtl { ttl } => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state
+                let Some(roll_state) = self.state.keyset.rollstates().get(&roll) else {
+                    return Err(format!("roll {roll:?} not in progress at the moment").into());
+                };
+
+                let state_lock = match roll_state {
+                    RollState::Propagation1 => {
+                        &self
+                            .state
+                            .internal
+                            .get_mut(&roll)
+                            .expect("should exist")
+                            .propagation1
+                    }
+
+                    RollState::Propagation2 => {
+                        &self
+                            .state
+                            .internal
+                            .get_mut(&roll)
+                            .expect("should exist")
+                            .propagation2
+                    }
+                    RollState::CacheExpire1(_) | RollState::CacheExpire2(_) | RollState::Done => {
+                        return Err("before-ttl is not needed in this roll state".into())
+                    }
+                };
+                let mut state = state_lock.lock().expect("should not fail");
+                let max_ttl = if let BeforeTtlState::Report(old_ttl) = state.before_ttl.state {
+                    max(Ttl::from_secs(ttl), old_ttl)
+                } else {
+                    Ttl::from_secs(ttl)
+                };
+                state.before_ttl.state = BeforeTtlState::Report(max_ttl);
+                state.before_ttl.dnskey = None;
+                state.before_ttl.ds = None;
+                state.before_ttl.rrsigs = None;
+                self.state_changed = true;
+                self.state.keyset.actions(roll)
+            }
+            RollCommands::Propagation1Complete => {
+                let roll = roll_variant.roll_variant_to_roll(&self.config);
+                let roll_state = self
+                    .state
+                    .internal
+                    .get(&roll)
+                    .expect("should exist")
+                    .propagation1
+                    .lock()
+                    .expect("should not fail");
+                if matches!(roll_state.before_ttl.state, BeforeTtlState::Wait) {
+                    return Err("report before-ttl first".into());
+                }
+                let BeforeTtlState::Report(ttl) = roll_state.before_ttl.state else {
+                    panic!("before-ttl should be set");
+                };
+                let actions = self
+                    .state
                     .keyset
-                    .propagation1_complete(roll, ttl)
-                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?
+                    .propagation1_complete(roll, ttl.as_secs())
+                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?;
+                actions
             }
             RollCommands::CacheExpired1 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
                 self.state
                     .keyset
                     .cache_expired1(roll)
-                    .map_err(|err| format!("Error reporting cache expired: {err}\n"))?
+                    .map_err(|err| format!("Error reporting cache expired: {err}\n"))?;
+                self.init_before_ttl(roll);
+
+                // Handle actions when the before-ttl has been recorded.
+                Vec::new()
             }
-            RollCommands::Propagation2Complete { ttl } => {
+            RollCommands::Propagation2Complete => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state
+                let roll_state = self
+                    .state
+                    .internal
+                    .get(&roll)
+                    .expect("should exist")
+                    .propagation2
+                    .lock()
+                    .expect("should not fail");
+                if matches!(roll_state.before_ttl.state, BeforeTtlState::Wait) {
+                    return Err("report before-ttl first".into());
+                }
+                let BeforeTtlState::Report(ttl) = roll_state.before_ttl.state else {
+                    panic!("before-ttl should be set");
+                };
+                let actions = self
+                    .state
                     .keyset
-                    .propagation2_complete(roll, ttl)
-                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?
+                    .propagation2_complete(roll, ttl.as_secs())
+                    .map_err(|err| format!("Error reporting propagation complete: {err}\n"))?;
+                actions
             }
             RollCommands::CacheExpired2 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
@@ -3651,6 +3792,51 @@ impl WorkSpace {
         Ok(())
     }
 
+    /// Initialize before-ttl state when needed.
+    fn init_before_ttl(&mut self, roll: RollType) {
+        // We need to capture the before TTL for report actions. Assume that
+        // only the propagation steps have report actions.
+
+        let roll_state = self
+            .state
+            .keyset
+            .rollstates()
+            .get(&roll)
+            .expect("roll should exist");
+
+        let internal_state = self.state.internal.get_mut(&roll).expect("should be there");
+        let internal_roll_state = if matches!(roll_state, RollState::Propagation1) {
+            &internal_state.propagation1
+        } else if matches!(roll_state, RollState::Propagation2) {
+            &internal_state.propagation2
+        } else {
+            // Nothing to do.
+            return;
+        };
+
+        // Check if there are Report actions.
+        if self.state.keyset.actions(roll).iter().any(|a| match a {
+            Action::UpdateDnskeyRrset
+            | Action::CreateCdsRrset
+            | Action::RemoveCdsRrset
+            | Action::UpdateDsRrset
+            | Action::UpdateRrsig
+            | Action::WaitDnskeyPropagated
+            | Action::WaitDsPropagated
+            | Action::WaitRrsigPropagated => false,
+            Action::ReportDnskeyPropagated
+            | Action::ReportDsPropagated
+            | Action::ReportRrsigPropagated => true,
+        }) {
+            // First capture before TTL.
+            internal_roll_state
+                .lock()
+                .expect("should not fail")
+                .before_ttl
+                .state = BeforeTtlState::Wait;
+        }
+    }
+
     /// Handle the actions that result from key roll steps that always need to
     /// be handled independent of automation.
     ///
@@ -3708,7 +3894,7 @@ impl WorkSpace {
     }
 
     /// Start a KSK roll.
-    fn start_ksk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
+    fn start_ksk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
         let roll_type = match self.config.ksk_roll_type {
             KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
             KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
@@ -3767,7 +3953,7 @@ impl WorkSpace {
         let new = [ksk_pub_url.as_ref()];
 
         // Start the key roll
-        let actions = match self
+        match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -3781,13 +3967,17 @@ impl WorkSpace {
                 return Err(e.into());
             }
         };
-        self.handle_actions(&actions, env, verbose)?;
+
         self.state.internal.insert(roll_type, Default::default());
-        Ok(actions)
+        self.init_before_ttl(roll_type);
+
+        // Assume there are never any actions to execute because we need to
+        // capture the before TTLs first.
+        Ok(())
     }
 
     /// Start a ZSK roll.
-    fn start_zsk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
+    fn start_zsk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
         let roll_type = match self.config.zsk_roll_type {
             ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
             ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
@@ -3846,7 +4036,7 @@ impl WorkSpace {
         let new = [zsk_pub_url.as_ref()];
 
         // Start the key roll
-        let actions = match self
+        match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -3861,13 +4051,16 @@ impl WorkSpace {
             }
         };
 
-        self.handle_actions(&actions, env, verbose)?;
         self.state.internal.insert(roll_type, Default::default());
-        Ok(actions)
+        self.init_before_ttl(roll_type);
+
+        // Assume there are never any actions to execute because we need to
+        // capture the before TTLs first.
+        Ok(())
     }
 
     /// Start a CSK roll.
-    fn start_csk_roll(&mut self, env: &impl Env, verbose: bool) -> Result<Vec<Action>, Error> {
+    fn start_csk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
         let roll_type = RollType::CskRoll;
 
         assert!(!self.state.keyset.keys().is_empty());
@@ -3899,7 +4092,7 @@ impl WorkSpace {
         let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
         // Start the key roll
-        let actions = match self
+        match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -3915,17 +4108,16 @@ impl WorkSpace {
             }
         };
 
-        self.handle_actions(&actions, env, verbose)?;
         self.state.internal.insert(roll_type, Default::default());
-        Ok(actions)
+        self.init_before_ttl(roll_type);
+
+        // Assume there are never any actions to execute because we need to
+        // capture the before TTLs first.
+        Ok(())
     }
 
     /// Start an algorithm roll.
-    fn start_algorithm_roll(
-        &mut self,
-        env: &impl Env,
-        verbose: bool,
-    ) -> Result<Vec<Action>, Error> {
+    fn start_algorithm_roll(&mut self, env: &impl Env) -> Result<(), Error> {
         let roll_type = RollType::AlgorithmRoll;
 
         assert!(!self.state.keyset.keys().is_empty());
@@ -3954,7 +4146,7 @@ impl WorkSpace {
         let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
         // Start the key roll
-        let actions = match self
+        match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -3970,9 +4162,12 @@ impl WorkSpace {
             }
         };
 
-        self.handle_actions(&actions, env, verbose)?;
         self.state.internal.insert(roll_type, Default::default());
-        Ok(actions)
+        self.init_before_ttl(roll_type);
+
+        // Assume there are never any actions to execute because we need to
+        // capture the before TTLs first.
+        Ok(())
     }
 
     /// This function automatically starts a key roll when the conditions are right.
@@ -3990,7 +4185,7 @@ impl WorkSpace {
         env: Env,
         conficting_roll: impl Fn(RollType) -> bool,
         match_keytype: impl Fn(KeyType) -> Option<KeyState>,
-        start_roll: impl Fn(&mut WorkSpace, Env, bool) -> Result<Vec<Action>, Error>,
+        start_roll: impl Fn(&mut WorkSpace, Env) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let now = self.faketime_or_now();
         if let Some(validity) = validity {
@@ -4026,7 +4221,7 @@ impl WorkSpace {
                         .min();
                     if let Some(next) = next {
                         if next < now {
-                            start_roll(self, env, false)?;
+                            start_roll(self, env)?;
                             self.state_changed = true;
                         }
                     }
@@ -4036,12 +4231,403 @@ impl WorkSpace {
         Ok(())
     }
 
+    /// Try to capture the before-ttl for a key roll.
+    async fn capture_before_ttl(
+        &mut self,
+        roll: RollType,
+        state: &RollState,
+        now: UnixTime,
+        env: &impl Env,
+    ) -> Result<(), Error> {
+        let report_state = self.state.internal.get(&roll).expect("should not fail");
+        let internal_roll_state_lock = match state {
+            RollState::Propagation1 => &report_state.propagation1,
+            RollState::Propagation2 => &report_state.propagation2,
+            _ => unreachable!(),
+        };
+
+        {
+            let internal_roll_state = internal_roll_state_lock.lock().expect("should not fail");
+            if !matches!(&internal_roll_state.before_ttl.state, BeforeTtlState::Wait) {
+                // nothing to do
+                return Ok(());
+            }
+        }
+
+        let mut max_ttl = Ttl::ZERO;
+        for action in self.state.keyset.actions(roll) {
+            match action {
+                Action::UpdateDnskeyRrset
+                | Action::CreateCdsRrset
+                | Action::RemoveCdsRrset
+                | Action::UpdateDsRrset
+                | Action::UpdateRrsig
+                | Action::WaitDnskeyPropagated
+                | Action::WaitDsPropagated
+                | Action::WaitRrsigPropagated => (),
+                Action::ReportDnskeyPropagated => {
+                    let res = Self::before_ttl_ds_dnskey(
+                        DsOrDnskey::Dnskey,
+                        internal_roll_state_lock,
+                        self.state.keyset.name(),
+                        now.clone(),
+                    )
+                    .await;
+                    internal_roll_state_lock
+                        .lock()
+                        .expect("should not fail")
+                        .before_ttl
+                        .dnskey = Some(res.clone());
+                    self.state_changed = true;
+                    match res {
+                        BeforeTtlDsDnskey::Wait { .. } => return Ok(()),
+                        BeforeTtlDsDnskey::Report(ttl) => {
+                            max_ttl = max(max_ttl, ttl);
+                        }
+                    }
+                }
+                Action::ReportDsPropagated => {
+                    let res = Self::before_ttl_ds_dnskey(
+                        DsOrDnskey::Ds,
+                        internal_roll_state_lock,
+                        self.state.keyset.name(),
+                        now.clone(),
+                    )
+                    .await;
+                    (internal_roll_state_lock
+                        .lock()
+                        .expect("should not fail")
+                        .before_ttl
+                        .ds) = Some(res.clone());
+                    self.state_changed = true;
+                    match res {
+                        BeforeTtlDsDnskey::Wait { .. } => return Ok(()),
+                        BeforeTtlDsDnskey::Report(ttl) => {
+                            max_ttl = max(max_ttl, ttl);
+                        }
+                    }
+                }
+                Action::ReportRrsigPropagated => {
+                    let res = Self::before_ttl_rrsigs(
+                        self.state.keyset.name(),
+                        &self.config.nameservers,
+                        &self.tsig_store,
+                    )
+                    .await;
+
+                    let res = match res {
+                        Ok(res) => res,
+                        Err(e) => BeforeTtlRrsigs::Wait {
+                            until: now.clone() + DEFAULT_WAIT,
+                            notice: e.to_string(),
+                        },
+                    };
+
+                    (internal_roll_state_lock
+                        .lock()
+                        .expect("should not fail")
+                        .before_ttl
+                        .rrsigs) = Some(res.clone());
+                    self.state_changed = true;
+
+                    match res {
+                        BeforeTtlRrsigs::Wait { .. } => return Ok(()),
+                        BeforeTtlRrsigs::Report(ttl) => {
+                            max_ttl = max(max_ttl, ttl);
+                        }
+                    }
+                }
+            }
+        }
+
+        {
+            let mut internal_roll_state = internal_roll_state_lock.lock().expect("should not fail");
+            internal_roll_state.before_ttl.state = BeforeTtlState::Report(max_ttl);
+            self.state_changed = true;
+        }
+        let actions = self.state.keyset.actions(roll);
+        self.handle_actions(&actions, env, true)?;
+        Ok(())
+    }
+
+    /// Try to capture the before-ttl for the DNSKEY RRset or for the DS RRset.
+    async fn before_ttl_ds_dnskey(
+        mode: DsOrDnskey,
+        internal_roll_state_lock: &Mutex<ReportState>,
+        zone_name: &Name<Vec<u8>>,
+        now: UnixTime,
+    ) -> BeforeTtlDsDnskey {
+        let old_roll_state = {
+            let mut internal_roll_state = internal_roll_state_lock.lock().expect("should not fail");
+            let opt_roll_state = match mode {
+                DsOrDnskey::Ds => &mut internal_roll_state.before_ttl.ds,
+                DsOrDnskey::Dnskey => &mut internal_roll_state.before_ttl.dnskey,
+            };
+            if let Some(roll_state) = opt_roll_state {
+                match roll_state {
+                    BeforeTtlDsDnskey::Report(_) => return roll_state.clone(),
+                    BeforeTtlDsDnskey::Wait { .. } => roll_state.clone(),
+                }
+            } else {
+                BeforeTtlDsDnskey::Wait {
+                    until: now.clone(),
+                    servers: HashMap::new(),
+                    notice: "".to_string(),
+                }
+            }
+        };
+        let query_zone = match mode {
+            DsOrDnskey::Ds => match parent_zone(zone_name).await {
+                Ok(name) => name,
+                Err(e) => {
+                    warn!("Getting parent zone name of {zone_name} failed: {e}");
+                    match old_roll_state {
+                        BeforeTtlDsDnskey::Report(_) => unreachable!(),
+                        BeforeTtlDsDnskey::Wait { servers, .. } => {
+                            return BeforeTtlDsDnskey::Wait {
+                                until: now + DEFAULT_WAIT,
+                                servers,
+                                notice: format!(
+                                    "Getting parent zone name of {zone_name} failed: {e}"
+                                ),
+                            }
+                        }
+                    }
+                }
+            },
+            DsOrDnskey::Dnskey => zone_name.clone(),
+        };
+        let addresses = match addresses_for_zone(&query_zone).await {
+            Ok(a) => a,
+            Err(e) => {
+                warn!("Getting nameserver addresses for {query_zone} failed: {e}");
+                match old_roll_state {
+                    BeforeTtlDsDnskey::Report(_) => unreachable!(),
+                    BeforeTtlDsDnskey::Wait { servers, .. } => {
+                        return BeforeTtlDsDnskey::Wait {
+                            until: now + DEFAULT_WAIT,
+                            servers,
+                            notice: format!(
+                                "Getting nameserver addresses for {query_zone} failed: {e}"
+                            ),
+                        }
+                    }
+                }
+            }
+        };
+
+        // addresses_for_zone returns at least one address.
+        assert!(!addresses.is_empty());
+
+        let futures: Vec<_> = addresses
+            .iter()
+            .map(|a| Self::before_ttl_ds_dnskey_for_address(mode, &old_roll_state, zone_name, a))
+            .collect();
+        let res: Vec<_> = join_all(futures).await;
+
+        let mut servers = match old_roll_state {
+            BeforeTtlDsDnskey::Report(_) => unreachable!(),
+            BeforeTtlDsDnskey::Wait { servers, .. } => servers,
+        };
+
+        // Be paranoid. The variable max_ttl is set to None initially to make
+        // sure that we only return a value if something has been assigned
+        // during the loop.
+        let mut max_ttl = None;
+        for r in res {
+            let (address, ttl) = match r {
+                Ok((address, ttl)) => (address, ttl),
+                Err(e) => {
+                    warn!("before-ttl check failed: {e}");
+                    return BeforeTtlDsDnskey::Wait {
+                        until: now + DEFAULT_WAIT,
+                        servers,
+                        notice: format!("before-ttl check failed: {e}"),
+                    };
+                }
+            };
+
+            servers.insert(address, ttl);
+            max_ttl = Some(max(max_ttl.unwrap_or(Ttl::from_secs(0)), ttl));
+        }
+
+        // We can only get here with Some(Ttl) because there is at least one
+        // address.
+        let max_ttl = max_ttl.expect("cannot be None");
+        BeforeTtlDsDnskey::Report(max_ttl)
+    }
+
+    /// Try to capture the before-ttl for the DNSKEY RRset or for the DS RRset
+    /// from one nameserver address.
+    async fn before_ttl_ds_dnskey_for_address(
+        mode: DsOrDnskey,
+        old_roll_state: &BeforeTtlDsDnskey,
+        zone: &Name<Vec<u8>>,
+        address: &IpAddr,
+    ) -> Result<(IpAddr, Ttl), Error> {
+        // Check if we already got something.
+        match old_roll_state {
+            BeforeTtlDsDnskey::Report(_) => panic!("should not be here"),
+            BeforeTtlDsDnskey::Wait { servers, .. } => {
+                if let Some(ttl) = servers.get(address) {
+                    return Ok((*address, *ttl));
+                }
+            }
+        }
+
+        let ttl = match mode {
+            DsOrDnskey::Ds => lookup_name_rtype_ttl::<Ds<Bytes>>(zone, Rtype::DS, address).await?,
+            DsOrDnskey::Dnskey => {
+                lookup_name_rtype_ttl::<Dnskey<Bytes>>(zone, Rtype::DNSKEY, address).await?
+            }
+        };
+
+        Ok((*address, ttl))
+    }
+
+    /// Try to capture the before-ttl of the RRSIG records in the zone.
+    async fn before_ttl_rrsigs(
+        zone_name: &Name<Vec<u8>>,
+        nameservers: &HashSet<NameserverConnectionDetails>,
+        tsig_store: &TsigKeyStore,
+    ) -> Result<BeforeTtlRrsigs, Error> {
+        let resolver = StubResolver::new();
+        let answer = resolver
+            .query((zone_name, Rtype::SOA))
+            .await
+            .map_err(|e| format!("lookup of {zone_name}/SOA failed: {e}"))?;
+        let Some(Ok((mname, _))) = answer
+            .answer()?
+            .limit_to_in::<Soa<_>>()
+            .map(|r| r.map(|r| (r.data().mname().clone(), r.data().serial())))
+            .next()
+        else {
+            let rcode = answer.opt_rcode();
+            return if rcode != OptRcode::NOERROR {
+                Err(format!("Unable to resolve {zone_name}/SOA: {rcode}").into())
+            } else {
+                Err(format!("No result for {zone_name}/SOA").into())
+            };
+        };
+
+        // Use provided addresses and TSIG key names if available, fallback to
+        // resolving from the SOA MNAME.
+        let mname_nameservers: HashSet<NameserverConnectionDetails>;
+        let nameservers = if !nameservers.is_empty() {
+            nameservers
+        } else {
+            mname_nameservers = addresses_for_name(&resolver, mname)
+                .await?
+                .iter()
+                .map(Into::into)
+                .collect();
+            &mname_nameservers
+        };
+
+        'addr: for ns in nameservers {
+            let tcp_conn = match TcpStream::connect(ns.addr).await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    warn!("DNS TCP connection to {} failed: {e}", ns.addr);
+                    continue;
+                }
+            };
+
+            // Prepare the named TSIG key for use, if any.
+            let tsig_key = if let Some(name) = ns.tsig_key_name.as_ref() {
+                match tsig_store.get(name) {
+                    Some(key) => Some(key),
+                    None => {
+                        warn!("Unknown TSIG key name '{name}'");
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+
+            // If we have a TSIG key, setup a TSIG capable transport, otherwise
+            // use a normal transport. Use Multi types because only those support
+            // the multiple possible responses that can occur when sending an
+            // XFR request.
+            let tcp: Box<dyn SendRequestMulti<RequestMessageMulti<Vec<u8>>>> =
+                if let Some(tsig_key) = tsig_key {
+                    let (conn, transport) = stream::Connection::<
+                        TsigRequestMessage<RequestMessage<Vec<u8>>, Arc<domain::tsig::Key>>,
+                        _,
+                    >::new(tcp_conn);
+                    tokio::spawn(transport.run());
+                    Box::new(TsigConnection::new(tsig_key, conn))
+                } else {
+                    let (conn, transport) =
+                        stream::Connection::<RequestMessage<Vec<u8>>, _>::new(tcp_conn);
+                    tokio::spawn(transport.run());
+                    Box::new(conn)
+                };
+
+            let msg = MessageBuilder::new_vec();
+            let mut msg = msg.question();
+            msg.push((zone_name, Rtype::AXFR)).expect("should not fail");
+            let req = RequestMessageMulti::new(msg).expect("should not fail");
+
+            // Send a request message.
+            let mut request = tcp.send_request(req.clone());
+
+            let mut first_soa = false;
+            let mut max_ttl = Ttl::from_secs(0);
+            loop {
+                // Get the reply
+                let reply = match request.get_response().await {
+                    Ok(reply) => reply,
+                    Err(e) => {
+                        warn!("reading AXFR response from {} failed: {e}", ns.addr);
+                        continue 'addr;
+                    }
+                };
+                let Some(reply) = reply else {
+                    return Err(format!("Unexpected end of AXFR for {zone_name}").into());
+                };
+                let rcode = reply.opt_rcode();
+                if rcode != OptRcode::NOERROR {
+                    warn!("AXFR for {zone_name} from {} failed: {rcode}", ns.addr);
+                    continue 'addr;
+                }
+
+                let answer = reply.answer()?;
+                for r in answer {
+                    let r = r?;
+                    if !first_soa {
+                        let Some(_) = r.to_record::<Soa<_>>()? else {
+                            // Bad start of zone transfer.
+                            return Err(format!(
+                                "Wrong start of AXFR for {zone_name}, expected SOA found {}",
+                                r.rtype()
+                            )
+                            .into());
+                        };
+
+                        first_soa = true;
+                    } else if r.rtype() == Rtype::SOA {
+                        // The end.
+                        return Ok(BeforeTtlRrsigs::Report(max_ttl));
+                    }
+
+                    if r.rtype() == Rtype::RRSIG {
+                        max_ttl = max(max_ttl, r.ttl());
+                    }
+                }
+            }
+        }
+
+        Err(format!("AXFR for {zone_name} failed for all nameservers {nameservers:?}").into())
+    }
+
     /// Handle automation for the report, expire and done steps.
     ///
-    /// The auto parameter has the flags that control whether automation is
+    /// The auto parameter has the flags that controls whether automation is
     /// enabled or disabled for a step. The roll_list parameters are the
     /// roll types that are covered by the auto parameter.
-    /// This function calls two function (auto_report_actions and
+    /// This function calls two functions (auto_report_actions and
     /// auto_wait_actions) to handle, repectively, the Report and Wait actions.
     async fn auto_report_expire_done(
         &mut self,
@@ -4063,6 +4649,18 @@ impl WorkSpace {
                         RollState::Propagation2 => &report_state.propagation2,
                         _ => continue,
                     };
+
+                    if matches!(
+                        report_state
+                            .lock()
+                            .expect("should not fail")
+                            .before_ttl
+                            .state,
+                        BeforeTtlState::Wait
+                    ) {
+                        return self.capture_before_ttl(*r, state, now, env).await;
+                    }
+
                     let actions = self.state.keyset.actions(*r);
                     match auto_report_actions(
                         &actions,
@@ -4111,10 +4709,21 @@ impl WorkSpace {
             for r in roll_list {
                 if let Some(state) = self.state.keyset.rollstates().get(r) {
                     let actions = match state {
-                        RollState::CacheExpire1(_) => self.state.keyset.cache_expired1(*r),
+                        RollState::CacheExpire1(_) => {
+                            let res = self.state.keyset.cache_expired1(*r);
+                            if res.is_ok() {
+                                self.init_before_ttl(*r);
+
+                                // Handle actions when the before-ttl has been recorded.
+                                Ok(Vec::new())
+                            } else {
+                                res
+                            }
+                        }
                         RollState::CacheExpire2(_) => self.state.keyset.cache_expired2(*r),
                         _ => continue,
                     };
+
                     if let Err(keyset::Error::Wait(_)) = actions {
                         // To early.
                         continue;
@@ -5939,6 +6548,61 @@ where
         res.push(r);
     }
     Ok(res)
+}
+
+/// Return the TTL of a name and rtype.
+async fn lookup_name_rtype_ttl<T>(
+    name: &Name<Vec<u8>>,
+    rtype: Rtype,
+    address: &IpAddr,
+) -> Result<Ttl, Error>
+where
+    for<'a> T: ParseRecordData<'a, Bytes>,
+{
+    let server_addr = SocketAddr::new(*address, 53);
+    let udp_connect = UdpConnect::new(server_addr);
+    let tcp_connect = TcpConnect::new(server_addr);
+    let (udptcp_conn, transport) = dgram_stream::Connection::new(udp_connect, tcp_connect);
+    tokio::spawn(transport.run());
+
+    let mut msg = MessageBuilder::new_vec();
+    msg.header_mut().set_rd(true);
+    let mut msg = msg.question();
+    msg.push((name, rtype)).expect("should not fail");
+    let mut req = RequestMessage::new(msg).expect("should not fail");
+    req.set_dnssec_ok(true);
+    let mut request = udptcp_conn.send_request(req.clone());
+    let response = request
+        .get_response()
+        .await
+        .map_err(|e| format!("{name}/{rtype} request to {address} failed: {e}"))?;
+
+    if let Some(r) = response.answer()?.limit_to_in::<T>().next() {
+        let r = r?;
+        return Ok(r.ttl());
+    }
+
+    // Nothing in the answer section. Se if we got a SOA record.
+    if let Some(r) = response
+        .authority()?
+        .limit_to_in::<Soa<ParsedName<Bytes>>>()
+        .next()
+    {
+        let r = r?;
+        return Ok(r.ttl());
+    }
+
+    let opt_rcode = response.opt_rcode();
+    if opt_rcode != OptRcode::NOERROR {
+        return Err(format!(
+            "query to nameserver {address} for {name}/{rtype} failed with error {opt_rcode}"
+        )
+        .into());
+    }
+    Err(format!(
+        "query to nameserver {address} for {name}/{rtype} failed to give a sensible response"
+    )
+    .into())
 }
 
 /// Return the name of the parent zone.
