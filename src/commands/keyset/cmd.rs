@@ -976,12 +976,61 @@ impl Keyset {
                             RollType::CskRoll => ("csk", &ws.config.auto_csk),
                             RollType::AlgorithmRoll => ("algorithm", &ws.config.auto_algorithm),
                         };
-                        let (state_subcommand, auto) = match state {
-                            RollState::Propagation1 => ("propagation1-complete <ttl>", auto.report),
-                            RollState::CacheExpire1(_) => ("cache-expired1", auto.expire),
-                            RollState::Propagation2 => ("propagation2-complete <ttl>", auto.report),
-                            RollState::CacheExpire2(_) => ("cache-expired2", auto.expire),
-                            RollState::Done => ("roll-done", auto.done),
+                        let (state_subcommand, auto, capture_before_ttl, captured_ttl) = match state
+                        {
+                            RollState::Propagation1 => {
+                                let (capture_before_ttl, captured_ttl) = match ws
+                                    .state
+                                    .internal
+                                    .get(roll)
+                                    .expect("should exist")
+                                    .propagation1
+                                    .lock()
+                                    .expect("should not fail")
+                                    .before_ttl
+                                    .state
+                                {
+                                    BeforeTtlState::Idle => (false, None),
+                                    BeforeTtlState::Wait => (true, None),
+                                    BeforeTtlState::Report(ttl) => (false, Some(ttl)),
+                                };
+                                (
+                                    "propagation1-complete",
+                                    auto.report,
+                                    capture_before_ttl,
+                                    captured_ttl,
+                                )
+                            }
+                            RollState::CacheExpire1(_) => {
+                                ("cache-expired1", auto.expire, false, None)
+                            }
+                            RollState::Propagation2 => {
+                                let (capture_before_ttl, captured_ttl) = match ws
+                                    .state
+                                    .internal
+                                    .get(roll)
+                                    .expect("should exist")
+                                    .propagation2
+                                    .lock()
+                                    .expect("should not fail")
+                                    .before_ttl
+                                    .state
+                                {
+                                    BeforeTtlState::Idle => (false, None),
+                                    BeforeTtlState::Wait => (true, None),
+                                    BeforeTtlState::Report(ttl) => (false, Some(ttl)),
+                                };
+                                (
+                                    "propagation2-complete",
+                                    auto.report,
+                                    capture_before_ttl,
+                                    captured_ttl,
+                                )
+                            }
+                            RollState::CacheExpire2(_) => {
+                                ("cache-expired2", auto.expire, false, None)
+                            }
+                            RollState::Done => ("roll-done", auto.done, false, None),
                         };
 
                         if auto {
@@ -1016,6 +1065,11 @@ impl Keyset {
                             }
                         }
 
+                        if let Some(ttl) = captured_ttl {
+                            println!("Recorded TTL before changes: {}", ttl.as_secs());
+                            println!();
+                        }
+
                         for action in ws.state.keyset.actions(*roll) {
                             match action {
                                 Action::UpdateDnskeyRrset
@@ -1025,49 +1079,69 @@ impl Keyset {
                                 | Action::UpdateRrsig => (),
                                 Action::ReportDnskeyPropagated | Action::WaitDnskeyPropagated => {
                                     if !auto {
-                                        println!("Check that the following RRset has propagated to all name servers:");
-                                        for r in &ws.state.dnskey_rrset {
-                                            println!("{r}");
+                                        if capture_before_ttl {
+                                            println!(
+                                                "Record the TTL the DNSKEY RRset in the zone."
+                                            );
+                                        } else {
+                                            println!("Check that the following RRset has propagated to all name servers:");
+                                            for r in &ws.state.dnskey_rrset {
+                                                println!("{r}");
+                                            }
+                                            println!();
                                         }
-                                        println!();
                                     }
                                 }
                                 Action::ReportDsPropagated | Action::WaitDsPropagated => {
                                     if !auto {
-                                        println!("Check that all nameservers of the parent zone have the following RRset (or equivalent):");
-                                        for r in &ws.state.ds_rrset {
-                                            println!("{r}");
+                                        if capture_before_ttl {
+                                            println!("Record the TTL of the DS RRset in the parent zone.");
+                                        } else {
+                                            println!("Check that all nameservers of the parent zone have the following RRset (or equivalent):");
+                                            for r in &ws.state.ds_rrset {
+                                                println!("{r}");
+                                            }
+                                            println!();
                                         }
-                                        println!();
                                     }
                                 }
                                 Action::ReportRrsigPropagated | Action::WaitRrsigPropagated => {
                                     if !auto {
-                                        println!("Check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
-                                        // This clone is needed because
-                                        // public_key_from_url needs a mutable
-                                        // reference to kss. Rewrite the kmip
-                                        // code to avoid that.
-                                        let keys = ws.state.keyset.keys().clone();
-                                        for (pubref, k) in keys {
-                                            let status = match k.keytype() {
-                                                KeyType::Zsk(status) => status,
-                                                KeyType::Csk(_, zsk_status) => zsk_status,
-                                                KeyType::Ksk(_) | KeyType::Include(_) => continue,
-                                            };
-                                            if status.signer() {
-                                                let url = Url::parse(&pubref).map_err(|e| {
-                                                    format!("unable to parse {pubref} as URL: {e}")
-                                                })?;
-                                                let public_key =
-                                                    ws.public_key_from_url::<Vec<u8>>(&url, env)?;
-                                                println!(
-                                                    "{public_key} ; key tag {}",
-                                                    public_key.data().key_tag()
-                                                );
+                                        if capture_before_ttl {
+                                            println!("Record the maximum TTL of all RRSIG records in the zone.");
+                                        } else {
+                                            println!("Check that all authoritative records in the zone have been signed with the following key(s) and that all nameservers of the zone serve that version or later:");
+                                            // This clone is needed because
+                                            // public_key_from_url needs a mutable
+                                            // reference to kss. Rewrite the kmip
+                                            // code to avoid that.
+                                            let keys = ws.state.keyset.keys().clone();
+                                            for (pubref, k) in keys {
+                                                let status = match k.keytype() {
+                                                    KeyType::Zsk(status) => status,
+                                                    KeyType::Csk(_, zsk_status) => zsk_status,
+                                                    KeyType::Ksk(_) | KeyType::Include(_) => {
+                                                        continue
+                                                    }
+                                                };
+                                                if status.signer() {
+                                                    let url = Url::parse(&pubref).map_err(|e| {
+                                                        format!(
+                                                            "unable to parse {pubref} as URL: {e}"
+                                                        )
+                                                    })?;
+                                                    let public_key = ws
+                                                        .public_key_from_url::<Vec<u8>>(
+                                                            &url, env,
+                                                        )?;
+                                                    println!(
+                                                        "{public_key} ; key tag {}",
+                                                        public_key.data().key_tag()
+                                                    );
+                                                }
                                             }
+                                            println!();
                                         }
-                                        println!();
                                     }
                                 }
                             }
@@ -1078,7 +1152,12 @@ impl Keyset {
                                 format!("dnst keyset -c {}", self.keyset_conf.display());
 
                             println!("For the next step run:");
-                            println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                            if capture_before_ttl {
+                                println!("\t{keyset_cmd} {roll_subcommand} before-ttl <TTL>");
+                                println!("\twhere <TTL> is the maximum of the recorded TTLs");
+                            } else {
+                                println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                            }
                             println!();
                         }
 
@@ -1091,6 +1170,11 @@ impl Keyset {
                             RollState::Propagation1 => {
                                 let auto_state =
                                     auto_state.propagation1.lock().expect("should not fail");
+
+                                if auto {
+                                    show_before_ttl_state(&auto_state);
+                                }
+
                                 if auto_state.dnskey.is_none()
                                     && auto_state.ds.is_none()
                                     && auto_state.rrsig.is_none()
@@ -1103,6 +1187,8 @@ impl Keyset {
                             RollState::Propagation2 => {
                                 let auto_state =
                                     auto_state.propagation2.lock().expect("should not fail");
+                                show_before_ttl_state(&auto_state);
+
                                 if auto_state.dnskey.is_none()
                                     && auto_state.ds.is_none()
                                     && auto_state.rrsig.is_none()
@@ -1141,15 +1227,43 @@ impl Keyset {
                             RollType::CskRoll => ("csk", &ws.config.auto_csk),
                             RollType::AlgorithmRoll => ("algorithm", &ws.config.auto_algorithm),
                         };
-                        let (state_subcommand, auto) = match state {
-                            RollState::Propagation1 => ("propagation1-complete <ttl>", auto.report),
-                            RollState::CacheExpire1(_) => ("cache-expired1", auto.expire),
-                            RollState::Propagation2 => ("propagation2-complete <ttl>", auto.report),
-                            RollState::CacheExpire2(_) => ("cache-expired2", auto.expire),
-                            RollState::Done => ("roll-done", auto.done),
+                        let (state_subcommand, auto, capture_before_ttl) = match state {
+                            RollState::Propagation1 => {
+                                let capture_before_ttl = matches!(
+                                    ws.state
+                                        .internal
+                                        .get(roll)
+                                        .expect("should exist")
+                                        .propagation1
+                                        .lock()
+                                        .expect("should not fail")
+                                        .before_ttl
+                                        .state,
+                                    BeforeTtlState::Wait
+                                );
+                                ("propagation1-complete", auto.report, capture_before_ttl)
+                            }
+                            RollState::CacheExpire1(_) => ("cache-expired1", auto.expire, false),
+                            RollState::Propagation2 => {
+                                let capture_before_ttl = matches!(
+                                    ws.state
+                                        .internal
+                                        .get(roll)
+                                        .expect("should exist")
+                                        .propagation2
+                                        .lock()
+                                        .expect("should not fail")
+                                        .before_ttl
+                                        .state,
+                                    BeforeTtlState::Wait
+                                );
+                                ("propagation2-complete", auto.report, capture_before_ttl)
+                            }
+                            RollState::CacheExpire2(_) => ("cache-expired2", auto.expire, false),
+                            RollState::Done => ("roll-done", auto.done, false),
                         };
                         if auto {
-                            Some((roll_subcommand, state_subcommand))
+                            Some((roll_subcommand, state_subcommand, capture_before_ttl))
                         } else {
                             None
                         }
@@ -1174,9 +1288,13 @@ impl Keyset {
                         "It is listed here in case there is a need to execute the step manually"
                     );
                 }
-                for (roll_subcommand, state_subcommand) in &commands {
+                for (roll_subcommand, state_subcommand, capture_before_ttl) in &commands {
                     if verbose {
-                        println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                        if *capture_before_ttl {
+                            println!("\t{keyset_cmd} {roll_subcommand} before-ttl <TTL>");
+                        } else {
+                            println!("\t{keyset_cmd} {roll_subcommand} {state_subcommand}");
+                        }
                     }
                 }
 
@@ -4294,11 +4412,11 @@ impl WorkSpace {
                         now.clone(),
                     )
                     .await;
-                    (internal_roll_state_lock
+                    internal_roll_state_lock
                         .lock()
                         .expect("should not fail")
                         .before_ttl
-                        .ds) = Some(res.clone());
+                        .ds = Some(res.clone());
                     self.state_changed = true;
                     match res {
                         BeforeTtlDsDnskey::Wait { .. } => return Ok(()),
@@ -6964,6 +7082,56 @@ async fn get_primary_addresses(zone: &Name<Vec<u8>>) -> Result<Vec<IpAddr>, Erro
     };
 
     addresses_for_name(&resolver, mname).await
+}
+
+/// Show the before-ttl state.
+fn show_before_ttl_state(auto_state: &ReportState) {
+    match auto_state.before_ttl.state {
+        BeforeTtlState::Idle => (),
+        BeforeTtlState::Wait => {
+            println!("Before TTL state: wait for recording of TTLs.");
+            if let Some(state) = &auto_state.before_ttl.dnskey {
+                show_before_ttl_ds_dnskey(state, "DNSKEY");
+            }
+            if let Some(state) = &auto_state.before_ttl.ds {
+                show_before_ttl_ds_dnskey(state, "DS");
+            }
+            if let Some(state) = &auto_state.before_ttl.rrsigs {
+                println!("Maximum TTL of the RRSIG records:");
+                match state {
+                    BeforeTtlRrsigs::Report(ttl) => println!("report TTL {}.", ttl.as_secs()),
+                    BeforeTtlRrsigs::Wait { until, notice } => {
+                        println!("\tNotice: {}", notice);
+                        println!("\tWait until {} before trying again.", until);
+                    }
+                }
+            }
+            println!();
+        }
+        BeforeTtlState::Report(_) => (),
+    }
+}
+
+/// Show the before-ttl state for DS and DNSKEY RRsets.
+fn show_before_ttl_ds_dnskey(state: &BeforeTtlDsDnskey, label: &str) {
+    println!("TTL of the {label} RRset:");
+    match state {
+        BeforeTtlDsDnskey::Report(ttl) => println!("report TTL {}.", ttl.as_secs()),
+        BeforeTtlDsDnskey::Wait {
+            until,
+            servers,
+            notice,
+        } => {
+            if !servers.is_empty() {
+                println!("\tThe following nameservers reported TTLs:");
+                for (address, ttl) in servers {
+                    println!("\t\t{address}: {}", ttl.as_secs());
+                }
+            }
+            println!("\tNotice: {}", notice);
+            println!("\tWait until {} before trying again.", until);
+        }
+    }
 }
 
 /// Show the automatic roll state for one state in a roll.
