@@ -678,7 +678,7 @@ enum RollVariant {
 
 impl RollVariant {
     /// Return the right RollType for a RollVariant.
-    fn roll_variant_to_roll(self, config: &KeySetConfig) -> RollType {
+    fn roll_variant_to_roll(&self, config: &KeySetConfig) -> RollType {
         // For key types, such as KSK and ZSK, that can have different rolls,
         // we should find out which variant is used.
         match self {
@@ -909,7 +909,8 @@ impl Keyset {
                     let (new_stored, _) = ws.new_csk_or_ksk_zsk(env)?;
 
                     let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
-                    ws.state
+                    let actions = ws
+                        .state
                         .keyset
                         .start_roll(RollType::AlgorithmRoll, &[], &new)
                         .expect("should not happen");
@@ -919,6 +920,9 @@ impl Keyset {
                         .insert(RollType::AlgorithmRoll, Default::default());
 
                     ws.init_before_ttl(RollType::AlgorithmRoll);
+
+                    // Assume we need the before-ttl.
+                    print_actions(&actions, true);
                 }
                 ws.state_changed = true;
             }
@@ -1373,9 +1377,52 @@ impl Keyset {
             }
             Commands::Actions => {
                 for roll in ws.state.keyset.rollstates().keys() {
+                    let before_ttl = match ws
+                        .state
+                        .keyset
+                        .rollstates()
+                        .get(roll)
+                        .expect("should exist")
+                    {
+                        RollState::Propagation1 => {
+                            match ws
+                                .state
+                                .internal
+                                .get(roll)
+                                .expect("should exist")
+                                .propagation1
+                                .lock()
+                                .expect("should not fail")
+                                .before_ttl
+                                .state
+                            {
+                                BeforeTtlState::Idle | BeforeTtlState::Report(_) => false,
+                                BeforeTtlState::Wait => true,
+                            }
+                        }
+                        RollState::Propagation2 => {
+                            match ws
+                                .state
+                                .internal
+                                .get(roll)
+                                .expect("should exist")
+                                .propagation2
+                                .lock()
+                                .expect("should not fail")
+                                .before_ttl
+                                .state
+                            {
+                                BeforeTtlState::Idle | BeforeTtlState::Report(_) => false,
+                                BeforeTtlState::Wait => true,
+                            }
+                        }
+                        RollState::CacheExpire1(_)
+                        | RollState::CacheExpire2(_)
+                        | RollState::Done => false,
+                    };
                     let actions = ws.state.keyset.actions(*roll);
                     println!("{roll:?} actions:");
-                    print_actions(&actions);
+                    print_actions(&actions, before_ttl);
                 }
             }
             Commands::Keys => {
@@ -2617,17 +2664,12 @@ impl WorkSpace {
         env: &impl Env,
     ) -> Result<(), Error> {
         let actions = match cmd {
-            RollCommands::StartRoll => {
-                match roll_variant {
-                    RollVariant::Ksk => self.start_ksk_roll(env)?,
-                    RollVariant::Zsk => self.start_zsk_roll(env)?,
-                    RollVariant::Csk => self.start_csk_roll(env)?,
-                    RollVariant::Algorithm => self.start_algorithm_roll(env)?,
-                };
-
-                self.state_changed = true;
-                return Ok(());
-            }
+            RollCommands::StartRoll => match roll_variant {
+                RollVariant::Ksk => self.start_ksk_roll(env)?,
+                RollVariant::Zsk => self.start_zsk_roll(env)?,
+                RollVariant::Csk => self.start_csk_roll(env)?,
+                RollVariant::Algorithm => self.start_algorithm_roll(env)?,
+            },
             RollCommands::BeforeTtl { ttl } => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
                 let Some(roll_state) = self.state.keyset.rollstates().get(&roll) else {
@@ -2694,14 +2736,14 @@ impl WorkSpace {
             }
             RollCommands::CacheExpired1 => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
-                self.state
+                let actions = self
+                    .state
                     .keyset
                     .cache_expired1(roll)
                     .map_err(|err| format!("Error reporting cache expired: {err}\n"))?;
                 self.init_before_ttl(roll);
 
-                // Handle actions when the before-ttl has been recorded.
-                Vec::new()
+                actions
             }
             RollCommands::Propagation2Complete => {
                 let roll = roll_variant.roll_variant_to_roll(&self.config);
@@ -2741,10 +2783,46 @@ impl WorkSpace {
             }
         };
 
-        self.handle_actions(&actions, env, true)?;
+        let before_ttl = {
+            let roll = roll_variant.roll_variant_to_roll(&self.config);
+            let roll_state = self
+                .state
+                .keyset
+                .rollstates()
+                .get(&roll)
+                .expect("should exist");
+            let state_lock = match roll_state {
+                RollState::Propagation1 => Some(
+                    &self
+                        .state
+                        .internal
+                        .get(&roll)
+                        .expect("should exist")
+                        .propagation1,
+                ),
+
+                RollState::Propagation2 => Some(
+                    &self
+                        .state
+                        .internal
+                        .get(&roll)
+                        .expect("should exist")
+                        .propagation2,
+                ),
+                RollState::CacheExpire1(_) | RollState::CacheExpire2(_) | RollState::Done => None,
+            };
+            let state = state_lock.map(|sl| sl.lock().expect("should not fail"));
+            state.map(|s| matches!(s.before_ttl.state, BeforeTtlState::Wait))
+        }
+        .unwrap_or(false);
+
+        if !before_ttl {
+            // Handle actions after recording the TTL.
+            self.handle_actions(&actions, env, true)?;
+        }
 
         // Report actions
-        print_actions(&actions);
+        print_actions(&actions, before_ttl);
         self.state_changed = true;
         Ok(())
     }
@@ -4012,7 +4090,7 @@ impl WorkSpace {
     }
 
     /// Start a KSK roll.
-    fn start_ksk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
+    fn start_ksk_roll(&mut self, env: &impl Env) -> Result<Vec<Action>, Error> {
         let roll_type = match self.config.ksk_roll_type {
             KskRollType::DoubleSignatureKskRoll => RollType::KskRoll,
             KskRollType::DoubleDsKskRoll => RollType::KskDoubleDsRoll,
@@ -4071,7 +4149,7 @@ impl WorkSpace {
         let new = [ksk_pub_url.as_ref()];
 
         // Start the key roll
-        match self
+        let actions = match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -4091,11 +4169,11 @@ impl WorkSpace {
 
         // Assume there are never any actions to execute because we need to
         // capture the before TTLs first.
-        Ok(())
+        Ok(actions)
     }
 
     /// Start a ZSK roll.
-    fn start_zsk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
+    fn start_zsk_roll(&mut self, env: &impl Env) -> Result<Vec<Action>, Error> {
         let roll_type = match self.config.zsk_roll_type {
             ZskRollType::PrePublishZskRoll => RollType::ZskRoll,
             ZskRollType::DoubleSignatureZskRoll => RollType::ZskDoubleSignatureRoll,
@@ -4154,7 +4232,7 @@ impl WorkSpace {
         let new = [zsk_pub_url.as_ref()];
 
         // Start the key roll
-        match self
+        let actions = match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -4172,13 +4250,11 @@ impl WorkSpace {
         self.state.internal.insert(roll_type, Default::default());
         self.init_before_ttl(roll_type);
 
-        // Assume there are never any actions to execute because we need to
-        // capture the before TTLs first.
-        Ok(())
+        Ok(actions)
     }
 
     /// Start a CSK roll.
-    fn start_csk_roll(&mut self, env: &impl Env) -> Result<(), Error> {
+    fn start_csk_roll(&mut self, env: &impl Env) -> Result<Vec<Action>, Error> {
         let roll_type = RollType::CskRoll;
 
         assert!(!self.state.keyset.keys().is_empty());
@@ -4210,7 +4286,7 @@ impl WorkSpace {
         let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
         // Start the key roll
-        match self
+        let actions = match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -4231,11 +4307,11 @@ impl WorkSpace {
 
         // Assume there are never any actions to execute because we need to
         // capture the before TTLs first.
-        Ok(())
+        Ok(actions)
     }
 
     /// Start an algorithm roll.
-    fn start_algorithm_roll(&mut self, env: &impl Env) -> Result<(), Error> {
+    fn start_algorithm_roll(&mut self, env: &impl Env) -> Result<Vec<Action>, Error> {
         let roll_type = RollType::AlgorithmRoll;
 
         assert!(!self.state.keyset.keys().is_empty());
@@ -4264,7 +4340,7 @@ impl WorkSpace {
         let new: Vec<_> = new_stored.iter().map(|v| v.as_ref()).collect();
 
         // Start the key roll
-        match self
+        let actions = match self
             .state
             .keyset
             .start_roll(roll_type, &old, &new)
@@ -4285,7 +4361,7 @@ impl WorkSpace {
 
         // Assume there are never any actions to execute because we need to
         // capture the before TTLs first.
-        Ok(())
+        Ok(actions)
     }
 
     /// This function automatically starts a key roll when the conditions are right.
@@ -4303,7 +4379,7 @@ impl WorkSpace {
         env: Env,
         conficting_roll: impl Fn(RollType) -> bool,
         match_keytype: impl Fn(KeyType) -> Option<KeyState>,
-        start_roll: impl Fn(&mut WorkSpace, Env) -> Result<(), Error>,
+        start_roll: impl Fn(&mut WorkSpace, Env) -> Result<Vec<Action>, Error>,
     ) -> Result<(), Error> {
         let now = self.faketime_or_now();
         if let Some(validity) = validity {
@@ -5171,63 +5247,90 @@ fn remove_cds_rrset(kss: &mut KeySetState) {
 /// Print a list of actions.
 ///
 /// TODO: make this list user friendly.
-fn print_actions(actions: &[Action]) {
+fn print_actions(actions: &[Action], before_ttl: bool) {
     if actions.is_empty() {
         println!("No actions");
-    } else {
-        println!("Actions:");
+        return;
+    }
+
+    if before_ttl {
+        println!("Report before-ttl actions:");
         let mut report_count = 0;
         for a in actions {
-            println!("\t{a:?}:");
             match a {
-                Action::CreateCdsRrset => {
-                    println!("\t\tsign the zone with the CDS and CDNSKEY RRsets")
-                }
-                Action::RemoveCdsRrset => {
-                    println!("\t\tsign the zone with empty CDS and CDNSKEY RRsets")
-                }
-                Action::UpdateDnskeyRrset => {
-                    println!("\t\tsign the zone with the new DNSKEY RRset from the state file")
-                }
-                Action::UpdateDsRrset => {
-                    println!("\t\tupdate the DS RRset at the parent to match the CDNSKEY RRset")
-                }
-                Action::UpdateRrsig => println!("\t\tsign the zone with the new zone signing keys"),
                 Action::ReportDnskeyPropagated => {
-                    println!("\t\tverify that the new DNSKEY RRset has propagated to all");
-                    println!("\t\tnameservers and report (at least) the TTL of the DNSKEY RRset");
+                    println!("\tReport (at least) the TTL of the DNSKEY RRset.");
                     report_count += 1;
                 }
                 Action::ReportDsPropagated => {
-                    println!("\t\tverify that all nameservers of the parent zone have a new");
-                    println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset and");
-                    println!("\t\treport (at least) the TTL of the DNSKEY RRset");
+                    println!("\tReport (at least) the TTL of the DS RRset in the parent zone");
                     report_count += 1;
                 }
                 Action::ReportRrsigPropagated => {
-                    println!("\t\tverify that the new RRSIG records have propagated to all");
-                    println!("\t\tnameservers and report (at least) the maximum TTL among");
-                    println!("\t\tthe RRSIG records");
+                    println!("\tReport (at least) the maximum TTL among the RRSIG records");
                     report_count += 1;
                 }
-                Action::WaitDnskeyPropagated => {
-                    println!("\t\tverify that the new DNSKEY RRset has propagated to all");
-                    println!("\t\tnameservers");
-                }
-                Action::WaitDsPropagated => {
-                    println!("\t\tverify that all nameservers of the parent zone have a new");
-                    println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset");
-                }
-                Action::WaitRrsigPropagated => {
-                    println!("\t\tverify that the new RRSIG records have propagated to all");
-                    println!("\t\tnameservers");
-                }
+                Action::UpdateRrsig
+                | Action::CreateCdsRrset
+                | Action::RemoveCdsRrset
+                | Action::UpdateDnskeyRrset
+                | Action::UpdateDsRrset
+                | Action::WaitDnskeyPropagated
+                | Action::WaitDsPropagated
+                | Action::WaitRrsigPropagated => (),
             }
-            println!();
         }
         if report_count > 1 {
-            println!("\tNote: with multiple Report actions, report the maximum of the TTLs.");
+            println!("\tNote: report the maximum of the TTLs.");
         }
+        return;
+    }
+
+    println!("Actions:");
+    for a in actions {
+        println!("\t{a:?}:");
+        match a {
+            Action::CreateCdsRrset => {
+                println!("\t\tsign the zone with the CDS and CDNSKEY RRsets")
+            }
+            Action::RemoveCdsRrset => {
+                println!("\t\tsign the zone with empty CDS and CDNSKEY RRsets")
+            }
+            Action::UpdateDnskeyRrset => {
+                println!("\t\tsign the zone with the new DNSKEY RRset from the state file")
+            }
+            Action::UpdateDsRrset => {
+                println!("\t\tupdate the DS RRset at the parent to match the CDNSKEY RRset")
+            }
+            Action::UpdateRrsig => println!("\t\tsign the zone with the new zone signing keys"),
+            Action::ReportDnskeyPropagated => {
+                println!("\t\tverify that the new DNSKEY RRset has propagated to all");
+                println!("\t\tnameservers");
+            }
+            Action::ReportDsPropagated => {
+                println!("\t\tverify that all nameservers of the parent zone have a new");
+                println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset and");
+                println!("\t\treport (at least) the TTL of the DNSKEY RRset");
+            }
+            Action::ReportRrsigPropagated => {
+                println!("\t\tverify that the new RRSIG records have propagated to all");
+                println!("\t\tnameservers and report (at least) the maximum TTL among");
+                println!("\t\tthe RRSIG records");
+            }
+            Action::WaitDnskeyPropagated => {
+                println!("\t\tverify that the new DNSKEY RRset has propagated to all");
+                println!("\t\tnameservers");
+            }
+            Action::WaitDsPropagated => {
+                println!("\t\tverify that all nameservers of the parent zone have a new");
+                println!("\t\tDS RRset that matches the keys in the CNDSKEY RRset");
+            }
+            Action::WaitRrsigPropagated => {
+                println!("\t\tverify that the new RRSIG records have propagated to all");
+                println!("\t\tnameservers");
+            }
+        }
+        println!();
     }
 }
 
