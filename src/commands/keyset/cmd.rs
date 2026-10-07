@@ -5093,6 +5093,34 @@ impl WorkSpace {
                         RollState::Propagation2 => &report_state.propagation2,
                         _ => continue,
                     };
+
+                    {
+                        let locked_state = report_state.lock().expect("should not fail");
+                        if let BeforeTtlState::Wait = locked_state.before_ttl.state {
+                            let mut initial_until = Some(now.clone());
+                            if let Some(BeforeTtlDsDnskey::Wait { until, .. }) =
+                                &locked_state.before_ttl.dnskey
+                            {
+                                cron_next.push(Some(until.clone()));
+                                initial_until = None;
+                            }
+                            if let Some(BeforeTtlDsDnskey::Wait { until, .. }) =
+                                &locked_state.before_ttl.ds
+                            {
+                                cron_next.push(Some(until.clone()));
+                                initial_until = None;
+                            }
+                            if let Some(BeforeTtlRrsigs::Wait { until, .. }) =
+                                &locked_state.before_ttl.rrsigs
+                            {
+                                cron_next.push(Some(until.clone()));
+                                initial_until = None;
+                            }
+                            cron_next.push(initial_until);
+                            continue;
+                        }
+                    }
+
                     let actions = kss.keyset.actions(*r);
                     match self.check_auto_actions(&actions, report_state) {
                         AutoActionsResult::Ok => {
