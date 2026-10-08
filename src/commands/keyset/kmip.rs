@@ -31,8 +31,13 @@ use std::{
 
 use clap::Subcommand;
 use domain::base::{name::ToLabelIter, Name, NameBuilder};
-use domain_kmip::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
-use domain_kmip::{ClientCertificate, ConnectionSettings, KeyUrl};
+use domain_kmip::{
+    dep::kmip_protocol::net::{
+        sync_pool::{ConnPool, ConnectionManager, KmipConnError},
+        ClientCertificate, ConnectionSettings,
+    },
+    KeyUrl,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -344,19 +349,6 @@ pub enum KmipCommands {
 
     /// List all configured KMIP servers.
     ListServers,
-
-    /// Set whether or not KMIP logs will expand TTLV protocol sequences into
-    /// human readable (and potentially sensitive) form.
-    ///
-    /// Warning! Enabling this may cause sensitive data exchanged with a KMIP
-    /// server (such as authentication details) to be logged.
-    SetExpandedLogging {
-        /// The identifier of the KMIP server to get.
-        server_id: String,
-
-        /// Enable expanded logging or not.
-        enable: bool,
-    },
 }
 
 //------------ kmip_command() ------------------------------------------------
@@ -569,13 +561,6 @@ pub fn kmip_command(
             write!(env.stdout(), "{}", kss.kmip);
             return Ok(false);
         }
-
-        KmipCommands::SetExpandedLogging { server_id, enable } => {
-            let Some(server) = kss.kmip.servers.get_mut(&server_id) else {
-                return Err(format!("KMIP server id '{server_id}' is not known").into());
-            };
-            server.expanded_logging = enable;
-        }
     }
 
     Ok(true)
@@ -741,7 +726,6 @@ fn add_kmip_server(
         client_cert_auth,
         client_limits,
         key_label_config,
-        expanded_logging: false,
     };
 
     kmip.servers.insert(server_id.clone(), settings);
@@ -1385,10 +1369,6 @@ pub struct KmipServerConnectionConfig {
 
     /// Key labeling configuration.
     pub key_label_config: KeyLabelConfig,
-
-    /// Whether or not KMIP logs will expand TTLV protocol sequences into
-    /// human readable (and potentially sensitive) form.
-    pub expanded_logging: bool,
 }
 
 //--- impl Display
@@ -1503,6 +1483,7 @@ impl KmipServerConnectionConfig {
             insecure: self.server_cert_verification.verify_certificate.not(),
             client_cert,
             server_cert,
+            server_name: None,
             ca_cert,
             connect_timeout: Some(self.client_limits.connect_timeout),
             read_timeout: Some(self.client_limits.read_timeout),
@@ -1616,8 +1597,8 @@ impl KmipState {
     /// Returns Ok(None) if no default KMIP server is set.
     pub fn get_default_pool(
         &self,
-        pools: &mut HashMap<String, SyncConnPool>,
-    ) -> Result<Option<SyncConnPool>, Error> {
+        pools: &mut HashMap<String, ConnPool>,
+    ) -> Result<Option<ConnPool>, Error> {
         if self.default_server_id.is_some() {
             let id = self.default_server_id.clone().unwrap();
             return self.get_pool(pools, &id).map(Some);
@@ -1634,9 +1615,9 @@ impl KmipState {
     /// cannot be created.
     pub fn get_pool(
         &self,
-        pools: &mut HashMap<String, SyncConnPool>,
+        pools: &mut HashMap<String, ConnPool>,
         id: &str,
-    ) -> Result<SyncConnPool, Error> {
+    ) -> Result<ConnPool, Error> {
         match pools.get(id) {
             Some(pool) => Ok(pool.clone()),
             None => {
@@ -1648,7 +1629,7 @@ impl KmipState {
                 })?;
                 // TODO: Should the timeouts used here be configurable and/or set to some
                 // other value?
-                let mut pool = ConnectionManager::create_connection_pool(
+                let pool = ConnectionManager::create_connection_pool(
                     id.to_string(),
                     conn_settings.into(),
                     1,
@@ -1657,9 +1638,9 @@ impl KmipState {
                 )
                 .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
 
-                if srv_conn_settings.expanded_logging {
-                    pool.set_expanded_logging(true);
-                }
+                // if srv_conn_settings.expanded_logging {
+                //     pool.set_expanded_logging(true);
+                // }
 
                 pools.insert(id.to_string(), pool.clone());
                 Ok(pool)
