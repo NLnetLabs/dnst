@@ -518,7 +518,6 @@ pub fn kmip_command(
                     crl_ca_cert_path = ChangeRemoveLeave::Change(v);
                 }
             }
-            }
 
             modify_kmip_server(
                 &mut kss.kmip,
