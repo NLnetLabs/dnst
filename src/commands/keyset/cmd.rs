@@ -1561,7 +1561,7 @@ impl Keyset {
                     now.clone(),
                 ) {
                     println!("DNSKEY RRSIG(s) need to be renewed");
-                    ws.update_dnskey_rrset(env, false)?;
+                    ws.resign_dnskey_rrset(env, false)?;
                     ws.state_changed = true;
                 }
                 if sig_renew(&ws.state.cds_rrset, &ws.config.cds_remain_time, now.clone()) {
@@ -3607,6 +3607,151 @@ impl WorkSpace {
             }
         }
 
+        Ok(())
+    }
+
+    /// Resign the DNSKEY RRset in the KeySetState.
+    ///
+    /// Keep the origin RRset just update the signatures.
+    fn resign_dnskey_rrset(&mut self, env: &impl Env, verbose: bool) -> Result<(), Error> {
+        let mut zonefile = Zonefile::new();
+        for r in &self.state.dnskey_rrset {
+            zonefile.extend_from_slice(r.as_ref());
+            zonefile.extend_from_slice(b"\n");
+        }
+        let mut dnskeys = vec![];
+        for e in zonefile {
+            let e = e.expect("should not fail");
+            match e {
+                Entry::Record(r) => {
+                    if let ZoneRecordData::Dnskey(dnskey) = r.data() {
+                        let new_data: ZoneRecordData<_, Name<Bytes>> =
+                            ZoneRecordData::Dnskey(dnskey.clone());
+                        let new_r =
+                            Record::new(r.owner().to_name::<Bytes>(), r.class(), r.ttl(), new_data);
+                        dnskeys.push(new_r);
+                    }
+                }
+                Entry::Include { .. } => continue, // Just ignore include.
+            }
+        }
+        let now = self.faketime_or_now();
+
+        // Clone needed because of public_key_from_url takes &mut KeySetState.
+        let keys = self.state.keyset.keys().clone();
+        let now_u32 = Into::<Duration>::into(now).as_secs() as u32;
+        let inception = (now_u32 - self.config.dnskey_inception_offset.as_secs() as u32).into();
+        let expiration = (now_u32 + self.config.dnskey_signature_lifetime.as_secs() as u32).into();
+
+        let mut sigs = Vec::new();
+        for (k, v) in &keys {
+            if dnskeys.is_empty() {
+                // Don't try to sign an empty set.
+                break;
+            }
+            let dnskey_signer = match v.keytype() {
+                KeyType::Ksk(key_state) => key_state.signer(),
+                KeyType::Zsk(_) => false,
+                KeyType::Csk(key_state, _) => key_state.signer(),
+                KeyType::Include(_) => false,
+            };
+
+            let rrset = Rrset::new_from_owned(&dnskeys)
+                .map_err(|e| format!("unable to create Rrset: {e}\n"))?;
+
+            if dnskey_signer {
+                let privref = v.privref().ok_or("missing private key")?;
+                let priv_url = Url::parse(privref).expect("valid URL expected");
+                let pub_url = Url::parse(k).expect("valid URL expected");
+                match (priv_url.scheme(), pub_url.scheme()) {
+                    ("file", "file") => {
+                        let private_data =
+                            std::fs::read_to_string(priv_url.path()).map_err(|e| {
+                                format!("unable read from file {}: {e}", priv_url.path())
+                            })?;
+                        let secret_key =
+                            SecretKeyBytes::parse_from_bind(&private_data).map_err(|e| {
+                                format!("unable to parse private key file {privref}: {e}")
+                            })?;
+
+                        let public_key = self.public_key_from_url(&pub_url, env)?;
+
+                        let key_pair = KeyPair::from_bytes(&secret_key, public_key.data())
+                            .map_err(|e| {
+                                format!(
+                                    "private key {privref} and public key {k} do not match: {e}"
+                                )
+                            })?;
+                        let signing_key = SigningKey::new(
+                            public_key.owner().clone(),
+                            public_key.data().flags(),
+                            key_pair,
+                        );
+                        let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(
+                            |e| {
+                                format!(
+                                    "error signing DNSKEY RRset with private key {privref}: {e}"
+                                )
+                            },
+                        )?;
+                        sigs.push(sig);
+                    }
+
+                    #[cfg(feature = "kmip")]
+                    ("kmip", "kmip") => {
+                        let owner = self.state.keyset.name().clone().flatten_into();
+                        let priv_key_url = KeyUrl::try_from(priv_url)?;
+                        let pub_key_url = KeyUrl::try_from(pub_url)?;
+                        let flags = priv_key_url.flags();
+                        let kmip_conn_pool = self
+                            .state
+                            .kmip
+                            .get_pool(&mut self.pools, priv_key_url.server_id())?;
+                        let key_pair = kmip::sign::KeyPair::from_urls(
+                            priv_key_url,
+                            pub_key_url,
+                            kmip_conn_pool,
+                        )
+                        .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
+                        //let key_pair = KeyPair::Kmip(key_pair);
+                        let signing_key = SigningKey::new(owner, flags, key_pair);
+
+                        // TODO: Should there be a key not found error we can detect here so that we can retry if
+                        // we believe that the key is simply not registered fully yet in the HSM?
+                        let sig = sign_rrset(&signing_key, &rrset, inception, expiration).map_err(
+                            |e| {
+                                format!(
+                                    "error signing DNSKEY RRset with private key {privref}: {e}"
+                                )
+                            },
+                        )?;
+                        sigs.push(sig);
+                    }
+
+                    (priv_scheme, pub_scheme) => {
+                        panic!("unsupported URL scheme combination: {priv_scheme} & {pub_scheme}");
+                    }
+                };
+            }
+        }
+
+        self.state.dnskey_rrset.clear();
+        for r in dnskeys {
+            self.state
+                .dnskey_rrset
+                .push(r.display_zonefile(DisplayKind::Simple).to_string());
+        }
+        for r in sigs {
+            self.state
+                .dnskey_rrset
+                .push(r.display_zonefile(DisplayKind::Simple).to_string());
+        }
+        if verbose {
+            println!("Got DNSKEY RRset:");
+            for r in &self.state.dnskey_rrset {
+                println!("\t{r}");
+            }
+        }
         Ok(())
     }
 
