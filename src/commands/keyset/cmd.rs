@@ -1895,13 +1895,13 @@ impl From<&IpAddr> for NameserverConnectionDetails {
     }
 }
 
-impl TryFrom<&str> for NameserverConnectionDetails {
-    type Error = Error;
+impl FromStr for NameserverConnectionDetails {
+    type Err = Error;
 
     // Note: this only accepts IP addresses, not hostnames. In addition,
     // a port is required, there is no default port. TODO: allow hostnames
     // and allow the port to be optional.
-    fn try_from(s: &str) -> Result<Self, Error> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         let mut iter = s.split('^');
         let Some(addr_port) = iter.next() else {
             return Err("Address expected".into());
@@ -2289,7 +2289,7 @@ impl WorkSpace {
                 for a in addrs {
                     // When adding nameservers, check that referenced TSIG
                     // keys are in the TSIG store.
-                    nameservers.insert(NameserverConnectionDetails::try_from(a.as_str())?);
+                    nameservers.insert(NameserverConnectionDetails::from_str(a.as_str())?);
                 }
 
                 if nameservers.iter().any(|ns| ns.tsig_key_name.is_some()) {
