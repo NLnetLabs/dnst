@@ -1167,12 +1167,12 @@ impl Keyset {
                 } else if commands.len() >= 2 {
                     println!("{actor} will execute the following steps by itself.");
                     println!(
-                        "They are listed here in case there is a need to execute the steps manually"
+                        "They are listed here in case there is a need to execute the step manually"
                     );
                 } else if !commands.is_empty() {
                     println!("{actor} will execute the following step by itself.");
                     println!(
-                        "It is listed here in case there is a need to execute the step manually"
+                        "It is listed here in case there is a need to execute the steps manually"
                     );
                 }
                 for (roll_subcommand, state_subcommand) in &commands {
