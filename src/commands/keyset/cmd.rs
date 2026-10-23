@@ -69,9 +69,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::net::TcpStream;
 #[cfg(feature = "kmip")]
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(not(feature = "kmip"))]
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 #[cfg(feature = "kmip")]
@@ -1284,12 +1284,12 @@ impl Keyset {
                 } else if commands.len() >= 2 {
                     println!("{actor} will execute the following steps by itself.");
                     println!(
-                        "They are listed here in case there is a need to execute the steps manually"
+                        "They are listed here in case there is a need to execute the step manually"
                     );
                 } else if !commands.is_empty() {
                     println!("{actor} will execute the following step by itself.");
                     println!(
-                        "It is listed here in case there is a need to execute the step manually"
+                        "It is listed here in case there is a need to execute the steps manually"
                     );
                 }
                 for (roll_subcommand, state_subcommand, capture_before_ttl) in &commands {
@@ -7151,10 +7151,27 @@ fn check_rrsigs(
                 // efficient. Therefore, if the mismatch is at an NSEC3 then
                 // remember this by setting result to WaitNextSerial but
                 // keep checking.
-                if false && rtype != Rtype::NSEC3 {
-                    warn!(
-                        "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
-                        set, expected_set
+                if rtype != Rtype::NSEC3 {
+                    let mut set_str = "".to_string();
+                    let mut expected_set_str = "".to_string();
+                    let mut first = true;
+                    for (algorithm, keytag) in &set {
+                        set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    first = true;
+                    for (algorithm, keytag) in &expected_set {
+                        expected_set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    info!(
+                        "Waiting for {key}/{rtype} to be re-signed: found {set_str} expected {expected_set_str}",
                     );
                     let name = key.to_name::<Vec<u8>>();
                     return CheckRrsigsResult::WaitRecord {
@@ -7167,9 +7184,26 @@ fn check_rrsigs(
                     };
                 }
                 if result == CheckRrsigsResult::Done {
-                    warn!(
-                        "RRSIG mismatch for {key}/{rtype}: found {:?} expected {:?}",
-                        set, expected_set
+                    let mut set_str = "".to_string();
+                    let mut expected_set_str = "".to_string();
+                    let mut first = true;
+                    for (algorithm, keytag) in &set {
+                        set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    first = true;
+                    for (algorithm, keytag) in &expected_set {
+                        expected_set_str.push_str(&format!(
+                            "{}(algorithm {algorithm}, key tag {keytag})",
+                            if first { "" } else { ", " }
+                        ));
+                        first = false;
+                    }
+                    info!(
+                        "Waiting for {key}/{rtype} to be re-signed: found {set_str} expected {expected_set_str}",
                     );
                 }
                 result = CheckRrsigsResult::WaitNextSerial {
