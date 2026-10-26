@@ -44,7 +44,7 @@ use domain::zonefile::inplace::{Entry, Zonefile};
 #[cfg(feature = "kmip")]
 use domain_kmip as kmip;
 #[cfg(feature = "kmip")]
-use domain_kmip::dep::kmip_protocol::net::sync_pool::ConnPool;
+use domain_kmip::dep::kmip::client::pool::SyncConnPool;
 #[cfg(feature = "kmip")]
 use domain_kmip::KeyUrl;
 use fs2::FileExt;
@@ -68,8 +68,10 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::net::TcpStream;
+#[cfg(feature = "kmip")]
 use tracing::{debug, error, info, warn};
-use tracing::{debug, error, warn};
+#[cfg(not(feature = "kmip"))]
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 #[cfg(feature = "kmip")]
@@ -719,7 +721,7 @@ struct WorkSpace {
 
     #[cfg(feature = "kmip")]
     /// The current set of KMIP server pools.
-    pools: HashMap<String, ConnPool>,
+    pools: HashMap<String, SyncConnPool>,
 
     /// A store of TSIG keys indexed by key name.
     tsig_store: TsigKeyStore,
@@ -2635,11 +2637,16 @@ impl WorkSpace {
                 coupled,
             } => {
                 let pool = self.state.kmip.get_pool(&mut self.pools, &server)?;
-                let keypair =
-                    kmip::KeyPair::from_metadata(algorithm, flags, &private_id, &public_id, pool)
-                        .map_err(|e| {
-                        format!("error constructing key pair on KMIP server '{server}': {e}")
-                    })?;
+                let keypair = kmip::sign::KeyPair::from_metadata(
+                    algorithm,
+                    flags,
+                    &private_id,
+                    &public_id,
+                    pool,
+                )
+                .map_err(|e| {
+                    format!("error constructing key pair on KMIP server '{server}': {e}")
+                })?;
                 let public_key_url = keypair.public_key_url();
                 let private_key_url = keypair.private_key_url();
                 (
@@ -3011,7 +3018,7 @@ impl WorkSpace {
                 rand::fill(&mut random_bytes[..]);
                 let private_key_random_label = encode_string_hex(&random_bytes);
 
-                let key_pair = kmip::generate(
+                let key_pair = kmip::sign::generate(
                     public_key_random_label,
                     private_key_random_label,
                     algorithm.clone(),
@@ -3045,8 +3052,6 @@ impl WorkSpace {
                         );
 
                         if let Err(err) = &public_key_label {
-                            use tracing::warn;
-
                             warn!("Failed to generate label for public key, key will have a hex label: {err}");
                         }
 
@@ -3066,7 +3071,7 @@ impl WorkSpace {
                         if let (Ok(public_key_label), Ok(private_key_label)) =
                             (public_key_label, private_key_label)
                         {
-                            let mut conn = kmip_conn_pool.get()?;
+                            let conn = kmip_conn_pool.get()?;
                             // If key generation succeeded then the most likely reason
                             // for the rename operation to fail is lack of support for
                             // key relabeling.
@@ -3251,7 +3256,7 @@ impl WorkSpace {
             #[cfg(feature = "kmip")]
             "kmip" => {
                 let key_url = KeyUrl::try_from(url)?;
-                let mut conn = self
+                let conn = self
                     .state
                     .kmip
                     .get_pool(&mut self.pools, key_url.server_id())?
@@ -3359,11 +3364,12 @@ impl WorkSpace {
                             .state
                             .kmip
                             .get_pool(&mut self.pools, priv_key_url.server_id())?;
-                        let key_pair =
-                            kmip::KeyPair::from_urls(priv_key_url, pub_key_url, kmip_conn_pool)
-                                .map_err(|err| {
-                                    format!("Failed to retrieve KMIP key by URL: {err}")
-                                })?;
+                        let key_pair = kmip::sign::KeyPair::from_urls(
+                            priv_key_url,
+                            pub_key_url,
+                            kmip_conn_pool,
+                        )
+                        .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
                         //let key_pair = KeyPair::Kmip(key_pair);
                         let signing_key = SigningKey::new(owner, flags, key_pair);
 
@@ -3519,11 +3525,12 @@ impl WorkSpace {
                             .state
                             .kmip
                             .get_pool(&mut self.pools, priv_key_url.server_id())?;
-                        let key_pair =
-                            kmip::KeyPair::from_urls(priv_key_url, pub_key_url, kmip_conn_pool)
-                                .map_err(|err| {
-                                    format!("Failed to retrieve KMIP key by URL: {err}")
-                                })?;
+                        let key_pair = kmip::sign::KeyPair::from_urls(
+                            priv_key_url,
+                            pub_key_url,
+                            kmip_conn_pool,
+                        )
+                        .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
                         let signing_key = SigningKey::new(owner, flags, key_pair);
                         let sig = sign_rrset(&signing_key, &cds_rrset, inception, expiration)
                             .map_err(|e| {
