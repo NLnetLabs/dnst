@@ -517,10 +517,13 @@ Options
 
       Configuration file.
 
-..
-	.. option:: -v
+.. option:: -v
 
-	      Enable verbose output.
+      Enable verbose output.
+
+.. option:: --cascade
+
+      Special processing for the Cascade DNSSEC signer.
 
 .. option:: -h, --help
 
