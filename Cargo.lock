@@ -374,7 +374,7 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "regex",
- "ring 0.17.14",
+ "ring",
  "same-file",
  "serde",
  "serde_json",
@@ -390,8 +390,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b68712c02bff2348323c1441ab2e8528e32af4f8f9edf29356356290328c8e6"
+source = "git+https://github.com/NLnetLabs/domain?branch=add-sha-512-digest-support#38b37b6d579a1cc86199588530e2375b5c15d403"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -408,7 +407,7 @@ dependencies = [
  "openssl",
  "parking_lot",
  "rand 0.10.2",
- "ring 0.17.14",
+ "ring",
  "rustversion",
  "secrecy",
  "serde",
@@ -423,7 +422,7 @@ dependencies = [
 [[package]]
 name = "domain-kmip"
 version = "0.0.1"
-source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#ceaf4a5e161cacff2fb43b039574697b72b68719"
+source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#045538049db82dd582148528daaab796b6ff8952"
 dependencies = [
  "bcder",
  "domain",
@@ -437,8 +436,7 @@ dependencies = [
 [[package]]
 name = "domain-macros"
 version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fba8fbc4580c745dfeab102232dcb729f030ac3e2c9ff5374a9dfd6dc9ddf8e"
+source = "git+https://github.com/NLnetLabs/domain?branch=add-sha-512-digest-support#38b37b6d579a1cc86199588530e2375b5c15d403"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -906,7 +904,7 @@ dependencies = [
 [[package]]
 name = "kmip-protocol"
 version = "0.5.1-dev"
-source = "git+https://github.com/NLnetLabs/kmip-protocol.git?branch=support-sni-name#e2bf471965eac34e332cac7103bf1d8b385ce0b4"
+source = "git+https://github.com/NLnetLabs/kmip-protocol.git?branch=bump-dependencies#1625b323f0b5fd432a26116307b17d6822ead3be"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",
@@ -920,7 +918,6 @@ dependencies = [
  "rustls-pemfile",
  "tokio-rustls",
  "tracing",
- "trait-set",
  "webpki",
  "webpki-roots",
 ]
@@ -1367,21 +1364,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "ring"
-version = "0.16.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "spin",
- "untrusted 0.7.1",
- "web-sys",
- "winapi",
-]
-
-[[package]]
-name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
@@ -1390,7 +1372,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -1415,7 +1397,7 @@ checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
 dependencies = [
  "log",
  "once_cell",
- "ring 0.17.14",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -1446,9 +1428,9 @@ version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
- "ring 0.17.14",
+ "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -1577,12 +1559,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spin"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1607,17 +1583,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
 dependencies = [
  "is_ci",
-]
-
-[[package]]
-name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
 ]
 
 [[package]]
@@ -1837,17 +1802,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trait-set"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875c4c873cc824e362fa9a9419ffa59807244824275a44ad06fec9684fff08f2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1858,12 +1812,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
@@ -1979,23 +1927,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-sys"
-version = "0.3.105"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fbddc4a036f00ec4f18c83445bd3115cb306a91da554919a099d9222fe4a7f8"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "webpki"
-version = "0.21.4"
+version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e38c0608262c46d4a56202ebabdeb094cef7e560ca7a226c6bf055188aa4ea"
+checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
 dependencies = [
- "ring 0.16.20",
- "untrusted 0.7.1",
+ "ring",
+ "untrusted",
 ]
 
 [[package]]
