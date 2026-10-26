@@ -31,8 +31,13 @@ use std::{
 
 use clap::Subcommand;
 use domain::base::{name::ToLabelIter, Name, NameBuilder};
-use domain_kmip::dep::kmip::client::pool::{ConnectionManager, KmipConnError, SyncConnPool};
-use domain_kmip::{ClientCertificate, ConnectionSettings, KeyUrl};
+use domain_kmip::{
+    dep::kmip_protocol::net::{
+        sync_pool::{ConnPool, ConnectionManager, KmipConnError},
+        ClientCertificate, ConnectionSettings,
+    },
+    KeyUrl,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -1478,6 +1483,7 @@ impl KmipServerConnectionConfig {
             insecure: self.server_cert_verification.verify_certificate.not(),
             client_cert,
             server_cert,
+            server_name: None,
             ca_cert,
             connect_timeout: Some(self.client_limits.connect_timeout),
             read_timeout: Some(self.client_limits.read_timeout),
@@ -1591,8 +1597,8 @@ impl KmipState {
     /// Returns Ok(None) if no default KMIP server is set.
     pub fn get_default_pool(
         &self,
-        pools: &mut HashMap<String, SyncConnPool>,
-    ) -> Result<Option<SyncConnPool>, Error> {
+        pools: &mut HashMap<String, ConnPool>,
+    ) -> Result<Option<ConnPool>, Error> {
         if self.default_server_id.is_some() {
             let id = self.default_server_id.clone().unwrap();
             return self.get_pool(pools, &id).map(Some);
@@ -1609,9 +1615,9 @@ impl KmipState {
     /// cannot be created.
     pub fn get_pool(
         &self,
-        pools: &mut HashMap<String, SyncConnPool>,
+        pools: &mut HashMap<String, ConnPool>,
         id: &str,
-    ) -> Result<SyncConnPool, Error> {
+    ) -> Result<ConnPool, Error> {
         match pools.get(id) {
             Some(pool) => Ok(pool.clone()),
             None => {
@@ -1631,6 +1637,10 @@ impl KmipState {
                     Some(Duration::from_secs(60)),
                 )
                 .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
+
+                // if srv_conn_settings.expanded_logging {
+                //     pool.set_expanded_logging(true);
+                // }
 
                 pools.insert(id.to_string(), pool.clone());
                 Ok(pool)
