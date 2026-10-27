@@ -1695,10 +1695,6 @@ impl KmipState {
                 )
                 .map_err(|err| format!("Failed to create KMIP connection pool: {err}"))?;
 
-                // if srv_conn_settings.expanded_logging {
-                //     pool.set_expanded_logging(true);
-                // }
-
                 pools.insert(id.to_string(), pool.clone());
                 Ok(pool)
             }

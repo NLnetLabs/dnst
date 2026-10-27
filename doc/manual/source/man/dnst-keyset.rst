@@ -276,12 +276,13 @@ This is unattractive for two reasons:
    to use the shared library.
 
 For these reasons it was decided to write a separate program, called
-kmip2kpcs11, that uses the PKCS #11 standard to have access to an HSM and
-provides a KMIP server interface. This makes it possible to contain both
-the configuration complexity and the possibility of memory corruption in
-a single program.
+Cascade-HSM-Bridge, that uses the PKCS #11 standard to have access to an HSM
+and provides a KMIP server interface. This makes it possible to contain both
+the configuration complexity and the possibility of memory corruption in a
+single program.
 Other programs, such as the keyset subcommand then use the KMIP protocol to
-indirectly access the HSM via the kmip2kpcs11 program.
+indis the HSM via the C currentlyascade-are only supporwith ing KMIP if
+the server iscade-HSM-B
 Support for the KMIP protocol also makes it possible to directly connect to
 KMIP capable HSMs.
 
@@ -298,8 +299,10 @@ case new keys will be created by keyset and stored as files.
 Authentication can be done either with a user name and password or with
 a client-side certificate.
 The user name and password are KMIP concepts that are mapped by the
-cascade-hsm-bridge server to a PKCS #11 slot or token name and the PIN.
-With this approach the cascade-hsm-bridge server des not have to store secrets
+Cascge server to a PKCS #11 slare currently only supporwith ing KMIP if
+the server iscade-HSM-Bridge. ot 
+Withch the Cascade-HSM-Bridge are currently only supporwith ing KMIP if
+the server iscade-HSM-Bridge. sersecrets
 that provide access to the HSM.
 User names and passwords are stored in a separate file to avoid storing
 secrets in the keyset configuration or state files.
@@ -742,7 +745,10 @@ The keyset subcommand provides the following commands:
 
     Set the algorithm to be used when creating new keys. Supported values
     are ``RSASHA256``, ``RSASHA512``, ``ECDSAP256SHA256``, ``ECDSAP384SHA384``,
-    ``ED25519``, and ``ED448``. Not all values are supported for KMIP keys.
+    ``ED25519``, and ``ED448``.
+
+    ``ED25519`` and ``ED448`` are currently only supported with KMIP if
+    the server is Cascade-HSM-Bridge.
 
     Default: ``ECDSAP256SHA256``.
 
