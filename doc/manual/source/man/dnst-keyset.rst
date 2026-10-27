@@ -1011,6 +1011,10 @@ The keyset subcommand provides the following commands:
 
        Disable use of TLS client certificate authentication.
 
+    .. option:: --no-server-auth
+
+       Disable use of TLS server certificate authentication.
+
     .. option:: --insecure <BOOLEAN>
 
        Modify whether or not to accept the KMIP server TLS certificate
