@@ -68,9 +68,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::net::TcpStream;
-#[cfg(feature = "kmip")]
-use tracing::{debug, error, info, warn};
-#[cfg(not(feature = "kmip"))]
 use tracing::{debug, error, info, warn};
 use url::Url;
 
