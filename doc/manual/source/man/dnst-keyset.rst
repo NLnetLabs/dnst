@@ -143,19 +143,40 @@ different from the one used by the current key.
 Similar limitations apply to the other roll types. Note however that an
 algorithm roll can be started even when it is not needed.
 
-A key roll consists of six steps: ``start-roll``, ``propagation1-complete``,
-``cache-expired1``, ``propagation2-complete``, ``cache-expired2``, and
-``roll-done``.
-For each key roll these six steps follow in the same order.
+A key roll consists of eight steps: ``start-roll``, ``before-ttl``,
+``propagation1-complete``, ``cache-expired1``, ``before-ttl``,
+``propagation2-complete``, ``cache-expired2``, and ``roll-done``.
+For each key roll these eight steps follow in the same order.
 Associated which each step is a (possibly empty) list of actions.
 Actions fall in three categories.
 The first category consists of actions that require updating the zone or the
 parent zone.
 The second category consists of actions that require checking if changes
-have propagated to all nameservers and require reporting of the
-TTLs of the changed RRset as seen at the nameservers.
+have propagated to all nameservers TTLs of the original RRset as seen
+at the nameservers.
 Finally, the last category requires waiting for changes to propagate to
 all nameservers but there is no need to report the TTL.
+
+Handling of the actions that require reporting of a TTL is split over two
+steps. The ``before-ttl`` step is used to report the TTL before the 
+RRset is changed. Later the ``propagation1-complete`` and
+``propagation2-complete`` steps report that the changed RRsets have propagated
+to all nameservers.
+Recording of the TTL values is easy if the TTLs of the old and new RRsets 
+are the same.
+However, as described in `RFC 10026`_, Section 4.2.2., it is recommended that
+when a parent zone receives a request to change a DS RRsets, the new DS RRsets
+should get a reduced TTL to allow a quick roll back in case of problems.
+This means that at least for the DS RRset it is important to record the
+TTL before the change.
+
+.. _RFC 10026: https://www.rfc-editor.org/rfc/rfc10026
+
+For the TTL of the DNSKEY RRset it is important to avoid reducing the TTL
+just before or during a key roll. For RRSIG records it is important to avoid
+lowering the highest TTL of all RRSIG records in the zone just before or during
+a key roll. One way to achieve that is to add a dummy record to the zone 
+with a TTL that is higher than what can be expect from all normal TTLs.
 
 Typically, in a list of actions, an action of the first category is paired
 with one from the second of third category.
@@ -163,11 +184,12 @@ For example, ``UpdateDnskeyRrset`` is paired with either
 ``ReportDnskeyPropagated`` or ``WaitDnskeyPropagated``.
 
 A key roll starts with the ``start-roll`` step, which creates new keys.
-The next step, ``propagation1-complete`` has a TTL argument which is the
+The next step, ```before-ttl`` has a TTL argument which is the
 maximum of the TTLs of the Report actions.
+Then follows the ``propagation1-complete`` step.
 The ``cache-expired1`` and ``cache-expired2`` have no associated actions.
 They simply require waiting for the TTL (in seconds) reported by the
-previous ``propagation1-complete`` or ``propagation2-complete``.
+previous ```before-ttl`` step.
 The ``propagation2-complete`` step is similar to the ``propagation1-complete`` step.
 Finally, the ``roll-done`` step typically has associated Wait actions.
 These actions are cleanup actions and are harmless but confusing if they
@@ -187,8 +209,8 @@ ZSK has expired and the new key will be a CSK.
 Finally, an algorithm roll can start automatically when the new algorithm is
 different from the one used by the existing keys and any key has expired.
 
-The ``report`` flags control the automation of the ``propagation1-complete``
-and ``propagation2-complete`` steps.
+The ``report`` flags control the automation of the ``before-ttl``,
+``propagation1-complete`` and ``propagation2-complete`` steps.
 When enabled, the cron subcommand contacts the nameservers of the zone or
 (in the case of ``ReportDsPropagated``, the nameservers of the parent zone)
 to check if changes have propagated to all nameservers.
@@ -517,10 +539,13 @@ Options
 
       Configuration file.
 
-..
-	.. option:: -v
+.. option:: -v
 
-	      Enable verbose output.
+      Enable verbose output.
+
+.. option:: --cascade
+
+      Special processing for the Cascade DNSSEC signer.
 
 .. option:: -h, --help
 
@@ -562,17 +587,21 @@ The keyset subcommand provides the following commands:
 
     Start a key roll of the type specified by the command.
 
-  * propagation1-complete <TTL>
+  * before-ttl <TTL>
+
+    Report the maximum TTL of the report actions before the RRsets have
+    been changed.
+
+  * propagation1-complete
 
     Inform keyset that the changed RRsets and signatures have propagated.
-    Report the maximum TTL of the report actions.
 
   * cache-expired1
 
     Inform keyset that enough time has passed that caches should have expired.
     Note that this command will fail if invoked too early.
 
-  * propagation2-complete <TTL>
+  * propagation2-complete
 
     This command is similar to propagation1-complete.
 
@@ -981,6 +1010,10 @@ The keyset subcommand provides the following commands:
     .. option:: --no-client-auth
 
        Disable use of TLS client certificate authentication.
+
+    .. option:: --no-server-auth
+
+       Disable use of TLS server certificate authentication.
 
     .. option:: --insecure <BOOLEAN>
 

@@ -1,4 +1,5 @@
-.\" Man page generated from reStructuredText.
+.\" Man page generated from reStructuredText
+.\" by the Docutils 0.22.4 manpage writer.
 .
 .
 .nr rst2man-indent-level 0
@@ -27,7 +28,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "DNST-KEYSET" "1" "Jul 31, 2026" "0.2.0-alpha3" "dnst"
+.TH "DNST-KEYSET" "1" "Oct 27, 2026" "0.2.0-alpha3" "dnst"
 .SH NAME
 dnst-keyset \- Manage DNSSEC signing keys for a domain
 .SH SYNOPSIS
@@ -35,7 +36,7 @@ dnst-keyset \- Manage DNSSEC signing keys for a domain
 \fBdnst keyset\fP \fB\-c <CONF>\fP \fB[OPTIONS]\fP \fB<COMMAND>\fP \fB[ARGS]\fP
 .SH DESCRIPTION
 .sp
-The \fBkeyset\fP subcommand manages a set of DNSSEC (\X'tty: link https://www.rfc-editor.org/rfc/rfc9364'\fI\%RFC 9364\fP\X'tty: link') signing keys
+The \fBkeyset\fP subcommand manages a set of DNSSEC (RFC 9364 \%<https://\:www\:.rfc-editor\:.org/\:rfc/\:rfc9364>) signing keys
 and generates a signed DNSKEY RRset.
 This subcommand is meant to be part of a DNSSEC signing solution.
 A separate zone signer (not part of dnst) is expected to use the zone
@@ -159,19 +160,38 @@ different from the one used by the current key.
 Similar limitations apply to the other roll types. Note however that an
 algorithm roll can be started even when it is not needed.
 .sp
-A key roll consists of six steps: \fBstart\-roll\fP, \fBpropagation1\-complete\fP,
-\fBcache\-expired1\fP, \fBpropagation2\-complete\fP, \fBcache\-expired2\fP, and
-\fBroll\-done\fP\&.
-For each key roll these six steps follow in the same order.
+A key roll consists of eight steps: \fBstart\-roll\fP, \fBbefore\-ttl\fP,
+\fBpropagation1\-complete\fP, \fBcache\-expired1\fP, \fBbefore\-ttl\fP,
+\fBpropagation2\-complete\fP, \fBcache\-expired2\fP, and \fBroll\-done\fP\&.
+For each key roll these eight steps follow in the same order.
 Associated which each step is a (possibly empty) list of actions.
 Actions fall in three categories.
 The first category consists of actions that require updating the zone or the
 parent zone.
 The second category consists of actions that require checking if changes
-have propagated to all nameservers and require reporting of the
-TTLs of the changed RRset as seen at the nameservers.
+have propagated to all nameservers TTLs of the original RRset as seen
+at the nameservers.
 Finally, the last category requires waiting for changes to propagate to
 all nameservers but there is no need to report the TTL.
+.sp
+Handling of the actions that require reporting of a TTL is split over two
+steps. The \fBbefore\-ttl\fP step is used to report the TTL before the
+RRset is changed. Later the \fBpropagation1\-complete\fP and
+\fBpropagation2\-complete\fP steps report that the changed RRsets have propagated
+to all nameservers.
+Recording of the TTL values is easy if the TTLs of the old and new RRsets
+are the same.
+However, as described in RFC 10026 \%<https://\:www\:.rfc-editor\:.org/\:rfc/\:rfc10026>, Section 4.2.2., it is recommended that
+when a parent zone receives a request to change a DS RRsets, the new DS RRsets
+should get a reduced TTL to allow a quick roll back in case of problems.
+This means that at least for the DS RRset it is important to record the
+TTL before the change.
+.sp
+For the TTL of the DNSKEY RRset it is important to avoid reducing the TTL
+just before or during a key roll. For RRSIG records it is important to avoid
+lowering the highest TTL of all RRSIG records in the zone just before or during
+a key roll. One way to achieve that is to add a dummy record to the zone
+with a TTL that is higher than what can be expect from all normal TTLs.
 .sp
 Typically, in a list of actions, an action of the first category is paired
 with one from the second of third category.
@@ -179,11 +199,12 @@ For example, \fBUpdateDnskeyRrset\fP is paired with either
 \fBReportDnskeyPropagated\fP or \fBWaitDnskeyPropagated\fP\&.
 .sp
 A key roll starts with the \fBstart\-roll\fP step, which creates new keys.
-The next step, \fBpropagation1\-complete\fP has a TTL argument which is the
+The next step, \fB\(gabefore\-ttl\fP has a TTL argument which is the
 maximum of the TTLs of the Report actions.
+Then follows the \fBpropagation1\-complete\fP step.
 The \fBcache\-expired1\fP and \fBcache\-expired2\fP have no associated actions.
 They simply require waiting for the TTL (in seconds) reported by the
-previous \fBpropagation1\-complete\fP or \fBpropagation2\-complete\fP\&.
+previous \fB\(gabefore\-ttl\fP step.
 The \fBpropagation2\-complete\fP step is similar to the \fBpropagation1\-complete\fP step.
 Finally, the \fBroll\-done\fP step typically has associated Wait actions.
 These actions are cleanup actions and are harmless but confusing if they
@@ -203,8 +224,8 @@ ZSK has expired and the new key will be a CSK.
 Finally, an algorithm roll can start automatically when the new algorithm is
 different from the one used by the existing keys and any key has expired.
 .sp
-The \fBreport\fP flags control the automation of the \fBpropagation1\-complete\fP
-and \fBpropagation2\-complete\fP steps.
+The \fBreport\fP flags control the automation of the \fBbefore\-ttl\fP,
+\fBpropagation1\-complete\fP and \fBpropagation2\-complete\fP steps.
 When enabled, the cron subcommand contacts the nameservers of the zone or
 (in the case of \fBReportDsPropagated\fP, the nameservers of the parent zone)
 to check if changes have propagated to all nameservers.
@@ -527,6 +548,16 @@ Configuration file.
 .UNINDENT
 .INDENT 0.0
 .TP
+.B \-v
+Enable verbose output.
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-\-cascade
+Special processing for the Cascade DNSSEC signer.
+.UNINDENT
+.INDENT 0.0
+.TP
 .B \-h, \-\-help
 Print the help text (short summary with \fB\-h\fP, long help with
 \fB\-\-help\fP).
@@ -569,17 +600,21 @@ start\-roll
 .sp
 Start a key roll of the type specified by the command.
 .IP \(bu 2
-propagation1\-complete <TTL>
+before\-ttl <TTL>
+.sp
+Report the maximum TTL of the report actions before the RRsets have
+been changed.
+.IP \(bu 2
+propagation1\-complete
 .sp
 Inform keyset that the changed RRsets and signatures have propagated.
-Report the maximum TTL of the report actions.
 .IP \(bu 2
 cache\-expired1
 .sp
 Inform keyset that enough time has passed that caches should have expired.
 Note that this command will fail if invoked too early.
 .IP \(bu 2
-propagation2\-complete <TTL>
+propagation2\-complete
 .sp
 This command is similar to propagation1\-complete.
 .IP \(bu 2
@@ -1040,6 +1075,11 @@ Disable use of TLS client certificate authentication.
 .UNINDENT
 .INDENT 2.0
 .TP
+.B \-\-no\-server\-auth
+Disable use of TLS server certificate authentication.
+.UNINDENT
+.INDENT 2.0
+.TP
 .B \-\-insecure <BOOLEAN>
 Modify whether or not to accept the KMIP server TLS certificate
 without verifying it.
@@ -1064,9 +1104,8 @@ list\-servers
 List all configured KMIP servers.
 .UNINDENT
 .UNINDENT
-.SH AUTHOR
+.SH Author
 NLnet Labs
-.SH COPYRIGHT
+.SH Copyright
 2024–2026, NLnet Labs
-.\" Generated by docutils manpage writer.
-.
+.\" End of generated man page.
