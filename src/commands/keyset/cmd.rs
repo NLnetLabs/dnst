@@ -3701,12 +3701,11 @@ impl WorkSpace {
                             .state
                             .kmip
                             .get_pool(&mut self.pools, priv_key_url.server_id())?;
-                        let key_pair = kmip::sign::KeyPair::from_urls(
-                            priv_key_url,
-                            pub_key_url,
-                            kmip_conn_pool,
-                        )
-                        .map_err(|err| format!("Failed to retrieve KMIP key by URL: {err}"))?;
+                        let key_pair =
+                            kmip::KeyPair::from_urls(priv_key_url, pub_key_url, kmip_conn_pool)
+                                .map_err(|err| {
+                                    format!("Failed to retrieve KMIP key by URL: {err}")
+                                })?;
                         //let key_pair = KeyPair::Kmip(key_pair);
                         let signing_key = SigningKey::new(owner, flags, key_pair);
 
