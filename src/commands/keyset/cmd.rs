@@ -3381,8 +3381,6 @@ impl WorkSpace {
                         );
 
                         if let Err(err) = &public_key_label {
-                            use tracing::warn;
-
                             warn!("Failed to generate label for public key, key will have a hex label: {err}");
                         }
 
@@ -3417,7 +3415,7 @@ impl WorkSpace {
                                     // unexpected. Why would it succeed for one and
                                     // fail for the other?
                                     conn.rename_key(key_pair.private_key_id(), private_key_label)
-				.map_err(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()))?;
+                                        .map_err(|e| format!("KMIP key generation failed: failed to re-label private key with id {}: {e}", key_pair.private_key_id()))?;
                                 }
                                 Err(err) => {
                                     // Assume that key re-labeling is not supported
