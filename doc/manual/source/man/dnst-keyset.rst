@@ -282,6 +282,8 @@ the configuration complexity and the possibility of memory corruption in a
 single program.
 Other programs, such as the keyset subcommand then use the KMIP protocol to
 indirectly access the HSM via the Cascade-HSM-Bridge program.
+Support for the KMIP protocol also makes it possible to directly connect to
+KMIP capable HSMs.
 
 The keyset subcommand stores two pieces of KMIP configuration.
 The first is a list of KMIP servers.
