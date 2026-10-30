@@ -962,6 +962,13 @@ The keyset subcommand provides the following commands:
 
        Optional path to a TLS PEM certificate for the server.
 
+    .. option:: --server-name <SERVER_NAME>
+
+       Optional name to pass as TLS Server Name Indication (SNI) value when
+       connecting to the server. Useful if the name on the server certificate
+       differs to the hostname being connected to or when connecting to a
+       server by IP address.
+
     .. option:: --ca-cert <CA_CERT_PATH>
 
        Optional path to a TLS PEM certificate for a Certificate Authority.
