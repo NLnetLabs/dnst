@@ -422,7 +422,7 @@ dependencies = [
 [[package]]
 name = "domain-kmip"
 version = "0.0.1"
-source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#0d8535adbfb7de9f2bd91213e1e4b48589fe6c19"
+source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#497601dbb255587294e382064427ff8d929b1fd6"
 dependencies = [
  "bcder",
  "domain",
@@ -904,7 +904,7 @@ dependencies = [
 [[package]]
 name = "kmip-protocol"
 version = "0.5.1-dev"
-source = "git+https://github.com/NLnetLabs/kmip-protocol.git?branch=bump-dependencies#1625b323f0b5fd432a26116307b17d6822ead3be"
+source = "git+https://github.com/NLnetLabs/kmip-protocol.git?branch=bump-dependencies#df7f69d1cdab61748b34b48236a3bfc7fb7d694d"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",
