@@ -4235,7 +4235,7 @@ impl WorkSpace {
 
         // Check for CSK.
         if self.config.use_csk {
-            return Err("wrong key roll, use start-csk-roll\n".into());
+            return Err("wrong key roll, use csk start-roll\n".into());
         }
 
         // Refuse if we can find a CSK key.
@@ -4318,7 +4318,7 @@ impl WorkSpace {
 
         // Check for CSK.
         if self.config.use_csk {
-            return Err("wrong key roll, use start-csk-roll\n".into());
+            return Err("wrong key roll, use csk start-roll\n".into());
         }
 
         // Refuse if we can find a CSK key.
