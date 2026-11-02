@@ -4,9 +4,19 @@
 
 ### Breaking changes
 
+- During key rolls, record the ttl before changes are made. This changes
+  commands for manual key rolls and internal keyset state during a
+  key roll. ([#198] by @Philip-NLnetLabs)
 - Use latest domain and domain-kmip changes for improved KMIP HSM algorithm
   support. Requires Cascade-HSM-Bridge v0.2.0-beta1 due to a change in how
   the KMIP Response Header Date-Time field is encoded. ([#205] by @ximon18)
+
+### Other changes
+
+- Allow the user to specify the KMIP server name (SNI) to use. ([#193] by @ximon18)
+- Support disabling use of KMIP server auth. ([#194] by @ximon18)
+- Improve error reporting in keyset status and make keyset status less confusing. ([#190] and [#197] by @Philip-NLnetLabs)
+- For dnst keyset. replace warning about wrong signature with info and better formatting. ([#192] by @Philip-NLnetLabs)
 
 ### Documentation
 
@@ -14,6 +24,12 @@
   @ximon18)
 
 [#184]: https://github.com/NLnetLabs/dnst/pull/184
+[#193]: https://github.com/NLnetLabs/dnst/pull/193
+[#190]: https://github.com/NLnetLabs/dnst/pull/190
+[#192]: https://github.com/NLnetLabs/dnst/pull/192
+[#194]: https://github.com/NLnetLabs/dnst/pull/194
+[#197]: https://github.com/NLnetLabs/dnst/pull/197
+[#198]: https://github.com/NLnetLabs/dnst/pull/198
 [#205]: https://github.com/NLnetLabs/dnst/pull/205
 
 ## v0.2.0-alpha3
