@@ -2,9 +2,16 @@ Building From Source
 ====================
 
 In order to build dnst from the source, you need to have Rust installed on
-your system. The Rust compiler runs on, and compiles to, a great number of
-platforms, though not all of them are equally supported. The official `Rust
-Platform Support`_ page provides an overview of the various support levels.
+your system, and a C toolchain and OpenSSL. The Rust compiler runs on, and
+compiles to, a great number of platforms, though not all of them are equally
+supported. The official `Rust Platform Support`_ page provides an overview of
+the various support levels.
+
+Prerequisites
+-------------
+
+Rust
+""""
 
 While some system distributions include Rust as system packages, dnst
 relies on a relatively new version of Rust, currently |rustversion| or newer.
@@ -21,64 +28,32 @@ Assuming you already have :program:`curl` installed, you can install
 Alternatively, visit the `Rust website
 <https://www.rust-lang.org/tools/install>`_ for other installation methods.
 
+C Toolchain
+"""""""""""i
+
+Some of the libraries dnst depends on require a C toolchain to be
+present. Your system probably has some easy way to install the minimum
+set of packages to build from C sources. For example,
+:command:`apt install build-essential` will install everything you need on
+Debian/Ubuntu.
+
+If you are unsure, try to run :command:`cc` on a command line and if there’s a
+complaint about missing input files, you are probably good to go.
+
+OpenSSL
+"""""""
+
+Your system will likely have a package manager that will allow you to install
+OpenSSL in a few easy steps. For dnst, you will need :command:`libssl-dev`,
+sometimes called :command:`openssl-dev`. On Debian-like Linux distributions,
+this should be as simple as running:
+
+.. code-block:: bash
+
+    apt install libssl-dev openssl pkg-config
+
 Building and Updating
 ---------------------
-
-..
-    In Rust, a library or executable program such as dnst is called a
-    *crate*. Crates are published on `crates.io
-    <https://crates.io/crates/dnst>`_, the Rust package registry. Cargo is
-    the Rust package manager. It is a tool that allows Rust packages to declare
-    their various dependencies and ensure that you’ll always get a repeatable
-    build. 
-
-    Cargo fetches and builds dnst’s dependencies into an executable binary for
-    your platform. By default you install from crates.io, but you can also
-    install from a specific Git URL.
-
-    Installing the latest dnst release from crates.io is as simple as
-    running:
-
-    .. code-block:: text
-
-    cargo install --locked dnst
-
-    The command will build dnst and install it in the same directory that
-    Cargo itself lives in, likely ``$HOME/.cargo/bin``. This means dnst
-    will be in your path, too.
-
-    Updating
-    """"""""
-
-    If you want to update to the latest version of dnst, it’s recommended
-    to update Rust itself as well, using:
-
-    .. code-block:: text
-
-        rustup update
-
-    Use the ``--force`` option to overwrite an existing version with the latest
-    dnst release:
-
-    .. code-block:: text
-
-        cargo install --locked --force dnst
-
-    Installing Specific Versions
-    """"""""""""""""""""""""""""
-
-    If you want to install a specific version of
-    dnst using Cargo, explicitly use the ``--version`` option. If needed,
-    use the ``--force`` option to overwrite an existing version:
-            
-    .. code-block:: text
-
-        cargo install --locked --force dnst --version 0.1.0-rc1
-
-    All new features of dnst are built on a branch and merged via a `pull
-    request <https://github.com/NLnetLabs/dnst/pulls>`_, allowing you to
-    easily try them out using Cargo. If you want to try a specific branch from
-    the repository you can use the ``--git`` and ``--branch`` options:
 
 In Rust, a library or executable program such as dnst is called a *crate*.
 Crates are normally published on `crates.io <https://crates.io/>`_, the Rust
