@@ -2,12 +2,19 @@
 
 ## Unreleased changes
 
+### Breaking changes
+
+- Use latest domain and domain-kmip changes for improved KMIP HSM algorithm
+  support. Requires Cascade-HSM-Bridge v0.2.0-beta1 due to a change in how
+  the KMIP Response Header Date-Time field is encoded. ([#205] by @ximon18)
+
 ### Documentation
 
 - Document the default values for `keyset set` subcommands. ([#184] by
   @ximon18)
 
 [#184]: https://github.com/NLnetLabs/dnst/pull/184
+[#205]: https://github.com/NLnetLabs/dnst/pull/205
 
 ## v0.2.0-alpha3
 
