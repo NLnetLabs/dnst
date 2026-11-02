@@ -34,7 +34,7 @@ jobs:
 
   package-dnst-ldnsutils:
     # Package empty dnst-ldnsutils package to create symlinks
-    uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@10
+    uses: NLnetLabs/ploutos/.github/workflows/pkg-rust.yml@v10
     with:
       package_build_rules: pkg/dnst-ldnsutils/pkg/rules/packages-to-build.yml
       package_test_rules: pkg/dnst-ldnsutils/pkg/rules/packages-to-test.yml
