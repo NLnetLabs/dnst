@@ -4,6 +4,7 @@
 
 # Make a release branch and test packaging
 - git checkout -b release-vX.Y.Z[-xxx]
+- switch to the MRSV listed in Cargo.toml.
 - cargo update
 - bump application version in Cargo.toml to X.Y.Z[-xxx]
 - cargo check (to bump the application version in Cargo.lock)
