@@ -1,6 +1,6 @@
 [package]
 name = "dnst"
-version = "0.2.0-alpha3"
+version = "0.3.0-alpha"
 edition = "2021"
 default-run = "dnst"
 readme = "README.md"

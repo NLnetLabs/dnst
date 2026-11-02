@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+## v0.3.0-alpha
+
+Released 2026-11-02
+
 ### Breaking changes
 
 - During key rolls, record the ttl before changes are made. This changes
