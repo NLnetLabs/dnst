@@ -34,7 +34,7 @@ use domain::base::{name::ToLabelIter, Name, NameBuilder};
 use domain_kmip::{
     dep::kmip_protocol::net::{
         sync_pool::{ConnPool, ConnectionManager, KmipConnError},
-        ClientCertificate, ConnectionSettings,
+        ClientCertificate as KmipClientCertificate, ConnectionSettings,
     },
     KeyUrl,
 };
@@ -410,35 +410,39 @@ pub fn kmip_command(
             // Handle only the valid cases. Let Clap reject the invalid cases
             // with a helpful error message, e.g. password without username is
             // not allowed.
-
-            let credentials = match (credentials_store_path, username, password) {
-                (Some(credentials_store_path), Some(username), password) => {
-                    Some(KmipClientCredentialsConfig {
-                        credentials_store_path,
-                        credentials: Some(KmipClientCredentials { username, password }),
-                    })
-                }
-                (Some(credentials_store_path), _, _) => Some(KmipClientCredentialsConfig {
-                    credentials_store_path,
-                    credentials: None,
-                }),
-                _ => None,
+            let mut credentials = KmipCredentials {
+                username,
+                password,
+                ..Default::default()
             };
 
-            let client_auth = match (client_cert_path, client_key_path) {
-                (Some(cert_path), Some(private_key_path)) => {
-                    Some(KmipClientTlsCertificateAuthConfig {
-                        cert_path,
-                        private_key_path,
+            if let Some(path) = &client_cert_path {
+                let cert_bytes = load_binary_file(path)?;
+                if let Some(path) = &client_key_path {
+                    let key_bytes = load_binary_file(path)?;
+                    credentials.client_certificate = Some(ClientCertificate::SeparatePem {
+                        cert_bytes,
+                        key_bytes,
                     })
+                } else {
+                    credentials.client_certificate =
+                        Some(ClientCertificate::CombinedPkcs12 { cert_bytes })
                 }
-                _ => None,
-            };
+            }
+            if let Some(path) = &server_cert_path {
+                credentials.server_certificate = Some(load_binary_file(path)?);
+            }
+            if let Some(path) = &ca_cert_path {
+                credentials.ca_certificate = Some(load_binary_file(path)?);
+            }
+
+            let credentials = credentials_store_path.map(|path| KmipClientCredentialsConfig {
+                credentials_store_path: path,
+                credentials: credentials.has_credentials().then_some(credentials),
+            });
 
             let server_auth = KmipServerTlsCertificateVerificationConfig {
                 verify_certificate: insecure.not(),
-                server_cert_path,
-                ca_cert_path,
                 server_name,
             };
 
@@ -462,7 +466,6 @@ pub fn kmip_command(
                 port,
                 pending,
                 credentials,
-                client_auth,
                 server_auth,
                 limits,
                 key_label_cfg,
@@ -657,7 +660,7 @@ fn remove_kmip_server(kss: &mut KeySetState, server_id: String) -> Result<(), Er
 fn remove_kmip_client_credentials(
     server_id: &str,
     credentials_path: &Path,
-) -> Result<KmipClientCredentials, Error> {
+) -> Result<KmipCredentials, Error> {
     let mut credentials_file =
         KmipClientCredentialsFile::new(credentials_path, KmipServerCredentialsFileMode::ReadWrite)?;
 
@@ -714,7 +717,6 @@ fn add_kmip_server(
     port: u16,
     pending: bool,
     credentials: Option<KmipClientCredentialsConfig>,
-    client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
     server_cert_verification: KmipServerTlsCertificateVerificationConfig,
     client_limits: KmipClientLimits,
     key_label_config: KeyLabelConfig,
@@ -765,7 +767,6 @@ fn add_kmip_server(
         server_port: port,
         server_cert_verification,
         client_credentials_path,
-        client_cert_auth,
         client_limits,
         key_label_config,
     };
@@ -791,6 +792,21 @@ enum ChangeRemoveLeave<T> {
 
     /// The setting should be left unchanged at its current value.
     Leave,
+}
+
+impl<T> ChangeRemoveLeave<T> {
+    pub fn is_change(&self) -> bool {
+        matches!(self, Self::Change(_))
+    }
+
+    pub fn is_remove(&self) -> bool {
+        matches!(self, Self::Remove)
+    }
+
+    #[allow(unused)]
+    pub fn is_leave(&self) -> bool {
+        matches!(self, Self::Leave)
+    }
 }
 
 //------------ modify_kmip_server() ------------------------------------------
@@ -825,66 +841,33 @@ fn modify_kmip_server(
     cfg.server_addr = ip_host_or_fqdn.unwrap_or(cfg.server_addr);
     cfg.server_port = port.unwrap_or(cfg.server_port);
 
-    // Handle changed credentials.
-    cfg.client_credentials_path = match (credentials_store_path, username, password) {
-        (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => {
-            // Nothing to do.
-            cfg.client_credentials_path
-        }
+    let creds_strs = [&username, &password];
+    let creds_paths = [
+        &credentials_store_path,
+        &client_cert_path,
+        &client_key_path,
+        &server_cert_path,
+        &ca_cert_path,
+    ];
+    let changing =
+        creds_strs.iter().any(|v| v.is_change()) | creds_paths.iter().any(|v| v.is_change());
+    let removing =
+        creds_strs.iter().any(|v| v.is_remove()) | creds_paths.iter().any(|v| v.is_remove());
 
-        (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Change(_), _)
-        | (ChangeRemoveLeave::Remove, _, ChangeRemoveLeave::Change(_))
-        | (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Remove, ChangeRemoveLeave::Change(_)) => {
-            return Err("cannot remove credentials and change credentials at the same time".into());
-        }
+    if changing && removing {
+        return Err("cannot remove credentials and change credentials at the same time".into());
+    }
 
-        (ChangeRemoveLeave::Change(_), ChangeRemoveLeave::Remove, _) => {
-            return Err("cannot move credentials and remove credentials at the same time".into());
-        }
-
-        (ChangeRemoveLeave::Remove, _, _) => {
-            // Remove any existing stored credentials.
-            if let Some(path) = &cfg.client_credentials_path {
-                let _ = remove_kmip_client_credentials(server_id, path)?;
-            }
-            None
-        }
-
-        (ChangeRemoveLeave::Change(new_path), username, password) => {
+    match credentials_store_path {
+        ChangeRemoveLeave::Change(new_path) => {
             // Change the file used to store credentials. If the credentials
             // are not being changed, move them from the old file to the
             // new file. Otherwise remove them from the old file and the new
             // credentials to the new file.
-
-            // Remove the old credentials file.
-            let creds = if let Some(p) = cfg.client_credentials_path {
-                let mut creds = remove_kmip_client_credentials(server_id, &p)?;
-                // Adjust credentials if needed.
-                match username {
-                    ChangeRemoveLeave::Change(v) => creds.username = v,
-                    ChangeRemoveLeave::Remove => unreachable!(), // Handled above
-                    ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-                }
-                match password {
-                    ChangeRemoveLeave::Change(v) => creds.password = Some(v),
-                    ChangeRemoveLeave::Remove => creds.password = None,
-                    ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-                }
-                creds
+            let mut creds = if let Some(current_path) = cfg.client_credentials_path.as_ref() {
+                remove_kmip_client_credentials(server_id, current_path)?
             } else {
-                let username = match username {
-                    ChangeRemoveLeave::Change(v) => v,
-                    ChangeRemoveLeave::Remove => unreachable!(), // Handled above
-                    ChangeRemoveLeave::Leave => {
-                        return Err("cannot use existing username as none was found".into())
-                    }
-                };
-                let password = match password {
-                    ChangeRemoveLeave::Change(v) => Some(v),
-                    ChangeRemoveLeave::Remove => None,
-                    ChangeRemoveLeave::Leave => None,
-                };
-                KmipClientCredentials { username, password }
+                KmipCredentials::default()
             };
 
             // Open the new credentials file.
@@ -893,115 +876,130 @@ fn modify_kmip_server(
                 KmipServerCredentialsFileMode::CreateReadWrite,
             )?;
 
+            // Update the username if needed.
+            match username {
+                ChangeRemoveLeave::Change(new) => creds.username = Some(new),
+                ChangeRemoveLeave::Remove => creds.username = None,
+                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+            }
+
+            // Update the password if needed.
+            match password {
+                ChangeRemoveLeave::Change(new) => creds.password = Some(new),
+                ChangeRemoveLeave::Remove => creds.password = None,
+                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+            }
+
+            // Update the client certificate (and key) if needed.
+            match (client_cert_path, client_key_path) {
+                (
+                    ChangeRemoveLeave::Change(new_cert_path),
+                    ChangeRemoveLeave::Change(new_key_path),
+                ) => {
+                    // Changed certificate and key.
+                    let cert_bytes = load_binary_file(&new_cert_path)?;
+                    let key_bytes = load_binary_file(&new_key_path)?;
+                    creds.client_certificate = Some(ClientCertificate::SeparatePem {
+                        cert_bytes,
+                        key_bytes,
+                    });
+                }
+                (ChangeRemoveLeave::Change(new_cert_path), ChangeRemoveLeave::Remove) => {
+                    // Changed certificate, removed key.
+                    let cert_bytes = load_binary_file(&new_cert_path)?;
+                    creds.client_certificate =
+                        Some(ClientCertificate::CombinedPkcs12 { cert_bytes });
+                }
+                (ChangeRemoveLeave::Change(new_cert_path), ChangeRemoveLeave::Leave) => {
+                    // Changed certificate, use existing key (if any).
+                    let new_cert_bytes = load_binary_file(&new_cert_path)?;
+                    match &mut creds.client_certificate {
+                        Some(ClientCertificate::SeparatePem { cert_bytes, .. })
+                        | Some(ClientCertificate::CombinedPkcs12 { cert_bytes }) => {
+                            *cert_bytes = new_cert_bytes;
+                        }
+                        None => {
+                            creds.client_certificate = Some(ClientCertificate::CombinedPkcs12 {
+                                cert_bytes: new_cert_bytes,
+                            });
+                        }
+                    }
+                }
+                (ChangeRemoveLeave::Remove, _) => {
+                    // Removed certificate (remove the key too as it cannot
+                    // exist without the certificate)
+                    creds.client_certificate = None;
+                }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Change(new_key_path)) => {
+                    // Changed key, use existing certificate.
+                    let new_key_bytes = load_binary_file(&new_key_path)?;
+                    match creds.client_certificate {
+                        Some(ClientCertificate::SeparatePem { cert_bytes, .. })
+                        | Some(ClientCertificate::CombinedPkcs12 { cert_bytes }) => {
+                            creds.client_certificate = Some(ClientCertificate::SeparatePem {
+                                cert_bytes,
+                                key_bytes: new_key_bytes,
+                            });
+                        }
+                        None => {
+                            return Err(
+                                "cannot update client key: no existing client certificate".into()
+                            );
+                        }
+                    }
+                }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Remove) => {
+                    // Removed key, use existing certificate.
+                    if let Some(ClientCertificate::SeparatePem { cert_bytes, .. }) =
+                        creds.client_certificate
+                    {
+                        creds.client_certificate =
+                            Some(ClientCertificate::CombinedPkcs12 { cert_bytes });
+                    }
+                }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => todo!(),
+            }
+
+            // Update the server certificate if needed.
+            match server_cert_path {
+                ChangeRemoveLeave::Change(new) => {
+                    creds.server_certificate = Some(load_binary_file(&new)?);
+                }
+                ChangeRemoveLeave::Remove => creds.server_certificate = None,
+                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+            }
+
+            // Update the CA certificate if needed.
+            match ca_cert_path {
+                ChangeRemoveLeave::Change(new) => {
+                    creds.ca_certificate = Some(load_binary_file(&new)?);
+                }
+                ChangeRemoveLeave::Remove => creds.ca_certificate = None,
+                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+            }
+
             // Insert credentials and save them.
             let _ = new_creds_file.insert(server_id.to_string(), creds);
             new_creds_file.save()?;
-            Some(new_path)
+            cfg.client_credentials_path = Some(new_path);
         }
 
-        (ChangeRemoveLeave::Leave, _, _) if cfg.client_credentials_path.is_none() => {
-            return Err("cannot change client credentials that don't exist".into());
+        ChangeRemoveLeave::Remove => {
+            // Remove any existing stored credentials.
+            if let Some(path) = &cfg.client_credentials_path {
+                let _ = remove_kmip_client_credentials(server_id, path)?;
+                cfg.client_credentials_path = None;
+            }
         }
 
-        (ChangeRemoveLeave::Leave, username, password) => {
-            // Open the new credentials file.
-            let mut creds_file = KmipClientCredentialsFile::new(
-                cfg.client_credentials_path.as_ref().unwrap(), // SAFETY: Checked for is_none() above
-                KmipServerCredentialsFileMode::ReadWrite,
-            )?;
-
-            let creds = if let Some(mut creds) = creds_file.remove(server_id) {
-                // Adjust credentials if needed.
-                match username {
-                    ChangeRemoveLeave::Change(v) => creds.username = v,
-                    ChangeRemoveLeave::Remove => unreachable!(), // Handled above
-                    ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-                }
-                match password {
-                    ChangeRemoveLeave::Change(v) => creds.password = Some(v),
-                    ChangeRemoveLeave::Remove => creds.password = None,
-                    ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-                }
-                creds
-            } else {
-                // Create new credentials.
-                let ChangeRemoveLeave::Change(username) = username else {
-                    return Err(
-                        "cannot change credentials that do not exist if no username is supplied"
-                            .into(),
-                    );
-                };
-                let password = match password {
-                    ChangeRemoveLeave::Change(v) => Some(v),
-                    ChangeRemoveLeave::Remove => None,
-                    ChangeRemoveLeave::Leave => None,
-                };
-                KmipClientCredentials { username, password }
-            };
-
-            // (re-)insert the credentials and save them.
-            let _ = creds_file.insert(server_id.to_string(), creds);
-            creds_file.save()?;
-            cfg.client_credentials_path
+        ChangeRemoveLeave::Leave => {
+            // Nothing to do
         }
-    };
-
-    // Handle changed client certificate authentication.
-    cfg.client_cert_auth = match (client_cert_path, client_key_path) {
-        (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => {
-            // Use the current values.
-            cfg.client_cert_auth
-        }
-
-        (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Remove) => {
-            // Forget the current values.
-            None
-        }
-
-        (ChangeRemoveLeave::Remove, _) | (_, ChangeRemoveLeave::Remove) => {
-            return Err("cannot remove only one of the client certificate or client key.".into());
-        }
-
-        (cert_path, key_path) => {
-            // Adjust the settings as needed.
-            let cert_path = match cert_path {
-                ChangeRemoveLeave::Change(v) => v,
-                ChangeRemoveLeave::Remove => unreachable!(), // Handled above
-                ChangeRemoveLeave::Leave => cfg.client_cert_auth.as_ref().map(|v| v.cert_path.clone()).ok_or::<Error>("cannot configure client certicate authentication without a client certificate path".into())?,
-            };
-            let private_key_path = match key_path {
-                ChangeRemoveLeave::Change(v) => v,
-                ChangeRemoveLeave::Remove => unreachable!(), // Handled above,
-                ChangeRemoveLeave::Leave => cfg
-                    .client_cert_auth
-                    .as_ref()
-                    .map(|v| v.private_key_path.clone())
-                    .ok_or::<Error>(
-                    "cannot configure client certificate authentication with a private key path"
-                        .into(),
-                )?,
-            };
-
-            Some(KmipClientTlsCertificateAuthConfig {
-                cert_path,
-                private_key_path,
-            })
-        }
-    };
+    }
 
     // Handle changed server certificate verification.
     if let Some(v) = server_insecure {
-        cfg.server_cert_verification.verify_certificate = v.not();
-    }
-    match server_cert_path {
-        ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.server_cert_path = Some(v),
-        ChangeRemoveLeave::Remove => cfg.server_cert_verification.server_cert_path = None,
-        ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-    }
-    match ca_cert_path {
-        ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.ca_cert_path = Some(v),
-        ChangeRemoveLeave::Remove => cfg.server_cert_verification.ca_cert_path = None,
-        ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+        cfg.server_cert_verification.verify_certificate = !v;
     }
     match server_name {
         ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.server_name = Some(v),
@@ -1038,12 +1036,69 @@ fn modify_kmip_server(
     Ok(())
 }
 
+fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
+    let bytes = std::fs::read(path)
+        .map_err(|err| format!("reading from {} failed: {err}", path.display()))?;
+    Ok(bytes)
+}
+
 //------------ KmipClientCredentialsConfig -----------------------------------
 
 /// Optional disk file based credentials for connecting to a KMIP server.
 pub struct KmipClientCredentialsConfig {
     pub credentials_store_path: PathBuf,
-    pub credentials: Option<KmipClientCredentials>,
+    pub credentials: Option<KmipCredentials>,
+}
+
+//------------ KmipClientCertificate -----------------------------------------
+
+/// Certificate details in various supported formats for use with TLS client authentication.
+///
+/// A re-implementation of kmip_protocol::net::ClientCertificate with
+/// (de)serialization support.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientCertificate {
+    SeparatePem {
+        cert_bytes: Vec<u8>,
+        key_bytes: Vec<u8>,
+    },
+    CombinedPkcs12 {
+        cert_bytes: Vec<u8>,
+    },
+}
+
+impl From<KmipClientCertificate> for ClientCertificate {
+    fn from(c: KmipClientCertificate) -> Self {
+        match c {
+            KmipClientCertificate::SeparatePem {
+                cert_bytes,
+                key_bytes,
+            } => Self::SeparatePem {
+                cert_bytes,
+                key_bytes,
+            },
+            KmipClientCertificate::CombinedPkcs12 { cert_bytes } => {
+                Self::CombinedPkcs12 { cert_bytes }
+            }
+        }
+    }
+}
+
+impl From<ClientCertificate> for KmipClientCertificate {
+    fn from(c: ClientCertificate) -> Self {
+        match c {
+            ClientCertificate::SeparatePem {
+                cert_bytes,
+                key_bytes,
+            } => KmipClientCertificate::SeparatePem {
+                cert_bytes,
+                key_bytes,
+            },
+            ClientCertificate::CombinedPkcs12 { cert_bytes } => {
+                KmipClientCertificate::CombinedPkcs12 { cert_bytes }
+            }
+        }
+    }
 }
 
 //------------ KmipClientCredentials -----------------------------------------
@@ -1053,29 +1108,52 @@ pub struct KmipClientCredentialsConfig {
 /// Intended to be read from a JSON file stored separately to the main
 /// configuration so that separate security policy can be applied to sensitive
 /// credentials.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct KmipClientCredentials {
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct KmipCredentials {
     /// KMIP username credential.
     ///
     /// Mandatory if the KMIP "Credential Type" is "Username and Password".
     ///
-    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
-    pub username: String,
+    /// See: <https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458>
+    pub username: Option<String>,
 
     /// KMIP password credential.
     ///
     /// Optional when KMIP "Credential Type" is "Username and Password".
     ///
-    /// See: https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458
+    /// See: <https://docs.oasis-open.org/kmip/spec/v1.2/os/kmip-spec-v1.2-os.html#_Toc409613458>
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub password: Option<String>,
+
+    /// Optional path to a TLS certificate to authenticate to the KMIP server
+    /// with.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub client_certificate: Option<ClientCertificate>,
+
+    /// Optional path to a TLS PEM certificate for the server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub server_certificate: Option<Vec<u8>>,
+
+    /// Optional path to a TLS PEM certificate for a Certificate Authority.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ca_certificate: Option<Vec<u8>>,
+}
+
+impl KmipCredentials {
+    pub fn has_credentials(&self) -> bool {
+        self.username.is_some()
+            || self.password.is_some()
+            || self.client_certificate.is_some()
+            || self.server_certificate.is_some()
+            || self.ca_certificate.is_some()
+    }
 }
 
 //------------ KmipClientCredentialSet ---------------------------------------
 
 /// A set of KMIP server credentials.
 #[derive(Debug, Default, Deserialize, Serialize)]
-struct KmipClientCredentialsSet(HashMap<String, KmipClientCredentials>);
+struct KmipClientCredentialsSet(HashMap<String, KmipCredentials>);
 
 //------------ KmipClientCredentialsFileMode ---------------------------------
 
@@ -1237,7 +1315,7 @@ impl KmipClientCredentialsFile {
     }
 
     #[allow(dead_code)]
-    fn get(&self, server_id: &str) -> Option<&KmipClientCredentials> {
+    fn get(&self, server_id: &str) -> Option<&KmipCredentials> {
         self.credentials.0.get(server_id)
     }
 
@@ -1248,38 +1326,21 @@ impl KmipClientCredentialsFile {
     pub fn insert(
         &mut self,
         server_id: String,
-        credentials: KmipClientCredentials,
-    ) -> Option<KmipClientCredentials> {
+        credentials: KmipCredentials,
+    ) -> Option<KmipCredentials> {
         self.credentials.0.insert(server_id, credentials)
     }
 
     /// Remove any existing configuration for the specified KMIP server.
     ///
     /// Returns any previous configuration if found.
-    pub fn remove(&mut self, server_id: &str) -> Option<KmipClientCredentials> {
+    pub fn remove(&mut self, server_id: &str) -> Option<KmipCredentials> {
         self.credentials.0.remove(server_id)
     }
 
     pub fn is_empty(&self) -> bool {
         self.credentials.0.is_empty()
     }
-}
-
-//------------ KmipClientTlsCertificateAuthConfig ----------------------------
-
-/// Configuration for KMIP TLS client certificate based authentication.
-///
-/// Both certificate and key file must be present and must be in PEM format.
-// Note: We only support PEM format, not PKCS#12, because the underlying
-// kmip-protocol TLS "drivers" for rustls and OpenSSL both don't actually
-// support PKCS#12 even though taking it as config input.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct KmipClientTlsCertificateAuthConfig {
-    /// Path to the PEM format client certificate file.
-    pub cert_path: PathBuf,
-
-    /// Path to the PEM format client private key file.
-    pub private_key_path: PathBuf,
 }
 
 //------------ KmipServerTlsCertificateVerificationConfig --------------------
@@ -1290,14 +1351,6 @@ pub struct KmipServerTlsCertificateVerificationConfig {
     /// Whether or not to enable server certificate verification.
     #[serde(default)]
     pub verify_certificate: bool,
-
-    /// Path to the server certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub server_cert_path: Option<PathBuf>,
-
-    /// Path to the server CA certificate file in PEM format.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub ca_cert_path: Option<PathBuf>,
 
     /// TLS server name (SNI) to use when connecting to the server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1310,8 +1363,6 @@ impl Default for KmipServerTlsCertificateVerificationConfig {
     fn default() -> Self {
         Self {
             verify_certificate: true,
-            server_cert_path: None,
-            ca_cert_path: None,
             server_name: None,
         }
     }
@@ -1413,10 +1464,6 @@ pub struct KmipServerConnectionConfig {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub client_credentials_path: Option<PathBuf>,
 
-    /// KMIP client TLS certificate authentication configuration.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub client_cert_auth: Option<KmipClientTlsCertificateAuthConfig>,
-
     /// Limits to be applied by the KMIP client
     pub client_limits: KmipClientLimits,
 
@@ -1468,37 +1515,9 @@ impl std::fmt::Display for KmipServerConnectionConfig {
         writeln!(f, "Server Certificate Verification:   {enabled}")?;
         writeln!(
             f,
-            "Server Certificate:                {}",
-            opt_path_to_string(&self.server_cert_verification.server_cert_path)
-        )?;
-        writeln!(
-            f,
-            "Certificate Authority Certificate: {}",
-            opt_path_to_string(&self.server_cert_verification.ca_cert_path)
-        )?;
-        writeln!(
-            f,
             "Client Credentials:                {}",
             opt_path_to_string(&self.client_credentials_path)
         )?;
-        match &self.client_cert_auth {
-            Some(cfg) => {
-                writeln!(f, "Client Certificate Authentication: Enabled")?;
-                writeln!(
-                    f,
-                    "    Client Certificate:            {}",
-                    cfg.cert_path.display()
-                )?;
-                writeln!(
-                    f,
-                    "    Private Key:                   {}",
-                    cfg.private_key_path.display()
-                )?;
-            }
-            None => {
-                writeln!(f, "Client Certificate Authentication: Disabled")?;
-            }
-        }
 
         {
             writeln!(f, "Client Limits:")?;
@@ -1528,64 +1547,21 @@ impl KmipServerConnectionConfig {
     /// limits that the KMIP client can enforce. By default there are no such
     /// limits.
     pub fn load(&self, server_id: &str) -> Result<ConnectionSettings, Error> {
-        let client_cert = self.load_client_cert()?;
-        let server_cert = self.load_server_cert()?;
-        let ca_cert = self.load_ca_cert()?;
-        let (username, password) = self.load_credentials(server_id)?;
-        Ok(ConnectionSettings {
+        let mut conn_settings = ConnectionSettings {
             host: self.server_addr.clone(),
             port: self.server_port,
-            username,
-            password,
             insecure: self.server_cert_verification.verify_certificate.not(),
-            client_cert,
-            server_cert,
-            ca_cert,
             connect_timeout: Some(self.client_limits.connect_timeout),
             read_timeout: Some(self.client_limits.read_timeout),
             write_timeout: Some(self.client_limits.write_timeout),
             max_response_bytes: Some(self.client_limits.max_response_bytes),
             server_name: self.server_cert_verification.server_name.clone(),
-        })
-    }
+            ..Default::default()
+        };
 
-    /// Load and parse PEM TLS client certificate and key files.
-    ///
-    /// TLS client certificate and key files can be used to authenticate
-    /// against KMIP servers that are configured to require such
-    /// authentication.
-    fn load_client_cert(&self) -> Result<Option<ClientCertificate>, Error> {
-        match &self.client_cert_auth {
-            Some(cfg) => Ok(Some(ClientCertificate::SeparatePem {
-                cert_bytes: Self::load_binary_file(&cfg.cert_path)?,
-                key_bytes: Self::load_binary_file(&cfg.private_key_path)?,
-            })),
-            None => Ok(None),
-        }
-    }
+        self.load_credentials(server_id, &mut conn_settings)?;
 
-    /// Load and parse a PEM format TLS server certificate.
-    ///
-    /// The certificate contains a public key which can be used to verify the
-    /// identity of the remote KMIP server.
-    fn load_server_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.server_cert_verification.server_cert_path {
-            Some(p) => Some(Self::load_binary_file(p)?),
-            None => None,
-        })
-    }
-
-    /// Load and parse a PEM format TLS certificate authority certificate.
-    ///
-    /// The certificate can be used to verify the issuing authority of the
-    /// TLS server certificate, thereby verifying not just that the server is
-    /// the owner of the certificate but that the certificate was issued by a
-    /// trusted party.
-    fn load_ca_cert(&self) -> Result<Option<Vec<u8>>, Error> {
-        Ok(match &self.server_cert_verification.ca_cert_path {
-            Some(p) => Some(Self::load_binary_file(p)?),
-            None => None,
-        })
+        Ok(conn_settings)
     }
 
     /// Load credentials from disk for authenticating with a KMIP server.
@@ -1595,30 +1571,30 @@ impl KmipServerConnectionConfig {
     ///
     /// In the case of cascade-hsm-bridge the username is the PKCS#11 slot
     /// label and the password is the PKCS#11 user PIN.
-    fn load_credentials(&self, server_id: &str) -> Result<(Option<String>, Option<String>), Error> {
+    fn load_credentials(
+        &self,
+        server_id: &str,
+        conn_settings: &mut ConnectionSettings,
+    ) -> Result<(), Error> {
         if let Some(p) = &self.client_credentials_path {
             let mut file =
                 KmipClientCredentialsFile::new(p, KmipServerCredentialsFileMode::ReadOnly)?;
-            if let Some(creds) = file.remove(server_id) {
-                return Ok((Some(creds.username), creds.password));
+            if let Some(KmipCredentials {
+                username,
+                password,
+                client_certificate,
+                server_certificate,
+                ca_certificate,
+            }) = file.remove(server_id)
+            {
+                conn_settings.username = username;
+                conn_settings.password = password;
+                conn_settings.client_cert = client_certificate.map(Into::into);
+                conn_settings.server_cert = server_certificate;
+                conn_settings.ca_cert = ca_certificate;
             }
         }
-        Ok((None, None))
-    }
-
-    /// Load an arbitrary file as unparsed bytes into memory.
-    ///
-    /// TODO: Lmiit how many bytes we will read?
-    fn load_binary_file(path: &Path) -> Result<Vec<u8>, Error> {
-        use std::{fs::File, io::Read};
-
-        let mut bytes = Vec::new();
-        File::open(path)
-            .map_err(|e| format!("unable to open {}: {e}", path.display()))?
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("reading from {} failed: {e}", path.display()))?;
-
-        Ok(bytes)
+        Ok(())
     }
 }
 
