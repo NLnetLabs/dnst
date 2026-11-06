@@ -4,7 +4,7 @@
 
 ## v0.3.0-alpha
 
-Released 2026-11-02
+Released 2026-11-06
 
 ### Breaking changes
 
