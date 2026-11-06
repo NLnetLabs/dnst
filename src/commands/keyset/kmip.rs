@@ -1177,7 +1177,7 @@ impl From<TlsServerAuth> for domain_kmip::dep::kmip_protocol::net::TlsServerAuth
 /// Intended to be read from a JSON file stored separately to the main
 /// configuration so that separate security policy can be applied to sensitive
 /// credentials.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct KmipCredentials {
     /// KMIP username credential.
     ///
