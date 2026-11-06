@@ -773,7 +773,7 @@ fn add_kmip_server(
                     .insert(server_id.clone(), credentials)
                     .is_some()
                 {
-                    // Don't accidental change existing credentials.
+                    // Don't accidentally change existing credentials.
                     return Err(Error::new(&format!("unable to add KMIP credentials to file {}: server '{server_id}' already exists.", credentials_store_path.display())));
                 }
                 credentials_file.save()?;
