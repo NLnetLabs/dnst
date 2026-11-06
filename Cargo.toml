@@ -45,7 +45,7 @@ domain = { git = "https://github.com/NLnetLabs/domain", rev = "f4ca391", version
     "unstable-validator",
     "unstable-zonetree"
 ]}
-domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", branch = "more-algorithm-support-and-fixes-and-cleanup", default-features = false, features = ["ring"], optional = true }
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", tag = "v0.0.1", version = "0.0.1", default-features = false, features = ["ring"], optional = true }
 indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
 rayon = "1.10.0"
