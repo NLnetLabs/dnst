@@ -411,7 +411,7 @@ dependencies = [
 [[package]]
 name = "domain-kmip"
 version = "0.0.1"
-source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#4ed1bfb0942abc9bcb62d8b765da536404cd2eaa"
+source = "git+https://github.com/NLnetLabs/domain-kmip.git?branch=more-algorithm-support-and-fixes-and-cleanup#eb3d3b38b54a78a284ce051aa5427cc1411a3099"
 dependencies = [
  "bcder",
  "domain",
