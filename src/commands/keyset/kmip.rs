@@ -34,7 +34,7 @@ use domain::base::{name::ToLabelIter, Name, NameBuilder};
 use domain_kmip::{
     dep::kmip_protocol::net::{
         sync_pool::{ConnPool, ConnectionManager, KmipConnError},
-        ClientCertificate as KmipClientCertificate, ConnectionSettings,
+        ConnectionSettings,
     },
     KeyUrl,
 };
@@ -416,24 +416,51 @@ pub fn kmip_command(
                 ..Default::default()
             };
 
-            if let Some(path) = &client_cert_path {
-                let cert_bytes = load_binary_file(path)?;
-                if let Some(path) = &client_key_path {
-                    let key_bytes = load_binary_file(path)?;
-                    credentials.client_certificate = Some(ClientCertificate::SeparatePem {
-                        cert_bytes,
-                        key_bytes,
-                    })
-                } else {
-                    credentials.client_certificate =
-                        Some(ClientCertificate::CombinedPkcs12 { cert_bytes })
+            match (client_cert_path, client_key_path) {
+                (None, None) => {
+                    // Nothing to do.
+                }
+                (None, Some(_)) | (Some(_), None) => {
+                    return Err(
+                        "TLS client authentication requires both a certificate and a private key"
+                            .into(),
+                    );
+                }
+                (Some(client_cert_path), Some(client_key_path)) => {
+                    let cert_bytes = load_binary_file(&client_cert_path)?;
+                    let private_key_bytes = load_binary_file(&client_key_path)?;
+                    credentials.tls_client_cert_bytes = Some(cert_bytes);
+                    credentials.tls_client_private_key_bytes = Some(private_key_bytes);
                 }
             }
-            if let Some(path) = &server_cert_path {
-                credentials.server_certificate = Some(load_binary_file(path)?);
+
+            match (server_cert_path, ca_cert_path) {
+                (None, None) => {
+                    credentials.tls_server_auth = TlsServerAuth::Default;
+                }
+                (Some(_), Some(_)) => {
+                    return Err(
+                        "TLS server authentication can use either a server certificate or a CA certificate but not both".into()
+                    );
+                }
+                (None, Some(ca_cert_path)) => {
+                    let ca_cert_bytes = load_binary_file(&ca_cert_path)?;
+                    credentials.tls_server_auth =
+                        TlsServerAuth::TrustCertificateAuthority(ca_cert_bytes);
+                }
+                (Some(server_cert_path), None) => {
+                    let server_cert_bytes = load_binary_file(&server_cert_path)?;
+                    credentials.tls_server_auth =
+                        TlsServerAuth::TrustCertificate(server_cert_bytes);
+                }
             }
-            if let Some(path) = &ca_cert_path {
-                credentials.ca_certificate = Some(load_binary_file(path)?);
+
+            if insecure {
+                if credentials.tls_server_auth == TlsServerAuth::Default {
+                    credentials.tls_server_auth = TlsServerAuth::None;
+                } else {
+                    return Err("TLS server certificate cannot be treated as insecure if a server or CA certificate was provided".into());
+                }
             }
 
             let credentials = credentials_store_path.map(|path| KmipClientCredentialsConfig {
@@ -892,90 +919,132 @@ fn modify_kmip_server(
 
             // Update the client certificate (and key) if needed.
             match (client_cert_path, client_key_path) {
+                //
+                // Cases that apply the same operation to both the certificate and the key.
+                //
                 (
                     ChangeRemoveLeave::Change(new_cert_path),
                     ChangeRemoveLeave::Change(new_key_path),
                 ) => {
                     // Changed certificate and key.
                     let cert_bytes = load_binary_file(&new_cert_path)?;
-                    let key_bytes = load_binary_file(&new_key_path)?;
-                    creds.client_certificate = Some(ClientCertificate::SeparatePem {
-                        cert_bytes,
-                        key_bytes,
-                    });
+                    let private_key_bytes = load_binary_file(&new_key_path)?;
+                    creds.tls_client_cert_bytes = Some(cert_bytes);
+                    creds.tls_client_private_key_bytes = Some(private_key_bytes);
                 }
-                (ChangeRemoveLeave::Change(new_cert_path), ChangeRemoveLeave::Remove) => {
-                    // Changed certificate, removed key.
-                    let cert_bytes = load_binary_file(&new_cert_path)?;
-                    creds.client_certificate =
-                        Some(ClientCertificate::CombinedPkcs12 { cert_bytes });
+                (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Remove) => {
+                    // Removed certificate and key.
+                    creds.tls_client_cert_bytes = None;
+                    creds.tls_client_private_key_bytes = None;
                 }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => {
+                    // Nothing to do.
+                }
+
+                //
+                // Cases that would leave only one of the two which would
+                // be invalid.
+                //
+                (ChangeRemoveLeave::Change(_), ChangeRemoveLeave::Leave)
+                    if creds.tls_client_private_key_bytes.is_none() =>
+                {
+                    return Err("both a certificate and private key are required for TLS client authentication".into());
+                }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Change(_))
+                    if creds.tls_client_cert_bytes.is_none() =>
+                {
+                    return Err("both a certificate and private key are required for TLS client authentication".into());
+                }
+                (ChangeRemoveLeave::Change(_), ChangeRemoveLeave::Remove)
+                | (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Remove)
+                | (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Leave)
+                | (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Change(_)) => {
+                    return Err("both a certificate and private key are required for TLS client authentication".into());
+                }
+
+                //
+                // Cases that change one while already having the other.
+                //
                 (ChangeRemoveLeave::Change(new_cert_path), ChangeRemoveLeave::Leave) => {
-                    // Changed certificate, use existing key (if any).
-                    let new_cert_bytes = load_binary_file(&new_cert_path)?;
-                    match &mut creds.client_certificate {
-                        Some(ClientCertificate::SeparatePem { cert_bytes, .. })
-                        | Some(ClientCertificate::CombinedPkcs12 { cert_bytes }) => {
-                            *cert_bytes = new_cert_bytes;
-                        }
-                        None => {
-                            creds.client_certificate = Some(ClientCertificate::CombinedPkcs12 {
-                                cert_bytes: new_cert_bytes,
-                            });
-                        }
-                    }
-                }
-                (ChangeRemoveLeave::Remove, _) => {
-                    // Removed certificate (remove the key too as it cannot
-                    // exist without the certificate)
-                    creds.client_certificate = None;
+                    // Changed certificate, use existing key.
+                    assert!(creds.tls_client_private_key_bytes.is_some());
+                    creds.tls_client_cert_bytes = Some(load_binary_file(&new_cert_path)?);
                 }
                 (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Change(new_key_path)) => {
                     // Changed key, use existing certificate.
-                    let new_key_bytes = load_binary_file(&new_key_path)?;
-                    match creds.client_certificate {
-                        Some(ClientCertificate::SeparatePem { cert_bytes, .. })
-                        | Some(ClientCertificate::CombinedPkcs12 { cert_bytes }) => {
-                            creds.client_certificate = Some(ClientCertificate::SeparatePem {
-                                cert_bytes,
-                                key_bytes: new_key_bytes,
-                            });
-                        }
-                        None => {
-                            return Err(
-                                "cannot update client key: no existing client certificate".into()
-                            );
-                        }
-                    }
+                    assert!(creds.tls_client_cert_bytes.is_some());
+                    creds.tls_client_private_key_bytes = Some(load_binary_file(&new_key_path)?);
                 }
-                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Remove) => {
-                    // Removed key, use existing certificate.
-                    if let Some(ClientCertificate::SeparatePem { cert_bytes, .. }) =
-                        creds.client_certificate
-                    {
-                        creds.client_certificate =
-                            Some(ClientCertificate::CombinedPkcs12 { cert_bytes });
-                    }
-                }
-                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => todo!(),
             }
 
-            // Update the server certificate if needed.
-            match server_cert_path {
-                ChangeRemoveLeave::Change(new) => {
-                    creds.server_certificate = Some(load_binary_file(&new)?);
+            // Update the server and CA certificates if needed.
+            // Only one can be used at a time.
+            match (server_cert_path, ca_cert_path) {
+                //
+                // Cases that apply the same operation to both the certificate and the key.
+                //
+                (ChangeRemoveLeave::Change(_), ChangeRemoveLeave::Change(_)) => {
+                    // Change both server and CA certificate.
+                    return Err(
+                        "TLS server authentication can use either a server certificate or a CA certificate but not both".into()
+                    );
                 }
-                ChangeRemoveLeave::Remove => creds.server_certificate = None,
-                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
-            }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Leave) => {
+                    // Nothing to do.
+                }
 
-            // Update the CA certificate if needed.
-            match ca_cert_path {
-                ChangeRemoveLeave::Change(new) => {
-                    creds.ca_certificate = Some(load_binary_file(&new)?);
+                //
+                // Cases that change one certificate while already having the other.
+                //
+                (ChangeRemoveLeave::Change(_), ChangeRemoveLeave::Leave)
+                    if matches!(
+                        creds.tls_server_auth,
+                        TlsServerAuth::TrustCertificateAuthority(_)
+                    ) =>
+                {
+                    // Change server certificate while already having a CA certificate.
+                    return Err(
+                        "TLS server authentication can use either a server certificate or a CA certificate but not both".into()
+                    );
                 }
-                ChangeRemoveLeave::Remove => creds.ca_certificate = None,
-                ChangeRemoveLeave::Leave => { /* Nothing to do */ }
+                (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Change(_))
+                    if matches!(creds.tls_server_auth, TlsServerAuth::TrustCertificate(_)) =>
+                {
+                    // Change CA certificate while already having a server certificate.
+                    return Err(
+                        "TLS server authentication can use either a server certificate or a CA certificate but not both".into()
+                    );
+                }
+
+                //
+                // Cases that affect only one of server or CA certificate.
+                //
+                (ChangeRemoveLeave::Change(server_cert_path), ChangeRemoveLeave::Remove)
+                | (ChangeRemoveLeave::Change(server_cert_path), ChangeRemoveLeave::Leave) => {
+                    // Change server certificate when there is no CA certificate.
+                    let server_cert_bytes = load_binary_file(&server_cert_path)?;
+                    creds.tls_server_auth = TlsServerAuth::TrustCertificate(server_cert_bytes);
+                }
+                (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Change(ca_cert_path))
+                | (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Change(ca_cert_path)) => {
+                    // Change CA certificate when there is no server certificate.
+                    let ca_cert_bytes = load_binary_file(&ca_cert_path)?;
+                    creds.tls_server_auth = TlsServerAuth::TrustCertificateAuthority(ca_cert_bytes);
+                }
+
+                //
+                // Cases that remove both server and CA certificate.
+                //
+                (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Leave)
+                | (ChangeRemoveLeave::Leave, ChangeRemoveLeave::Remove)
+                | (ChangeRemoveLeave::Remove, ChangeRemoveLeave::Remove) => {
+                    // Remove both server and CA certificate.
+                    if matches!(server_insecure, Some(true)) {
+                        creds.tls_server_auth = TlsServerAuth::None;
+                    } else {
+                        creds.tls_server_auth = TlsServerAuth::Default;
+                    }
+                }
             }
 
             // Insert credentials and save them.
@@ -1050,58 +1119,58 @@ pub struct KmipClientCredentialsConfig {
     pub credentials: Option<KmipCredentials>,
 }
 
-//------------ KmipClientCertificate -----------------------------------------
+//------------ TlsServerAuth -------------------------------------------------
 
-/// Certificate details in various supported formats for use with TLS client authentication.
+/// Additional certificates used to verify the identity of the server.
 ///
-/// A re-implementation of kmip_protocol::net::ClientCertificate with
-/// (de)serialization support.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ClientCertificate {
-    SeparatePem {
-        cert_bytes: Vec<u8>,
-        key_bytes: Vec<u8>,
-    },
-    CombinedPkcs12 {
-        cert_bytes: Vec<u8>,
-    },
+/// These certificates are needed when the certificate chain of the server
+/// includes certificates that are not available in the default certificate
+/// store, i.e. are not widely distributed well known certificates.
+///
+/// This can be for example because the Certificate Authority that issued the
+/// certificate is internal to the organization that deployed the KMIP server,
+/// or because the server is using a self-signed certificate but rather than
+/// trust the certificate blindly you want to verify that it is the expected
+/// self-signed certificate.
+//
+// Note: This is a re-implementation of the kmip_protocol TlsServerAuth enum
+// with added Deserialize and Serialize impls.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub enum TlsServerAuth {
+    /// Do not verify the identify of the server.
+    None,
+
+    /// Use only certificates provided in the default trust store.
+    #[default]
+    Default,
+
+    /// The PEM encoded bytes of a certificate to trurst directly, e.g. a
+    /// self-signed certificate.
+    ///
+    /// TODO: Add support for verifying certificates by their fingerprint.
+    TrustCertificate(Vec<u8>),
+
+    /// The PEM encoded bytes of the certificate of a Certificate Authority
+    /// to add to the certificate trust store in order to be able to verify
+    /// certificates issued by this authority, e.g. an in-house custom CA
+    /// not present in the default trust store.
+    TrustCertificateAuthority(Vec<u8>),
 }
 
-impl From<KmipClientCertificate> for ClientCertificate {
-    fn from(c: KmipClientCertificate) -> Self {
-        match c {
-            KmipClientCertificate::SeparatePem {
-                cert_bytes,
-                key_bytes,
-            } => Self::SeparatePem {
-                cert_bytes,
-                key_bytes,
-            },
-            KmipClientCertificate::CombinedPkcs12 { cert_bytes } => {
-                Self::CombinedPkcs12 { cert_bytes }
+impl From<TlsServerAuth> for domain_kmip::dep::kmip_protocol::net::TlsServerAuth {
+    fn from(auth: TlsServerAuth) -> Self {
+        match auth {
+            TlsServerAuth::None => Self::None,
+            TlsServerAuth::Default => Self::Default,
+            TlsServerAuth::TrustCertificate(cert_bytes) => Self::TrustCertificate(cert_bytes),
+            TlsServerAuth::TrustCertificateAuthority(ca_cert_bytes) => {
+                Self::TrustCertificateAuthority(ca_cert_bytes)
             }
         }
     }
 }
 
-impl From<ClientCertificate> for KmipClientCertificate {
-    fn from(c: ClientCertificate) -> Self {
-        match c {
-            ClientCertificate::SeparatePem {
-                cert_bytes,
-                key_bytes,
-            } => KmipClientCertificate::SeparatePem {
-                cert_bytes,
-                key_bytes,
-            },
-            ClientCertificate::CombinedPkcs12 { cert_bytes } => {
-                KmipClientCertificate::CombinedPkcs12 { cert_bytes }
-            }
-        }
-    }
-}
-
-//------------ KmipClientCredentials -----------------------------------------
+//------------ KmipCredentials -----------------------------------------------
 
 /// Credentials for connecting to a KMIP server.
 ///
@@ -1125,27 +1194,34 @@ pub struct KmipCredentials {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub password: Option<String>,
 
-    /// Optional path to a TLS certificate to authenticate to the KMIP server
-    /// with.
+    /// Optional TLS certificate bytes in PEM format.
+    ///
+    /// Note: If [`tls_client_private_key_bytes`] is provided then this value
+    /// MUST also be provided as the client has to use the private key to
+    /// sign the certificate so that the server can use the public key in the
+    /// certificate to verify that we possess the correct private key, i.e. we
+    /// are who we say we are.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub client_certificate: Option<ClientCertificate>,
+    pub tls_client_cert_bytes: Option<Vec<u8>>,
 
-    /// Optional path to a TLS PEM certificate for the server.
+    /// Optional TLS private key bytes in PEM format.
+    ///
+    /// Note: If [`tls_client_cert_bytes`] is provided then this value MUST
+    /// also be provided. See [`tls_client_cert_bytes`] for more details.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub server_certificate: Option<Vec<u8>>,
+    pub tls_client_private_key_bytes: Option<Vec<u8>>,
 
-    /// Optional path to a TLS PEM certificate for a Certificate Authority.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub ca_certificate: Option<Vec<u8>>,
+    /// Optional TLS server authentication details.
+    pub tls_server_auth: TlsServerAuth,
 }
 
 impl KmipCredentials {
     pub fn has_credentials(&self) -> bool {
         self.username.is_some()
             || self.password.is_some()
-            || self.client_certificate.is_some()
-            || self.server_certificate.is_some()
-            || self.ca_certificate.is_some()
+            || self.tls_client_cert_bytes.is_some()
+            || self.tls_client_private_key_bytes.is_some()
+            || self.tls_server_auth != TlsServerAuth::Default
     }
 }
 
@@ -1550,12 +1626,11 @@ impl KmipServerConnectionConfig {
         let mut conn_settings = ConnectionSettings {
             host: self.server_addr.clone(),
             port: self.server_port,
-            insecure: self.server_cert_verification.verify_certificate.not(),
             connect_timeout: Some(self.client_limits.connect_timeout),
             read_timeout: Some(self.client_limits.read_timeout),
             write_timeout: Some(self.client_limits.write_timeout),
             max_response_bytes: Some(self.client_limits.max_response_bytes),
-            server_name: self.server_cert_verification.server_name.clone(),
+            tls_server_name: self.server_cert_verification.server_name.clone(),
             ..Default::default()
         };
 
@@ -1582,16 +1657,27 @@ impl KmipServerConnectionConfig {
             if let Some(KmipCredentials {
                 username,
                 password,
-                client_certificate,
-                server_certificate,
-                ca_certificate,
+                tls_client_cert_bytes,
+                tls_client_private_key_bytes,
+                tls_server_auth,
             }) = file.remove(server_id)
             {
                 conn_settings.username = username;
                 conn_settings.password = password;
-                conn_settings.client_cert = client_certificate.map(Into::into);
-                conn_settings.server_cert = server_certificate;
-                conn_settings.ca_cert = ca_certificate;
+
+                if let (Some(cert_bytes), Some(private_key_bytes)) =
+                    (tls_client_cert_bytes, tls_client_private_key_bytes)
+                {
+                    conn_settings.tls_client_auth =
+                        Some(domain_kmip::dep::kmip_protocol::net::TlsClientAuth {
+                            cert_bytes,
+                            private_key_bytes,
+                        });
+                } else {
+                    conn_settings.tls_client_auth = None;
+                }
+
+                conn_settings.tls_server_auth = tls_server_auth.into();
             }
         }
         Ok(())
