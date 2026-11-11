@@ -1,6 +1,6 @@
 [package]
 name = "dnst"
-version = "0.2.0-alpha3"
+version = "0.3.0-alpha2"
 edition = "2021"
 default-run = "dnst"
 readme = "README.md"
@@ -32,9 +32,11 @@ static-openssl = ["openssl/vendored"]
 bytes = "1.8.0"
 chrono = "0.4.38"
 clap = { version = "4.3.4", features = ["cargo", "derive", "wrap_help"] }
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+# Pin domain to a version that includes https://github.com/NLnetLabs/domain/pull/762
+domain = { git = "https://github.com/NLnetLabs/domain", rev = "f4ca391", version = "0.12.3", features = [
     "bytes",
     "net",
+    "openssl",
     "resolv",
     "tokio-stream",
     "tsig",
@@ -42,8 +44,8 @@ domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", fea
     "unstable-sign",
     "unstable-validator",
     "unstable-zonetree"
-] }
-domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", optional = true }
+]}
+domain-kmip = { git = "https://github.com/NLnetLabs/domain-kmip.git", tag = "v0.0.1", version = "0.0.1", default-features = false, features = ["ring"], optional = true }
 indenter = { version = "0.3.4", optional = true }
 lexopt = "0.3.0"
 rayon = "1.10.0"
@@ -52,6 +54,7 @@ rand = { version = "0.9.2", optional = true }
 ring = "0.17.8"
 tokio = "1.40.0"
 openssl = { version = "*", features = ["vendored"], optional = true }
+scheduled-thread-pool = { version = "=0.2.7" } # pin to 0.2.7 to prevent depending on newer parking_lot and lock_api versions which don't compile with Rust < 1.95.
 
 # LDNS-xxx mode specific dependencies.
 # TODO: put these behind a feature gate?
@@ -76,7 +79,7 @@ const_format = " 0.2.33"
 test_bin = "0.4.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
-domain = { git = "https://github.com/NLnetLabs/domain.git", branch = "main", features = [
+domain = { git = "https://github.com/NLnetLabs/domain", rev = "f4ca391", version = "0.12.3", features = [
     "unstable-stelline",
 ] }
 pretty_assertions = "1.4.1"
