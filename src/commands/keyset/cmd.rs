@@ -6406,12 +6406,12 @@ async fn report_rrsig_propagated(
 
     let result = check_zone(kss, now.clone(), nameservers, tsig_store).await?;
     let (serial, ttl) = match result {
-        // check_zone never returns Report or Wait.
-        AutoReportRrsigResult::Ok | AutoReportRrsigResult::Wait { .. } => unreachable!(),
+        // check_zone never returns Wait.
+        AutoReportRrsigResult::Wait { .. } => unreachable!(),
         AutoReportRrsigResult::WaitSoa { serial, ttl, .. } => (serial, ttl),
-        AutoReportRrsigResult::WaitRecord { .. } | AutoReportRrsigResult::WaitNextSerial { .. } => {
-            return Ok(result)
-        }
+        AutoReportRrsigResult::Ok
+        | AutoReportRrsigResult::WaitRecord { .. }
+        | AutoReportRrsigResult::WaitNextSerial { .. } => return Ok(result),
     };
 
     Ok(if let Err(e) = check_soa(serial, kss, now.clone()).await {
