@@ -6799,6 +6799,17 @@ async fn check_ds_for_address(
 
     let mut max_ttl = Ttl::from_secs(0);
 
+    let mut extra_ds = HashSet::new();
+
+    debug!(
+        "Check DS RRset: checking for keys {:?}",
+        target_dnskey
+            .iter()
+            .map(|r| r.data().display_zonefile(DisplayKind::Simple).to_string())
+            .collect::<Vec<_>>()
+    );
+    debug!("Check DS RRset: checking records {records:?} on server {address}");
+
     for r in records {
         if r.owner() != zone {
             continue;
@@ -6809,6 +6820,13 @@ async fn check_ds_for_address(
                 .data()
                 .digest(zone, r.data().digest_type())
                 .expect("should not fail");
+            debug!(
+                "algorithm {} {} digest {:?} {:?}",
+                r.data().algorithm(),
+                target_r.data().algorithm(),
+                r.data().digest(),
+                digest.as_ref()
+            );
             r.data().algorithm() == target_r.data().algorithm()
                 && r.data().digest() == digest.as_ref()
         });
@@ -6824,24 +6842,26 @@ async fn check_ds_for_address(
                 "Check DS RRset: unexpected DS record {} found on server {}",
                 r, address
             );
-            return Ok(AutoActionsResult::Wait {
-                until: now + r.ttl().into_duration(),
-                notice: format!(
-                    "Check DS RRset: unexpected DS record {} found on server {}",
-                    r, address
-                ),
-            });
+            extra_ds.insert(r);
         }
-        continue;
     }
     let dnskey = target_dnskey.iter().next();
     if let Some(dnskey) = dnskey {
         debug!("Check DS RRset: DS record that corresponds to a DNSKEY with key tag {} not present on server {}", dnskey.data().key_tag(), address);
         let ttl = dnskey.ttl();
-        Ok(AutoActionsResult::Wait { until: now + ttl.into_duration(), notice: format!("Check DS RRset: DS record that corresponds to a DNSKEY with key tag {} not present on server {}", dnskey.data().key_tag(), address) })
-    } else {
-        Ok(AutoActionsResult::Ok)
+        return Ok(AutoActionsResult::Wait { until: now + ttl.into_duration(), notice: format!("Check DS RRset: DS record that corresponds to a DNSKEY with key tag {} not present on server {}", dnskey.data().key_tag(), address) });
     }
+    let ds = extra_ds.iter().next();
+    if let Some(ds) = ds {
+        return Ok(AutoActionsResult::Wait {
+            until: now + ds.ttl().into_duration(),
+            notice: format!(
+                "Check DS RRset: unexpected DS record {} found on server {}",
+                ds, address
+            ),
+        });
+    }
+    Ok(AutoActionsResult::Ok)
 }
 
 /// Check whether a nameserver at a specific address has the right SOA serial
