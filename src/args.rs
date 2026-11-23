@@ -17,7 +17,7 @@ pub struct Args {
         short = 'v',
         long = "verbosity",
         value_name = "level",
-        default_value_t = LevelFilter::from_level(tracing::Level::WARN),
+        default_value_t = LevelFilter::from_level(tracing::Level::DEBUG),
     )]
     pub verbosity: LevelFilter,
 }
