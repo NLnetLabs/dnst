@@ -1503,8 +1503,6 @@ pub struct KmipServerConnectionConfig {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub server_name: Option<String>,
 
-    // /// KMIP server TLS certificate verification configuration.
-    // pub server_cert_verification: KmipServerTlsCertificateVerificationConfig,
     /// The credentials to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub client_credentials_path: Option<PathBuf>,
