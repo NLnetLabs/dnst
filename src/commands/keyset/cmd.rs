@@ -4235,6 +4235,15 @@ impl WorkSpace {
 
         // Check for CSK.
         if self.config.use_csk {
+            if self.cascade {
+                return Err(self
+                    .cascade_key_roll_command(
+                        "wrong key roll command for CSK, instead run: ",
+                        "csk",
+                        "start-roll",
+                    )
+                    .into());
+            }
             return Err("wrong key roll, use start-csk-roll\n".into());
         }
 
@@ -4318,6 +4327,15 @@ impl WorkSpace {
 
         // Check for CSK.
         if self.config.use_csk {
+            if self.cascade {
+                return Err(self
+                    .cascade_key_roll_command(
+                        "wrong key roll command for CSK, instead run: ",
+                        "csk",
+                        "start-roll",
+                    )
+                    .into());
+            }
             return Err("wrong key roll, use start-csk-roll\n".into());
         }
 
@@ -5388,6 +5406,14 @@ impl WorkSpace {
             )
         })?;
         Ok(())
+    }
+
+    /// Generate a formatted key roll command for Cascade users.
+    fn cascade_key_roll_command(&self, label: &str, roll_type: &str, step: &str) -> String {
+        format!(
+            "{label}cascade keyset {} {roll_type} {step}",
+            self.state.keyset.name()
+        )
     }
 }
 
