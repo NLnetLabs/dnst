@@ -467,10 +467,6 @@ pub fn kmip_command(
                 credentials: credentials.has_credentials().then_some(credentials),
             });
 
-            let server_auth = KmipServerTlsCertificateVerificationConfig {
-                server_name,
-            };
-
             let limits = KmipClientLimits {
                 connect_timeout,
                 read_timeout,
@@ -491,7 +487,7 @@ pub fn kmip_command(
                 port,
                 pending,
                 credentials,
-                server_auth,
+                server_name,
                 limits,
                 key_label_cfg,
             )?;
@@ -742,7 +738,7 @@ fn add_kmip_server(
     port: u16,
     pending: bool,
     credentials: Option<KmipClientCredentialsConfig>,
-    server_cert_verification: KmipServerTlsCertificateVerificationConfig,
+    server_name: Option<String>,
     client_limits: KmipClientLimits,
     key_label_config: KeyLabelConfig,
 ) -> Result<(), Error> {
@@ -790,7 +786,7 @@ fn add_kmip_server(
     let settings = KmipServerConnectionConfig {
         server_addr: ip_host_or_fqdn,
         server_port: port,
-        server_cert_verification,
+        server_name,
         client_credentials_path,
         client_limits,
         key_label_config,
@@ -1066,8 +1062,8 @@ fn modify_kmip_server(
 
     // Handle changed server certificate verification.
     match server_name {
-        ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.server_name = Some(v),
-        ChangeRemoveLeave::Remove => cfg.server_cert_verification.server_name = None,
+        ChangeRemoveLeave::Change(v) => cfg.server_name = Some(v),
+        ChangeRemoveLeave::Remove => cfg.server_name = None,
         ChangeRemoveLeave::Leave => { /* Nothing to do */ }
     }
 
@@ -1414,26 +1410,6 @@ impl KmipClientCredentialsFile {
     }
 }
 
-//------------ KmipServerTlsCertificateVerificationConfig --------------------
-
-/// Configuration for KMIP TLS certificate verification.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct KmipServerTlsCertificateVerificationConfig {
-    /// TLS server name (SNI) to use when connecting to the server.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub server_name: Option<String>,
-}
-
-//--- impl Default
-
-impl Default for KmipServerTlsCertificateVerificationConfig {
-    fn default() -> Self {
-        Self {
-            server_name: None,
-        }
-    }
-}
-
 //------------ KmipClientLimits ----------------------------------------------
 
 /// Limits to be imposed on the KMIP client when commmunicating with a KMIP
@@ -1523,9 +1499,12 @@ pub struct KmipServerConnectionConfig {
     /// The TCP port number on which the KMIP server listens.
     pub server_port: u16,
 
-    /// KMIP server TLS certificate verification configuration.
-    pub server_cert_verification: KmipServerTlsCertificateVerificationConfig,
+    /// TLS server name (SNI) to use when connecting to the server.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub server_name: Option<String>,
 
+    // /// KMIP server TLS certificate verification configuration.
+    // pub server_cert_verification: KmipServerTlsCertificateVerificationConfig,
     /// The credentials to authenticate with the KMIP server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub client_credentials_path: Option<PathBuf>,
@@ -1570,7 +1549,7 @@ impl std::fmt::Display for KmipServerConnectionConfig {
             "Address:                           {}:{}",
             self.server_addr, self.server_port
         )?;
-        if let Some(server_name) = &self.server_cert_verification.server_name {
+        if let Some(server_name) = &self.server_name {
             write!(f, " (SNI: {server_name})")?;
         }
         writeln!(f)?;
@@ -1615,7 +1594,7 @@ impl KmipServerConnectionConfig {
             read_timeout: Some(self.client_limits.read_timeout),
             write_timeout: Some(self.client_limits.write_timeout),
             max_response_bytes: Some(self.client_limits.max_response_bytes),
-            tls_server_name: self.server_cert_verification.server_name.clone(),
+            tls_server_name: self.server_name.clone(),
             ..Default::default()
         };
 
