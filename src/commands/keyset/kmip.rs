@@ -23,7 +23,6 @@ use std::{
     fmt::Formatter,
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Seek, SeekFrom, Write},
-    ops::Not,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -469,7 +468,6 @@ pub fn kmip_command(
             });
 
             let server_auth = KmipServerTlsCertificateVerificationConfig {
-                verify_certificate: insecure.not(),
                 server_name,
             };
 
@@ -1067,9 +1065,6 @@ fn modify_kmip_server(
     }
 
     // Handle changed server certificate verification.
-    if let Some(v) = server_insecure {
-        cfg.server_cert_verification.verify_certificate = !v;
-    }
     match server_name {
         ChangeRemoveLeave::Change(v) => cfg.server_cert_verification.server_name = Some(v),
         ChangeRemoveLeave::Remove => cfg.server_cert_verification.server_name = None,
@@ -1424,10 +1419,6 @@ impl KmipClientCredentialsFile {
 /// Configuration for KMIP TLS certificate verification.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KmipServerTlsCertificateVerificationConfig {
-    /// Whether or not to enable server certificate verification.
-    #[serde(default)]
-    pub verify_certificate: bool,
-
     /// TLS server name (SNI) to use when connecting to the server.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub server_name: Option<String>,
@@ -1438,7 +1429,6 @@ pub struct KmipServerTlsCertificateVerificationConfig {
 impl Default for KmipServerTlsCertificateVerificationConfig {
     fn default() -> Self {
         Self {
-            verify_certificate: true,
             server_name: None,
         }
     }
@@ -1584,11 +1574,6 @@ impl std::fmt::Display for KmipServerConnectionConfig {
             write!(f, " (SNI: {server_name})")?;
         }
         writeln!(f)?;
-        let enabled = match self.server_cert_verification.verify_certificate {
-            true => "Enabled",
-            false => "Disabled",
-        };
-        writeln!(f, "Server Certificate Verification:   {enabled}")?;
         writeln!(
             f,
             "Client Credentials:                {}",
