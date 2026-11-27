@@ -76,10 +76,7 @@ supports-color = "3.0.2"
 
 [dev-dependencies]
 const_format = " 0.2.33"
-# Pin test_bin to a version that has the get_test_bin! macro as that is able
-# to find the test binary with Rust 1.100 while test_bin >= 0.6.0 removed the
-# macro but the fn get_test_bin() fn fails to find the test binary.
-test_bin = "=0.5.0"
+test_bin = "0.6.0"
 tempfile = "3.20.0"
 regex = "1.11.1"
 domain = { git = "https://github.com/NLnetLabs/domain", rev = "f4ca391", version = "0.12.3", features = [

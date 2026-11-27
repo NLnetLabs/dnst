@@ -11,7 +11,7 @@ pub fn assert_org_ldns_cmd_eq_new_ldns_cmd(
         .output()
         .unwrap();
 
-    let new_ldns_cmd_out = test_bin::get_test_bin!("ldns")
+    let new_ldns_cmd_out = test_bin::get_test_bin("ldns")
         .args(new_ldns_cmd)
         .output()
         .unwrap();
