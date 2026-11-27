@@ -18,13 +18,13 @@ Released yyyy-mm-dd.
 
 Released yyyy-mm-dd.
 
-### Breaking changes
-### New
 ### Bug fixes
-### Other changes
-### Documentation improvements
-### Known issues
-### Acknowledgements
+
+- Update KMIP related crates to gain improved KMIP server compatibility.
+  ([#222] by @ximon18)
+
+[#222]: https://github.com/NLnetLabs/dnst/pull/222
+
 
 ## v0.3.0-alpha
 
